@@ -1,0 +1,142 @@
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
+using SnoutSpotter.Api.Models;
+
+namespace SnoutSpotter.Api.Services;
+
+public class ClipService
+{
+    private readonly IAmazonDynamoDB _dynamoClient;
+    private const string TableName = "snout-spotter-clips";
+
+    public ClipService(IAmazonDynamoDB dynamoClient)
+    {
+        _dynamoClient = dynamoClient;
+    }
+
+    public async Task<ClipListResponse> GetClipsAsync(string? date = null, int limit = 20, string? nextPageKey = null)
+    {
+        if (date != null)
+        {
+            return await QueryByDateAsync(date, limit, nextPageKey);
+        }
+
+        var request = new ScanRequest
+        {
+            TableName = TableName,
+            Limit = limit
+        };
+
+        if (nextPageKey != null)
+        {
+            request.ExclusiveStartKey = new Dictionary<string, AttributeValue>
+            {
+                ["clip_id"] = new() { S = nextPageKey }
+            };
+        }
+
+        var response = await _dynamoClient.ScanAsync(request);
+        var clips = response.Items.Select(MapToClipSummary).ToList();
+        var lastKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
+
+        return new ClipListResponse(clips, lastKey, response.Count);
+    }
+
+    public async Task<ClipDetail?> GetClipByIdAsync(string clipId)
+    {
+        var response = await _dynamoClient.GetItemAsync(TableName, new Dictionary<string, AttributeValue>
+        {
+            ["clip_id"] = new() { S = clipId }
+        });
+
+        if (!response.IsItemSet) return null;
+        return MapToClipDetail(response.Item);
+    }
+
+    public async Task<List<DetectionSummary>> GetDetectionsAsync(
+        string? detectionType = null, string? dateFrom = null, string? dateTo = null, int limit = 50)
+    {
+        var filterExpressions = new List<string>();
+        var expressionValues = new Dictionary<string, AttributeValue>();
+
+        if (detectionType != null)
+        {
+            filterExpressions.Add("detection_type = :dt");
+            expressionValues[":dt"] = new() { S = detectionType };
+        }
+        else
+        {
+            filterExpressions.Add("detection_type IN (:dt1, :dt2)");
+            expressionValues[":dt1"] = new() { S = "my_dog" };
+            expressionValues[":dt2"] = new() { S = "other_dog" };
+        }
+
+        var request = new ScanRequest
+        {
+            TableName = TableName,
+            FilterExpression = string.Join(" AND ", filterExpressions),
+            ExpressionAttributeValues = expressionValues,
+            Limit = limit
+        };
+
+        var response = await _dynamoClient.ScanAsync(request);
+        return response.Items.Select(MapToDetectionSummary).ToList();
+    }
+
+    private async Task<ClipListResponse> QueryByDateAsync(string date, int limit, string? nextPageKey)
+    {
+        var request = new QueryRequest
+        {
+            TableName = TableName,
+            IndexName = "by-date",
+            KeyConditionExpression = "#d = :date",
+            ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
+            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            {
+                [":date"] = new() { S = date }
+            },
+            ScanIndexForward = false, // newest first
+            Limit = limit
+        };
+
+        var response = await _dynamoClient.QueryAsync(request);
+        var clips = response.Items.Select(MapToClipSummary).ToList();
+        var lastKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
+
+        return new ClipListResponse(clips, lastKey, response.Count);
+    }
+
+    private static ClipSummary MapToClipSummary(Dictionary<string, AttributeValue> item) => new(
+        ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
+        S3Key: item.GetValueOrDefault("s3_key")?.S ?? "",
+        Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
+        DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
+        Date: item.GetValueOrDefault("date")?.S ?? "",
+        KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
+        DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
+        DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
+        CreatedAt: item.GetValueOrDefault("created_at")?.S ?? "");
+
+    private static ClipDetail MapToClipDetail(Dictionary<string, AttributeValue> item) => new(
+        ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
+        S3Key: item.GetValueOrDefault("s3_key")?.S ?? "",
+        Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
+        DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
+        Date: item.GetValueOrDefault("date")?.S ?? "",
+        KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
+        KeyframeKeys: item.GetValueOrDefault("keyframe_keys")?.SS ?? new List<string>(),
+        DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
+        DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
+        Detections: item.GetValueOrDefault("detections")?.S,
+        Labeled: item.GetValueOrDefault("labeled")?.BOOL ?? false,
+        CreatedAt: item.GetValueOrDefault("created_at")?.S ?? "",
+        InferenceAt: item.GetValueOrDefault("inference_at")?.S);
+
+    private static DetectionSummary MapToDetectionSummary(Dictionary<string, AttributeValue> item) => new(
+        ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
+        DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "",
+        DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
+        Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
+        Date: item.GetValueOrDefault("date")?.S ?? "",
+        FirstKeyframeKey: item.GetValueOrDefault("keyframe_keys")?.SS?.FirstOrDefault());
+}

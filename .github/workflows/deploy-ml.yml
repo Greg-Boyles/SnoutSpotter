@@ -1,0 +1,46 @@
+name: Deploy ML Models
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/ml/**"
+      - ".github/workflows/deploy-ml.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: "eu-west-1"
+
+jobs:
+  package-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: src/ml/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: src/ml
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package and upload training scripts
+        run: |
+          zip -r ml-training-${{ github.sha }}.zip *.py requirements.txt
+          aws s3 cp ml-training-${{ github.sha }}.zip \
+            s3://${{ secrets.ML_BUCKET_NAME }}/training-packages/
+        working-directory: src/ml
