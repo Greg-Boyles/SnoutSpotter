@@ -21,6 +21,7 @@ public class CoreStack : Stack
             Versioned = false,
             Encryption = BucketEncryption.S3_MANAGED,
             BlockPublicAccess = BlockPublicAccess.BLOCK_ALL,
+            EventBridgeEnabled = true,
             LifecycleRules = new[]
             {
                 new LifecycleRule
