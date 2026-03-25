@@ -32,7 +32,8 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
 {
     Env = env,
     DataBucket = coreStack.DataBucket,
-    ClipsTable = coreStack.ClipsTable
+    ClipsTable = coreStack.ClipsTable,
+    ApiEcrRepo = coreStack.ApiEcrRepo
 });
 
 var webStack = new WebStack(app, "SnoutSpotter-Web", new StackProps { Env = env });
