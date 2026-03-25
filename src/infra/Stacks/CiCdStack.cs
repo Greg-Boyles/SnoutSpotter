@@ -41,7 +41,9 @@ public class CiCdStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[]
             {
-                "ecr:GetAuthorizationToken"
+                "ecr:GetAuthorizationToken",
+                "ecr-public:GetAuthorizationToken",
+                "sts:GetServiceBearerToken"
             },
             Resources = new[] { "*" }
         }));
