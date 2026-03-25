@@ -1,5 +1,4 @@
 using Amazon.CDK;
-using Amazon.CDK.AWS.AppRunner.Alpha;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.IAM;
@@ -25,7 +24,7 @@ public class ApiStack : Stack
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {
-                new LifecycleRule
+                new Amazon.CDK.AWS.ECR.LifecycleRule
                 {
                     MaxImageCount = 5,
                     Description = "Keep only 5 most recent images"

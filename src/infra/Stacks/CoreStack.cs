@@ -58,7 +58,7 @@ public class CoreStack : Stack
         ClipsTable = new Table(this, "ClipsTable", new TableProps
         {
             TableName = "snout-spotter-clips",
-            PartitionKey = new Attribute { Name = "clip_id", Type = AttributeType.STRING },
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "clip_id", Type = AttributeType.STRING },
             BillingMode = BillingMode.PAY_PER_REQUEST,
             RemovalPolicy = RemovalPolicy.RETAIN,
             PointInTimeRecovery = true
@@ -68,8 +68,8 @@ public class CoreStack : Stack
         ClipsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
         {
             IndexName = "by-date",
-            PartitionKey = new Attribute { Name = "date", Type = AttributeType.STRING },
-            SortKey = new Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "date", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
             ProjectionType = ProjectionType.ALL
         });
 
@@ -77,8 +77,8 @@ public class CoreStack : Stack
         ClipsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
         {
             IndexName = "by-detection",
-            PartitionKey = new Attribute { Name = "detection_type", Type = AttributeType.STRING },
-            SortKey = new Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "detection_type", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
             ProjectionType = ProjectionType.ALL
         });
 

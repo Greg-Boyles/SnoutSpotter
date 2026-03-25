@@ -3,6 +3,9 @@ using SnoutSpotter.Infra.Stacks;
 
 var app = new App();
 
+// Tag all resources with Project tag
+Tags.Of(app).Add("Project", "SnoutSpotter");
+
 var env = new Amazon.CDK.Environment
 {
     Account = System.Environment.GetEnvironmentVariable("CDK_DEFAULT_ACCOUNT"),

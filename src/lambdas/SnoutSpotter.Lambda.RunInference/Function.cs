@@ -158,17 +158,20 @@ public class Function
 
         // Convert to tensor [1, 3, 640, 640] normalized to [0, 1]
         var tensor = new DenseTensor<float>(new[] { 1, 3, targetSize, targetSize });
-        for (var y = 0; y < targetSize; y++)
+        resized.ProcessPixelRows(accessor =>
         {
-            var row = resized.DangerousGetPixelRowMemory(y).Span;
-            for (var x = 0; x < targetSize; x++)
+            for (var y = 0; y < targetSize; y++)
             {
-                var pixel = row[x];
-                tensor[0, 0, y, x] = pixel.R / 255f;
-                tensor[0, 1, y, x] = pixel.G / 255f;
-                tensor[0, 2, y, x] = pixel.B / 255f;
+                var row = accessor.GetRowSpan(y);
+                for (var x = 0; x < targetSize; x++)
+                {
+                    var pixel = row[x];
+                    tensor[0, 0, y, x] = pixel.R / 255f;
+                    tensor[0, 1, y, x] = pixel.G / 255f;
+                    tensor[0, 2, y, x] = pixel.B / 255f;
+                }
             }
-        }
+        });
 
         var inputName = _detectorSession.InputNames[0];
         var inputs = new List<NamedOnnxValue>
@@ -227,17 +230,20 @@ public class Function
         float[] std = { 0.229f, 0.224f, 0.225f };
 
         var tensor = new DenseTensor<float>(new[] { 1, 3, targetSize, targetSize });
-        for (var y = 0; y < targetSize; y++)
+        resized.ProcessPixelRows(accessor =>
         {
-            var row = resized.DangerousGetPixelRowMemory(y).Span;
-            for (var x = 0; x < targetSize; x++)
+            for (var y = 0; y < targetSize; y++)
             {
-                var pixel = row[x];
-                tensor[0, 0, y, x] = (pixel.R / 255f - mean[0]) / std[0];
-                tensor[0, 1, y, x] = (pixel.G / 255f - mean[1]) / std[1];
-                tensor[0, 2, y, x] = (pixel.B / 255f - mean[2]) / std[2];
+                var row = accessor.GetRowSpan(y);
+                for (var x = 0; x < targetSize; x++)
+                {
+                    var pixel = row[x];
+                    tensor[0, 0, y, x] = (pixel.R / 255f - mean[0]) / std[0];
+                    tensor[0, 1, y, x] = (pixel.G / 255f - mean[1]) / std[1];
+                    tensor[0, 2, y, x] = (pixel.B / 255f - mean[2]) / std[2];
+                }
             }
-        }
+        });
 
         var inputName = _classifierSession.InputNames[0];
         var inputs = new List<NamedOnnxValue>
