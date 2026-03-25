@@ -13,26 +13,14 @@ public class ApiStackProps : StackProps
 {
     public required Bucket DataBucket { get; init; }
     public required Table ClipsTable { get; init; }
+    public required Repository ApiEcrRepo { get; init; }
 }
 
 public class ApiStack : Stack
 {
     public ApiStack(Construct scope, string id, ApiStackProps props) : base(scope, id, props)
     {
-        // ECR repository for the API Docker image
-        var ecrRepo = new Repository(this, "ApiEcrRepo", new RepositoryProps
-        {
-            RepositoryName = "snout-spotter-api",
-            RemovalPolicy = RemovalPolicy.DESTROY,
-            LifecycleRules = new[]
-            {
-                new Amazon.CDK.AWS.ECR.LifecycleRule
-                {
-                    MaxImageCount = 5,
-                    Description = "Keep only 5 most recent images"
-                }
-            }
-        });
+        var ecrRepo = props.ApiEcrRepo;
 
         // Lambda function running ASP.NET Core API via Lambda Web Adapter
         var apiFunction = new DockerImageFunction(this, "ApiFunction", new DockerImageFunctionProps
@@ -117,12 +105,6 @@ public class ApiStack : Stack
         {
             Value = $"https://{httpApi.AttrApiEndpoint}",
             Description = "API Gateway endpoint URL"
-        });
-
-        _ = new CfnOutput(this, "EcrRepoUri", new CfnOutputProps
-        {
-            Value = ecrRepo.RepositoryUri,
-            Description = "ECR repository URI for the API"
         });
     }
 }

@@ -54,6 +54,25 @@ jobs:
         run: cdk diff --all
         working-directory: src/infra
 
-      - name: CDK deploy
+      - name: CDK deploy core stack
+        run: cdk deploy SnoutSpotter-Core --require-approval never
+        working-directory: src/infra
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Login to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Build and push API Docker image
+        run: |
+          REGISTRY=${{ steps.ecr-login.outputs.registry }}
+          docker build -t $REGISTRY/snout-spotter-api:latest src/api
+          docker push $REGISTRY/snout-spotter-api:latest
+
+      - name: CDK deploy all stacks
         run: cdk deploy --all --require-approval never
         working-directory: src/infra
