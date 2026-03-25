@@ -10,6 +10,7 @@
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="3.7.400" />
     <PackageReference Include="AWSSDK.S3" Version="3.7.400" />
     <PackageReference Include="AWSSDK.CloudWatch" Version="3.7.400" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
   </ItemGroup>
 
 </Project>
