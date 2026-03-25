@@ -45,6 +45,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy to S3
+        working-directory: src/web
         run: |
           aws s3 sync dist/ s3://${{ secrets.WEB_BUCKET_NAME }} --delete
 
