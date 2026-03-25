@@ -7,7 +7,7 @@ RUN dotnet publish -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 # Lambda Web Adapter — proxies Lambda events to the ASP.NET app on port 8080
-COPY --from=public.ecr.aws/awsguru/aws-lambda-web-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app
 COPY --from=build /app/publish .
 EXPOSE 8080

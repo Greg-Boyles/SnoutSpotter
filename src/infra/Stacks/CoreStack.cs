@@ -1,5 +1,6 @@
 using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
+using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.S3;
 using Constructs;
@@ -10,6 +11,7 @@ public class CoreStack : Stack
 {
     public Bucket DataBucket { get; }
     public Table ClipsTable { get; }
+    public Repository ApiEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -24,7 +26,7 @@ public class CoreStack : Stack
             EventBridgeEnabled = true,
             LifecycleRules = new[]
             {
-                new LifecycleRule
+                new Amazon.CDK.AWS.S3.LifecycleRule
                 {
                     Id = "TransitionToIA",
                     Prefix = "raw-clips/",
@@ -106,7 +108,28 @@ public class CoreStack : Stack
             }
         }));
 
+        // ECR repository for the API Docker image (created here so it exists before ApiStack needs it)
+        ApiEcrRepo = new Repository(this, "ApiEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-api",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 5,
+                    Description = "Keep only 5 most recent images"
+                }
+            }
+        });
+
         // Outputs
+        _ = new CfnOutput(this, "ApiEcrRepoUri", new CfnOutputProps
+        {
+            Value = ApiEcrRepo.RepositoryUri,
+            Description = "ECR repository URI for the API"
+        });
+
         _ = new CfnOutput(this, "DataBucketName", new CfnOutputProps
         {
             Value = DataBucket.BucketName,
