@@ -26,8 +26,3 @@ jobs:
     needs: infra
     uses: ./.github/workflows/deploy-web.yml
     secrets: inherit
-
-  ml:
-    needs: infra
-    uses: ./.github/workflows/deploy-ml.yml
-    secrets: inherit
