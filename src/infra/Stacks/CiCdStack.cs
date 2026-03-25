@@ -41,7 +41,9 @@ public class CiCdStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[]
             {
-                "ecr:GetAuthorizationToken"
+                "ecr:GetAuthorizationToken",
+                "ecr-public:GetAuthorizationToken",
+                "sts:GetServiceBearerToken"
             },
             Resources = new[] { "*" }
         }));
@@ -103,19 +105,6 @@ public class CiCdStack : Stack
                 "lambda:PublishVersion"
             },
             Resources = new[] { $"arn:aws:lambda:{Region}:{Account}:function:snout-spotter-*" }
-        }));
-
-        // App Runner permissions (deploy API)
-        deployRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[]
-            {
-                "apprunner:ListServices",
-                "apprunner:StartDeployment",
-                "apprunner:DescribeService"
-            },
-            Resources = new[] { "*" }
         }));
 
         // CDK / CloudFormation permissions (deploy infra)
