@@ -1,11 +1,7 @@
 name: Deploy ML Models
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/ml/**"
-      - ".github/workflows/deploy-ml.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
