@@ -41,6 +41,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Publish Lambda projects
+        run: |
+          dotnet publish src/lambdas/SnoutSpotter.Lambda.IngestClip -c Release
+          dotnet publish src/lambdas/SnoutSpotter.Lambda.RunInference -c Release
+
       - name: Restore & build
         run: dotnet build --configuration Release
         working-directory: src/infra
