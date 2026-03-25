@@ -43,4 +43,6 @@ var monitoringStack = new MonitoringStack(app, "SnoutSpotter-Monitoring", new Mo
     DataBucket = coreStack.DataBucket
 });
 
+var cicdStack = new CiCdStack(app, "SnoutSpotter-CiCd", new StackProps { Env = env });
+
 app.Synth();
