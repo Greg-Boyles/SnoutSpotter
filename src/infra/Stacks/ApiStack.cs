@@ -1,7 +1,9 @@
 using Amazon.CDK;
+using Amazon.CDK.AWS.Apigatewayv2;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.IAM;
+using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.S3;
 using Constructs;
 
@@ -32,39 +34,95 @@ public class ApiStack : Stack
             }
         });
 
-        // IAM role for App Runner instance
-        var instanceRole = new Role(this, "AppRunnerInstanceRole", new RoleProps
+        // Lambda function running ASP.NET Core API via Lambda Web Adapter
+        var apiFunction = new DockerImageFunction(this, "ApiFunction", new DockerImageFunctionProps
         {
-            AssumedBy = new ServicePrincipal("tasks.apprunner.amazonaws.com"),
-            RoleName = "snout-spotter-api-instance-role"
+            FunctionName = "snout-spotter-api",
+            Description = "SnoutSpotter ASP.NET Core API via Lambda Web Adapter",
+            Code = DockerImageCode.FromEcr(ecrRepo, new EcrImageCodeProps
+            {
+                TagOrDigest = "latest"
+            }),
+            MemorySize = 512,
+            Timeout = Duration.Seconds(30),
+            Environment = new Dictionary<string, string>
+            {
+                ["BUCKET_NAME"] = props.DataBucket.BucketName,
+                ["TABLE_NAME"] = props.ClipsTable.TableName,
+                ["AWS_LWA_PORT"] = "8080"
+            }
         });
 
-        props.DataBucket.GrantRead(instanceRole);
-        props.ClipsTable.GrantReadData(instanceRole);
+        // Grant permissions
+        props.DataBucket.GrantRead(apiFunction);
+        props.ClipsTable.GrantReadData(apiFunction);
+        props.DataBucket.GrantRead(apiFunction, "raw-clips/*");
+        props.DataBucket.GrantRead(apiFunction, "keyframes/*");
 
-        // Allow presigned URL generation (needs s3:GetObject)
-        props.DataBucket.GrantRead(instanceRole, "raw-clips/*");
-        props.DataBucket.GrantRead(instanceRole, "keyframes/*");
-
-        // Allow CloudWatch read for health metrics
-        instanceRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
             Actions = new[] { "cloudwatch:GetMetricData", "cloudwatch:ListMetrics" },
             Resources = new[] { "*" }
         }));
 
+        // HTTP API Gateway
+        var httpApi = new CfnApi(this, "ApiGateway", new CfnApiProps
+        {
+            Name = "snout-spotter-api",
+            ProtocolType = "HTTP",
+            CorsConfiguration = new CfnApi.CorsProperty
+            {
+                AllowOrigins = new[] { "*" },
+                AllowMethods = new[] { "GET", "POST", "PUT", "DELETE", "OPTIONS" },
+                AllowHeaders = new[] { "*" },
+                MaxAge = 3600
+            }
+        });
+
+        // Lambda integration
+        var integration = new CfnIntegration(this, "ApiIntegration", new CfnIntegrationProps
+        {
+            ApiId = httpApi.Ref,
+            IntegrationType = "AWS_PROXY",
+            IntegrationUri = apiFunction.FunctionArn,
+            PayloadFormatVersion = "2.0"
+        });
+
+        // Default route: proxy all requests to Lambda
+        _ = new CfnRoute(this, "DefaultRoute", new CfnRouteProps
+        {
+            ApiId = httpApi.Ref,
+            RouteKey = "$default",
+            Target = $"integrations/{integration.Ref}"
+        });
+
+        // Auto-deploy stage
+        _ = new CfnStage(this, "ApiStage", new CfnStageProps
+        {
+            ApiId = httpApi.Ref,
+            StageName = "$default",
+            AutoDeploy = true
+        });
+
+        // Grant API Gateway permission to invoke Lambda
+        apiFunction.AddPermission("ApiGatewayInvoke", new Permission
+        {
+            Principal = new ServicePrincipal("apigateway.amazonaws.com"),
+            SourceArn = $"arn:aws:execute-api:{Region}:{Account}:{httpApi.Ref}/*"
+        });
+
         // Outputs
+        _ = new CfnOutput(this, "ApiUrl", new CfnOutputProps
+        {
+            Value = $"https://{httpApi.AttrApiEndpoint}",
+            Description = "API Gateway endpoint URL"
+        });
+
         _ = new CfnOutput(this, "EcrRepoUri", new CfnOutputProps
         {
             Value = ecrRepo.RepositoryUri,
             Description = "ECR repository URI for the API"
-        });
-
-        _ = new CfnOutput(this, "InstanceRoleArn", new CfnOutputProps
-        {
-            Value = instanceRole.RoleArn,
-            Description = "IAM role ARN for App Runner instance"
         });
     }
 }
