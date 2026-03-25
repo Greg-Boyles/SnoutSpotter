@@ -1,0 +1,38 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  infra:
+    uses: ./.github/workflows/deploy-infra.yml
+    secrets: inherit
+
+  api:
+    needs: infra
+    uses: ./.github/workflows/deploy-api.yml
+    secrets: inherit
+
+  lambdas:
+    needs: infra
+    uses: ./.github/workflows/deploy-lambdas.yml
+    secrets: inherit
+
+  web:
+    needs: infra
+    uses: ./.github/workflows/deploy-web.yml
+    secrets: inherit
+
+  ml:
+    needs: infra
+    uses: ./.github/workflows/deploy-ml.yml
+    secrets: inherit

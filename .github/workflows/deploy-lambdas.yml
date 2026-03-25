@@ -1,11 +1,7 @@
 name: Deploy Lambdas
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/lambdas/**"
-      - ".github/workflows/deploy-lambdas.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
