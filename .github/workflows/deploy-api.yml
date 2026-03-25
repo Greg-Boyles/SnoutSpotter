@@ -15,7 +15,7 @@ permissions:
 env:
   DOTNET_VERSION: "8.0.x"
   AWS_REGION: "eu-west-1"
-  ECR_REPOSITORY: "snoutspotter-api"
+  ECR_REPOSITORY: "snout-spotter-api"
 
 jobs:
   build-and-deploy:
@@ -47,9 +47,13 @@ jobs:
           docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Deploy to ECS
+      - name: Deploy to App Runner
         run: |
-          aws ecs update-service \
-            --cluster snoutspotter \
-            --service snoutspotter-api \
-            --force-new-deployment
+          # Get App Runner service ARN if it exists
+          SERVICE_ARN=$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='snout-spotter-api'].ServiceArn" --output text)
+          if [ -n "$SERVICE_ARN" ]; then
+            aws apprunner start-deployment --service-arn $SERVICE_ARN
+          else
+            echo "App Runner service not found. Create it via CDK or manually."
+            echo "Image pushed to ECR: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest"
+          fi

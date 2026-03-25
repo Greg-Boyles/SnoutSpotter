@@ -27,7 +27,11 @@ def load_config(path: str = "config.yaml") -> dict:
 class UploadLedger:
     """Local SQLite ledger to track upload status."""
 
-    def __init__(self, db_path: str = "/home/pi/snout-spotter/uploads.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            db_dir = Path.home() / ".snoutspotter"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = str(db_dir / "uploads.db")
         self.conn = sqlite3.connect(db_path)
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS uploads (

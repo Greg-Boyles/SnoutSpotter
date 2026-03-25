@@ -1,8 +1,9 @@
 using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
+using Amazon.CDK.AWS.Events;
+using Amazon.CDK.AWS.Events.Targets;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.S3;
-using Amazon.CDK.AWS.S3.Notifications;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -17,19 +18,15 @@ public class IngestStack : Stack
 {
     public IngestStack(Construct scope, string id, IngestStackProps props) : base(scope, id, props)
     {
-        // FFmpeg Lambda layer (community-maintained)
-        var ffmpegLayer = LayerVersion.FromLayerVersionArn(this, "FfmpegLayer",
-            $"arn:aws:lambda:{Region}:017000801446:layer:AWSLambda-Python-FFmpeg:1");
-
+        // Note: FFmpeg layer removed - keyframe extraction can be added later with custom layer
         var ingestFunction = new Function(this, "IngestClipFunction", new FunctionProps
         {
             FunctionName = "snout-spotter-ingest-clip",
             Runtime = Runtime.DOTNET_8,
             Handler = "SnoutSpotter.Lambda.IngestClip::SnoutSpotter.Lambda.IngestClip.Function::FunctionHandler",
             Code = Code.FromAsset("../lambdas/SnoutSpotter.Lambda.IngestClip/bin/Release/net8.0/publish"),
-            MemorySize = 1024,
-            Timeout = Duration.Minutes(5),
-            Layers = new[] { ffmpegLayer },
+            MemorySize = 512,
+            Timeout = Duration.Minutes(2),
             Environment = new Dictionary<string, string>
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
@@ -41,14 +38,36 @@ public class IngestStack : Stack
         props.DataBucket.GrantReadWrite(ingestFunction);
         props.ClipsTable.GrantWriteData(ingestFunction);
 
-        // S3 trigger: invoke Lambda on new .mp4 files in raw-clips/
-        props.DataBucket.AddEventNotification(
-            EventType.OBJECT_CREATED,
-            new LambdaDestination(ingestFunction),
-            new NotificationKeyFilter
+        // EventBridge rule: trigger Lambda when .mp4 uploaded to raw-clips/
+        var rule = new Rule(this, "IngestClipRule", new RuleProps
+        {
+            RuleName = "snout-spotter-ingest-trigger",
+            Description = "Trigger IngestClip Lambda when new clips are uploaded to S3",
+            EventPattern = new EventPattern
             {
-                Prefix = "raw-clips/",
-                Suffix = ".mp4"
-            });
+                Source = new[] { "aws.s3" },
+                DetailType = new[] { "Object Created" },
+                Detail = new Dictionary<string, object>
+                {
+                    ["bucket"] = new Dictionary<string, object>
+                    {
+                        ["name"] = new[] { props.DataBucket.BucketName }
+                    },
+                    ["object"] = new Dictionary<string, object>
+                    {
+                        ["key"] = new[] { new Dictionary<string, string> { ["prefix"] = "raw-clips/" } }
+                    }
+                }
+            }
+        });
+
+        rule.AddTarget(new LambdaFunction(ingestFunction));
+
+        // Output
+        _ = new CfnOutput(this, "IngestFunctionArn", new CfnOutputProps
+        {
+            Value = ingestFunction.FunctionArn,
+            Description = "ARN of the IngestClip Lambda function"
+        });
     }
 }
