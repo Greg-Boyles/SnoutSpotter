@@ -24,6 +24,14 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install AWS CDK CLI
+        run: npm install -g aws-cdk
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -40,17 +48,22 @@ jobs:
           registry-type: public
 
       - name: Build and push Docker image
-        working-directory: src/api
         run: |
           IMAGE_TAG=${{ github.sha }}
           REGISTRY=${{ steps.ecr-login.outputs.registry }}
-          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $REGISTRY/$ECR_REPOSITORY:latest .
+          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $REGISTRY/$ECR_REPOSITORY:latest src/api
           docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Update Lambda function
+      - name: Publish Lambda projects
         run: |
-          aws lambda update-function-code \
-            --function-name snout-spotter-api \
-            --image-uri ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
-            --publish
+          dotnet publish src/lambdas/SnoutSpotter.Lambda.IngestClip -c Release
+          dotnet publish src/lambdas/SnoutSpotter.Lambda.RunInference -c Release
+
+      - name: Build CDK
+        run: dotnet build --configuration Release
+        working-directory: src/infra
+
+      - name: CDK deploy API stack
+        run: cdk deploy SnoutSpotter-Api --require-approval never
+        working-directory: src/infra

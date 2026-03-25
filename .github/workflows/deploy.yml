@@ -22,11 +22,6 @@ jobs:
     uses: ./.github/workflows/deploy-api.yml
     secrets: inherit
 
-  lambdas:
-    needs: infra
-    uses: ./.github/workflows/deploy-lambdas.yml
-    secrets: inherit
-
   web:
     needs: infra
     uses: ./.github/workflows/deploy-web.yml
