@@ -16,18 +16,52 @@ public class PiController : ControllerBase
         _healthService = healthService;
     }
 
-    [HttpGet("status")]
-    public async Task<ActionResult> GetStatus()
+    [HttpGet("devices")]
+    public async Task<ActionResult> GetDevices()
     {
-        var shadow = await _piUpdateService.GetPiShadowAsync();
+        var thingNames = await _piUpdateService.ListPisAsync();
         var latestVersion = await _piUpdateService.GetLatestVersionAsync();
-        var piOnline = await _healthService.IsPiOnlineAsync();
+
+        var devices = new List<object>();
+        foreach (var thingName in thingNames)
+        {
+            var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
+            var piOnline = shadow?.LastHeartbeat != null &&
+                DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
+                (DateTime.UtcNow - lastHb).TotalMinutes < 5;
+
+            devices.Add(new
+            {
+                thingName,
+                online = piOnline,
+                version = shadow?.Version,
+                hostname = shadow?.Hostname,
+                lastHeartbeat = shadow?.LastHeartbeat,
+                updateStatus = shadow?.UpdateStatus ?? "idle",
+                services = shadow?.Services,
+                latestVersion,
+                updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
+            });
+        }
+
+        return Ok(new { devices, latestVersion });
+    }
+
+    [HttpGet("{thingName}/status")]
+    public async Task<ActionResult> GetStatus(string thingName)
+    {
+        var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
+        var latestVersion = await _piUpdateService.GetLatestVersionAsync();
+        var piOnline = shadow?.LastHeartbeat != null &&
+            DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
+            (DateTime.UtcNow - lastHb).TotalMinutes < 5;
 
         return Ok(new
         {
-            piOnline,
-            piVersion = shadow?.Version,
-            piHostname = shadow?.Hostname,
+            thingName,
+            online = piOnline,
+            version = shadow?.Version,
+            hostname = shadow?.Hostname,
             lastHeartbeat = shadow?.LastHeartbeat,
             updateStatus = shadow?.UpdateStatus ?? "idle",
             services = shadow?.Services,
@@ -36,13 +70,28 @@ public class PiController : ControllerBase
         });
     }
 
-    [HttpPost("update")]
-    public async Task<ActionResult> TriggerUpdate([FromBody] UpdateRequest? request = null)
+    [HttpPost("{thingName}/update")]
+    public async Task<ActionResult> TriggerUpdate(string thingName, [FromBody] UpdateRequest? request = null)
     {
         try
         {
-            await _piUpdateService.TriggerUpdateAsync(request?.Version);
-            return Ok(new { message = "Update triggered", version = request?.Version ?? await _piUpdateService.GetLatestVersionAsync() });
+            await _piUpdateService.TriggerUpdateAsync(thingName, request?.Version);
+            return Ok(new { message = "Update triggered", thingName, version = request?.Version ?? await _piUpdateService.GetLatestVersionAsync() });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("update-all")]
+    public async Task<ActionResult> TriggerUpdateAll([FromBody] UpdateRequest? request = null)
+    {
+        try
+        {
+            await _piUpdateService.TriggerUpdateAllAsync(request?.Version);
+            var devices = await _piUpdateService.ListPisAsync();
+            return Ok(new { message = "Update triggered for all devices", deviceCount = devices.Count, version = request?.Version ?? await _piUpdateService.GetLatestVersionAsync() });
         }
         catch (InvalidOperationException ex)
         {

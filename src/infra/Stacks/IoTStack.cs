@@ -6,19 +6,25 @@ namespace SnoutSpotter.Infra.Stacks;
 
 public class IoTStack : Stack
 {
-    public string ThingName { get; }
+    public string ThingGroupName { get; }
 
     public IoTStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
-        ThingName = "snoutspotter-pi";
+        ThingGroupName = "snoutspotter-pis";
 
-        // IoT Thing representing the Pi
-        var thing = new CfnThing(this, "PiThing", new CfnThingProps
+        // Thing Group for all SnoutSpotter Pi devices
+        // Individual things will be registered dynamically via Pi Management API
+        var thingGroup = new CfnThingGroup(this, "PiThingGroup", new CfnThingGroupProps
         {
-            ThingName = ThingName
+            ThingGroupName = ThingGroupName,
+            ThingGroupProperties = new CfnThingGroup.ThingGroupPropertiesProperty
+            {
+                ThingGroupDescription = "SnoutSpotter Raspberry Pi devices"
+            }
         });
 
-        // IoT Policy allowing shadow operations and MQTT connect
+        // IoT Policy: uses ${iot:Connection.Thing.ThingName} variable so any
+        // registered thing can connect and manage its own shadow
         var iotPolicy = new CfnPolicy(this, "PiPolicy", new CfnPolicyProps
         {
             PolicyName = "snoutspotter-pi-policy",
@@ -31,7 +37,7 @@ public class IoTStack : Stack
                     {
                         ["Effect"] = "Allow",
                         ["Action"] = "iot:Connect",
-                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:client/{ThingName}"
+                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:client/${{iot:Connection.Thing.ThingName}}*"
                     },
                     new Dictionary<string, object>
                     {
@@ -39,31 +45,31 @@ public class IoTStack : Stack
                         ["Action"] = new[] { "iot:Subscribe", "iot:Receive" },
                         ["Resource"] = new[]
                         {
-                            $"arn:aws:iot:{Region}:{Account}:topicfilter/$aws/things/{ThingName}/shadow/*",
-                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/{ThingName}/shadow/*"
+                            $"arn:aws:iot:{Region}:{Account}:topicfilter/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
+                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*"
                         }
                     },
                     new Dictionary<string, object>
                     {
                         ["Effect"] = "Allow",
                         ["Action"] = "iot:Publish",
-                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/{ThingName}/shadow/*"
+                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*"
                     }
                 }
             }
         });
 
         // Outputs
-        _ = new CfnOutput(this, "IoTThingName", new CfnOutputProps
+        _ = new CfnOutput(this, "IoTThingGroupName", new CfnOutputProps
         {
-            Value = ThingName,
-            Description = "IoT Thing name for the Pi"
+            Value = ThingGroupName,
+            Description = "IoT Thing Group for SnoutSpotter Pi devices"
         });
 
         _ = new CfnOutput(this, "IoTPolicyName", new CfnOutputProps
         {
             Value = iotPolicy.PolicyName!,
-            Description = "IoT Policy name for the Pi"
+            Description = "IoT Policy name for Pi devices"
         });
     }
 }

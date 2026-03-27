@@ -28,7 +28,7 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
 export default function SystemHealthPage() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
+  const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
 
   const refreshHealth = () =>
@@ -44,12 +44,12 @@ export default function SystemHealthPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleUpdate = async () => {
-    setUpdating(true);
+  const handleUpdate = async (thingName: string) => {
+    setUpdating((prev) => ({ ...prev, [thingName]: true }));
     setUpdateMessage(null);
     try {
-      const result = await api.triggerPiUpdate();
-      setUpdateMessage(`Update to v${result.version} triggered`);
+      const result = await api.triggerPiUpdate(thingName);
+      setUpdateMessage(`Update to v${result.version} triggered for ${thingName}`);
       // Poll for status changes
       setTimeout(refreshHealth, 5000);
       setTimeout(refreshHealth, 15000);
@@ -57,7 +57,23 @@ export default function SystemHealthPage() {
     } catch (e) {
       setUpdateMessage(`Update failed: ${(e as Error).message}`);
     } finally {
-      setUpdating(false);
+      setUpdating((prev) => ({ ...prev, [thingName]: false }));
+    }
+  };
+
+  const handleUpdateAll = async () => {
+    setUpdating((prev) => ({ ...prev, all: true }));
+    setUpdateMessage(null);
+    try {
+      const result = await api.triggerPiUpdateAll();
+      setUpdateMessage(`Update to v${result.version} triggered for ${result.deviceCount} device(s)`);
+      setTimeout(refreshHealth, 5000);
+      setTimeout(refreshHealth, 15000);
+      setTimeout(refreshHealth, 30000);
+    } catch (e) {
+      setUpdateMessage(`Update failed: ${(e as Error).message}`);
+    } finally {
+      setUpdating((prev) => ({ ...prev, all: false }));
     }
   };
 
@@ -69,102 +85,152 @@ export default function SystemHealthPage() {
 
   if (!health) return <div className="text-gray-400">Loading...</div>;
 
-  const metrics = [
-    {
-      icon: health.piOnline ? Wifi : WifiOff,
-      label: "Pi Status",
-      value: health.piOnline ? "Online" : "Offline",
-      sub: `Checked ${formatDistanceToNow(new Date(health.checkedAt), { addSuffix: true })}`,
-      ok: health.piOnline,
-    },
-    {
-      icon: Server,
-      label: "API",
-      value: "Healthy",
-      sub: "Responding normally",
-      ok: true,
-    },
-  ];
+  const allOnline = health.devices.every((d) => d.online);
+  const anyUpdateAvailable = health.devices.some((d) => d.updateAvailable);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">System Health</h1>
-        <StatusBadge
-          ok={health.piOnline}
-          label={health.piOnline ? "All Systems Go" : "Pi Offline"}
-        />
+        <div className="flex items-center gap-3">
+          <StatusBadge
+            ok={allOnline}
+            label={allOnline ? "All Systems Go" : `${health.devices.filter((d) => !d.online).length} Offline`}
+          />
+          {anyUpdateAvailable && (
+            <button
+              onClick={handleUpdateAll}
+              disabled={updating.all}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-3 h-3 ${updating.all ? "animate-spin" : ""}`} />
+              {updating.all ? "Updating..." : "Update All"}
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {metrics.map((m) => (
+      {updateMessage && (
+        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-lg text-sm">
+          {updateMessage}
+        </div>
+      )}
+
+      {/* API Health */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Server className="w-5 h-5 text-gray-400" />
+            <span className="text-sm text-gray-500">API</span>
+          </div>
+          <span className="w-2 h-2 rounded-full bg-green-500" />
+        </div>
+        <p className="text-2xl font-bold text-gray-900 mt-2">Healthy</p>
+        <p className="text-xs text-gray-400 mt-1">
+          Checked {formatDistanceToNow(new Date(health.checkedAt), { addSuffix: true })}
+        </p>
+      </div>
+
+      {/* Pi Devices */}
+      <h2 className="text-lg font-semibold text-gray-900 mb-3">Raspberry Pi Devices</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {health.devices.map((device) => (
           <div
-            key={m.label}
+            key={device.thingName}
             className="bg-white rounded-xl border border-gray-200 p-5"
           >
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <m.icon className="w-5 h-5 text-gray-400" />
-                <span className="text-sm text-gray-500">{m.label}</span>
+                {device.online ? (
+                  <Wifi className="w-5 h-5 text-green-500" />
+                ) : (
+                  <WifiOff className="w-5 h-5 text-red-500" />
+                )}
+                <span className="font-medium text-gray-900">
+                  {device.hostname || device.thingName}
+                </span>
               </div>
               <span
-                className={`w-2 h-2 rounded-full ${m.ok ? "bg-green-500" : "bg-red-500"}`}
+                className={`w-2 h-2 rounded-full ${device.online ? "bg-green-500" : "bg-red-500"}`}
               />
             </div>
-            <p className="text-2xl font-bold text-gray-900">{m.value}</p>
-            {m.sub && <p className="text-xs text-gray-400 mt-1">{m.sub}</p>}
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">Status</span>
+                <StatusBadge ok={device.online} label={device.online ? "Online" : "Offline"} />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">Version</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {device.version ? `v${device.version}` : "Unknown"}
+                </span>
+              </div>
+
+              {device.lastHeartbeat && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">Last seen</span>
+                  <span className="text-xs text-gray-400">
+                    {formatDistanceToNow(new Date(device.lastHeartbeat), { addSuffix: true })}
+                  </span>
+                </div>
+              )}
+
+              {device.updateStatus && device.updateStatus !== "idle" && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">Update Status</span>
+                  <span
+                    className={`text-xs font-medium ${
+                      device.updateStatus === "success"
+                        ? "text-green-600"
+                        : device.updateStatus === "failed"
+                        ? "text-red-600"
+                        : "text-blue-600"
+                    }`}
+                  >
+                    {device.updateStatus}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {device.updateAvailable && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-amber-600">
+                    v{health.latestVersion} available
+                  </span>
+                  <button
+                    onClick={() => handleUpdate(device.thingName)}
+                    disabled={updating[device.thingName] || device.updateStatus === "updating"}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw
+                      className={`w-3 h-3 ${
+                        updating[device.thingName] ? "animate-spin" : ""
+                      }`}
+                    />
+                    {updating[device.thingName] ? "Updating..." : "Update"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!device.updateAvailable && device.version && (
+              <p className="text-xs text-green-600 mt-3 pt-3 border-t border-gray-100">
+                Up to date
+              </p>
+            )}
           </div>
         ))}
 
-        {/* Pi Software Version */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Package className="w-5 h-5 text-gray-400" />
-              <span className="text-sm text-gray-500">Pi Software</span>
-            </div>
-            {health.updateAvailable && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
-                Update Available
-              </span>
-            )}
+        {health.devices.length === 0 && (
+          <div className="col-span-2 bg-gray-50 rounded-xl border border-gray-200 p-8 text-center">
+            <WifiOff className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500">No Pi devices registered</p>
           </div>
-          <p className="text-2xl font-bold text-gray-900">
-            {health.piVersion ? `v${health.piVersion}` : "Unknown"}
-          </p>
-          {health.latestVersion && health.piVersion !== health.latestVersion && (
-            <p className="text-xs text-amber-600 mt-1">
-              v{health.latestVersion} available
-            </p>
-          )}
-          {health.piVersion && !health.updateAvailable && (
-            <p className="text-xs text-green-600 mt-1">Up to date</p>
-          )}
-          {health.updateStatus && health.updateStatus !== "idle" && (
-            <p className={`text-xs mt-1 ${
-              health.updateStatus === "success" ? "text-green-600" :
-              health.updateStatus === "failed" ? "text-red-600" :
-              "text-blue-600"
-            }`}>
-              Status: {health.updateStatus}
-            </p>
-          )}
-
-          {health.updateAvailable && (
-            <button
-              onClick={handleUpdate}
-              disabled={updating || health.updateStatus === "updating"}
-              className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`w-3 h-3 ${updating ? "animate-spin" : ""}`} />
-              {updating ? "Triggering..." : "Update Now"}
-            </button>
-          )}
-
-          {updateMessage && (
-            <p className="text-xs text-gray-500 mt-2">{updateMessage}</p>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
