@@ -11,7 +11,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IAmazonDynamoDB, AmazonDynamoDBClient>();
 builder.Services.AddSingleton<IAmazonS3, AmazonS3Client>();
 builder.Services.AddSingleton<IAmazonCloudWatch, AmazonCloudWatchClient>();
-builder.Services.AddSingleton<IAmazonIoT, AmazonIoTClient>();
+builder.Services.AddSingleton<IAmazonIoT>(_ =>
+    new AmazonIoTClient(Amazon.RegionEndpoint.EUWest1));
 builder.Services.AddSingleton<IAmazonIotData>(_ =>
     new AmazonIotDataClient(new AmazonIotDataConfig
     {
