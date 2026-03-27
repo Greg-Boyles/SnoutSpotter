@@ -14,6 +14,7 @@ public class ApiStackProps : StackProps
     public required Bucket DataBucket { get; init; }
     public required Table ClipsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
+    public required string ImageTag { get; init; }
 }
 
 public class ApiStack : Stack
@@ -29,7 +30,7 @@ public class ApiStack : Stack
             Description = "SnoutSpotter ASP.NET Core API via Lambda Web Adapter",
             Code = DockerImageCode.FromEcr(ecrRepo, new EcrImageCodeProps
             {
-                TagOrDigest = "latest"
+                TagOrDigest = props.ImageTag
             }),
             MemorySize = 512,
             Timeout = Duration.Seconds(30),
