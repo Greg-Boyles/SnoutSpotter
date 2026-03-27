@@ -28,3 +28,10 @@ health:
   namespace: SnoutSpotter
   metric_name: PiHeartbeat
   interval_seconds: 300    # 5 minutes
+
+iot:
+  endpoint: ""             # Set to your IoT endpoint (xxxxx-ats.iot.eu-west-1.amazonaws.com)
+  thing_name: snoutspotter-pi
+  cert_path: ~/.snoutspotter/certs/device.pem.crt
+  key_path: ~/.snoutspotter/certs/private.pem.key
+  root_ca_path: ~/.snoutspotter/certs/AmazonRootCA1.pem
