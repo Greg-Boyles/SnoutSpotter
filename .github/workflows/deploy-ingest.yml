@@ -1,4 +1,4 @@
-name: Deploy Ingest Lambda
+name: Deploy ingest Lambda
 
 on:
   workflow_call:

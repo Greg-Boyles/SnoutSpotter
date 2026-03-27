@@ -1,4 +1,4 @@
-name: Deploy Inference Lambda
+name: Deploy inference Lambda
 
 on:
   workflow_call:

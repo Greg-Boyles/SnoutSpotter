@@ -1,4 +1,4 @@
-name: Deploy Pi Management
+name: Deploy Pi management
 
 on:
   workflow_call:
@@ -42,7 +42,7 @@ jobs:
         run: dotnet build --configuration Release
         working-directory: src/infra
 
-      - name: CDK deploy Pi Management stack
+      - name: CDK deploy Pi management stack
         run: cdk deploy SnoutSpotter-PiMgmt --require-approval never
         working-directory: src/infra
         env:

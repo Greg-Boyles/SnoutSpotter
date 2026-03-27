@@ -1,4 +1,4 @@
-name: Build Ingest Image
+name: Build ingest image
 
 on:
   workflow_call:

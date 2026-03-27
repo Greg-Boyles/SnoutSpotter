@@ -1,4 +1,4 @@
-name: Build Inference Image
+name: Build inference image
 
 on:
   workflow_call:
