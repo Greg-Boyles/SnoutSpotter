@@ -4,7 +4,6 @@ import {
   Wifi,
   WifiOff,
   Server,
-  Package,
   RefreshCw,
 } from "lucide-react";
 import { api } from "../api";

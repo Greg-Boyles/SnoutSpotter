@@ -73,7 +73,7 @@ public class PiUpdateService
                     : null
             };
         }
-        catch (ResourceNotFoundException)
+        catch (Amazon.IotData.Model.ResourceNotFoundException)
         {
             return null; // Shadow doesn't exist yet
         }
