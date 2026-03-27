@@ -13,6 +13,7 @@ public class CoreStack : Stack
     public Table ClipsTable { get; }
     public Repository ApiEcrRepo { get; }
     public Repository IngestEcrRepo { get; }
+    public Repository InferenceEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -128,6 +129,21 @@ public class CoreStack : Stack
         IngestEcrRepo = new Repository(this, "IngestEcrRepo", new RepositoryProps
         {
             RepositoryName = "snout-spotter-ingest",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        // ECR repository for RunInference Lambda Docker image
+        InferenceEcrRepo = new Repository(this, "InferenceEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-inference",
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {

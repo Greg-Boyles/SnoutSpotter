@@ -27,7 +27,9 @@ var inferenceStack = new InferenceStack(app, "SnoutSpotter-Inference", new Infer
 {
     Env = env,
     DataBucket = coreStack.DataBucket,
-    ClipsTable = coreStack.ClipsTable
+    ClipsTable = coreStack.ClipsTable,
+    InferenceEcrRepo = coreStack.InferenceEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
 var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
