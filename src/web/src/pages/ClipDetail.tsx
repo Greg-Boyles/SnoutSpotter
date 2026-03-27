@@ -42,31 +42,31 @@ export default function ClipDetail() {
         Clip {clip.clipId}
       </h1>
 
-      {/* Video player */}
-      {clip.videoUrl && (
-        <div className="bg-black rounded-xl overflow-hidden mb-6 max-w-3xl">
-          <video controls className="w-full" src={clip.videoUrl} />
-        </div>
-      )}
-
-      {/* Keyframes */}
-      {clip.keyframeUrls && clip.keyframeUrls.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">
-            Keyframes
-          </h2>
-          <div className="flex gap-2 overflow-x-auto">
-            {clip.keyframeUrls.map((url, i) => (
-              <img
-                key={i}
-                src={url}
-                alt={`Keyframe ${i + 1}`}
-                className="h-24 rounded-lg border border-gray-200"
-              />
-            ))}
+      {/* Clip Info */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6 max-w-md">
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Duration:</span>
+            <span className="font-medium">{clip.durationSeconds}s</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Date:</span>
+            <span className="font-medium">{clip.date}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Detection:</span>
+            <span className="font-medium">{clip.detectionType}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Keyframes:</span>
+            <span className="font-medium">{clip.keyframeCount}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Detections:</span>
+            <span className="font-medium">{clip.detectionCount}</span>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Detections */}
       {detections.length > 0 && (
