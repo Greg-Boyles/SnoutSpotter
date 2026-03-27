@@ -37,7 +37,8 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     Env = env,
     DataBucket = coreStack.DataBucket,
     ClipsTable = coreStack.ClipsTable,
-    ApiEcrRepo = coreStack.ApiEcrRepo
+    ApiEcrRepo = coreStack.ApiEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
 var webStack = new WebStack(app, "SnoutSpotter-Web", new StackProps { Env = env });
