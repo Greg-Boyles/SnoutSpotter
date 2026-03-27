@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda.Core;
-using Amazon.Lambda.S3Events;
 using Amazon.S3;
 using Amazon.S3.Model;
 
@@ -38,43 +38,42 @@ public class Function
         _tableName = tableName;
     }
 
-    public async Task FunctionHandler(S3Event s3Event, ILambdaContext context)
+    public async Task FunctionHandler(EventBridgeEvent<S3EventDetail> eventBridgeEvent, ILambdaContext context)
     {
-        foreach (var record in s3Event.Records)
+        var detail = eventBridgeEvent.Detail;
+        var s3Key = detail.Object.Key;
+        
+        context.Logger.LogInformation($"Processing: {s3Key}");
+
+        // Parse metadata from key: raw-clips/YYYY/MM/DD/timestamp_durations.mp4
+        var (clipId, timestamp, durationSeconds, date) = ParseS3Key(s3Key);
+
+        // Download the video to /tmp for keyframe extraction
+        var localVideoPath = $"/tmp/{clipId}.mp4";
+        await DownloadFromS3(s3Key, localVideoPath);
+
+        // Extract keyframes using FFmpeg (1 frame per 5 seconds)
+        var keyframePaths = await ExtractKeyframes(localVideoPath, clipId, context);
+
+        // Upload keyframes to S3
+        var keyframeKeys = new List<string>();
+        foreach (var keyframePath in keyframePaths)
         {
-            var s3Key = record.S3.Object.Key;
-            context.Logger.LogInformation($"Processing: {s3Key}");
-
-            // Parse metadata from key: raw-clips/YYYY/MM/DD/timestamp_durations.mp4
-            var (clipId, timestamp, durationSeconds, date) = ParseS3Key(s3Key);
-
-            // Download the video to /tmp for keyframe extraction
-            var localVideoPath = $"/tmp/{clipId}.mp4";
-            await DownloadFromS3(s3Key, localVideoPath);
-
-            // Extract keyframes using FFmpeg (1 frame per 5 seconds)
-            var keyframePaths = await ExtractKeyframes(localVideoPath, clipId, context);
-
-            // Upload keyframes to S3
-            var keyframeKeys = new List<string>();
-            foreach (var keyframePath in keyframePaths)
-            {
-                var frameNum = Path.GetFileNameWithoutExtension(keyframePath).Split('_').Last();
-                var keyframeKey = $"keyframes/{date}/{clipId}_{frameNum}.jpg";
-                await UploadToS3(keyframePath, keyframeKey);
-                keyframeKeys.Add(keyframeKey);
-                File.Delete(keyframePath);
-            }
-
-            // Write metadata to DynamoDB
-            await WriteClipMetadata(clipId, s3Key, timestamp, durationSeconds, date, keyframeKeys);
-
-            // Cleanup
-            File.Delete(localVideoPath);
-
-            context.Logger.LogInformation(
-                $"Ingested clip {clipId}: {keyframeKeys.Count} keyframes extracted");
+            var frameNum = Path.GetFileNameWithoutExtension(keyframePath).Split('_').Last();
+            var keyframeKey = $"keyframes/{date}/{clipId}_{frameNum}.jpg";
+            await UploadToS3(keyframePath, keyframeKey);
+            keyframeKeys.Add(keyframeKey);
+            File.Delete(keyframePath);
         }
+
+        // Write metadata to DynamoDB
+        await WriteClipMetadata(clipId, s3Key, timestamp, durationSeconds, date, keyframeKeys);
+
+        // Cleanup
+        File.Delete(localVideoPath);
+
+        context.Logger.LogInformation(
+            $"Ingested clip {clipId}: {keyframeKeys.Count} keyframes extracted");
     }
 
     private static (string clipId, long timestamp, int durationSeconds, string date) ParseS3Key(string key)
@@ -133,7 +132,7 @@ public class Function
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "/opt/bin/ffmpeg",
+                FileName = "ffmpeg",
                 Arguments = $"-i \"{videoPath}\" -vf \"fps=1/5\" -q:v 2 \"{outputPattern}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -185,3 +184,11 @@ public class Function
         });
     }
 }
+
+public record EventBridgeEvent<T>(string Version, string Id, string DetailType, string Source, string Account, string Time, string Region, T Detail);
+
+public record S3EventDetail(Bucket Bucket, S3Object Object, string Reason);
+
+public record Bucket(string Name);
+
+public record S3Object(string Key, long Size, string ETag, string VersionId);

@@ -12,6 +12,7 @@ public class CoreStack : Stack
     public Bucket DataBucket { get; }
     public Table ClipsTable { get; }
     public Repository ApiEcrRepo { get; }
+    public Repository IngestEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -119,6 +120,21 @@ public class CoreStack : Stack
                 {
                     MaxImageCount = 5,
                     Description = "Keep only 5 most recent images"
+                }
+            }
+        });
+
+        // ECR repository for IngestClip Lambda Docker image
+        IngestEcrRepo = new Repository(this, "IngestEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-ingest",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
                 }
             }
         });

@@ -22,6 +22,11 @@ jobs:
     uses: ./.github/workflows/deploy-api.yml
     secrets: inherit
 
+  ingest:
+    needs: infra
+    uses: ./.github/workflows/deploy-ingest.yml
+    secrets: inherit
+
   web:
     needs: infra
     uses: ./.github/workflows/deploy-web.yml
