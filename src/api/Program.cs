@@ -13,11 +13,18 @@ builder.Services.AddSingleton<IAmazonS3, AmazonS3Client>();
 builder.Services.AddSingleton<IAmazonCloudWatch, AmazonCloudWatchClient>();
 builder.Services.AddSingleton<IAmazonIoT>(_ =>
     new AmazonIoTClient(Amazon.RegionEndpoint.EUWest1));
-builder.Services.AddSingleton<IAmazonIotData>(_ =>
-    new AmazonIotDataClient(new AmazonIotDataConfig
+builder.Services.AddSingleton<IAmazonIotData>(sp =>
+{
+    var iot = sp.GetRequiredService<IAmazonIoT>();
+    var endpoint = iot.DescribeEndpointAsync(new Amazon.IoT.Model.DescribeEndpointRequest
     {
-        RegionEndpoint = Amazon.RegionEndpoint.EUWest1
-    }));
+        EndpointType = "iot:Data-ATS"
+    }).GetAwaiter().GetResult();
+    return new AmazonIotDataClient(new AmazonIotDataConfig
+    {
+        ServiceURL = $"https://{endpoint.EndpointAddress}"
+    });
+});
 
 // Application services
 builder.Services.AddSingleton<S3UrlService>();

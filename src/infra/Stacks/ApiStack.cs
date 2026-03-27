@@ -39,8 +39,8 @@ public class ApiStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
-            ["AWS_LWA_PORT"] = "8080",
-            ["IOT_THING_GROUP"] = props.IoTThingGroupName
+                ["AWS_LWA_PORT"] = "8080",
+                ["IOT_THING_GROUP"] = props.IoTThingGroupName
             }
         });
 
@@ -69,7 +69,7 @@ public class ApiStack : Stack
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
-            Actions = new[] { "iot:ListThingsInThingGroup" },
+            Actions = new[] { "iot:ListThingsInThingGroup", "iot:DescribeEndpoint" },
             Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
         }));
 
