@@ -9,7 +9,10 @@ public record ClipSummary(
     int KeyframeCount,
     string DetectionType,
     int DetectionCount,
-    string CreatedAt);
+    string CreatedAt)
+{
+    public string? ThumbnailUrl { get; init; }
+}
 
 public record ClipDetail(
     string ClipId,
@@ -24,7 +27,11 @@ public record ClipDetail(
     string? Detections,
     bool Labeled,
     string CreatedAt,
-    string? InferenceAt);
+    string? InferenceAt)
+{
+    public string? VideoUrl { get; init; }
+    public List<string>? KeyframeUrls { get; init; }
+}
 
 public record ClipListResponse(
     List<ClipSummary> Clips,

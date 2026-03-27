@@ -111,7 +111,7 @@ public class ClipService
     private ClipSummary MapToClipSummary(Dictionary<string, AttributeValue> item)
     {
         var keyframeKeys = item.GetValueOrDefault("keyframe_keys")?.SS ?? new List<string>();
-        var thumbnailUrl = keyframeKeys.Count > 0 ? _s3UrlService.GetPresignedUrl(keyframeKeys[0]) : null;
+        var thumbnailUrl = keyframeKeys.Count > 0 ? _s3UrlService.GetPresignedUrl(keyframeKeys[0], TimeSpan.FromHours(1)) : null;
 
         return new ClipSummary(
             ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
@@ -133,8 +133,8 @@ public class ClipService
         var s3Key = item.GetValueOrDefault("s3_key")?.S ?? "";
         var keyframeKeys = item.GetValueOrDefault("keyframe_keys")?.SS ?? new List<string>();
 
-        var videoUrl = !string.IsNullOrEmpty(s3Key) ? _s3UrlService.GetPresignedUrl(s3Key) : null;
-        var keyframeUrls = keyframeKeys.Count > 0 ? _s3UrlService.GetPresignedUrls(keyframeKeys) : null;
+        var videoUrl = !string.IsNullOrEmpty(s3Key) ? _s3UrlService.GetPresignedUrl(s3Key, TimeSpan.FromHours(1)) : null;
+        var keyframeUrls = keyframeKeys.Count > 0 ? _s3UrlService.GetPresignedUrls(keyframeKeys, TimeSpan.FromHours(1)) : null;
 
         return new ClipDetail(
             ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
