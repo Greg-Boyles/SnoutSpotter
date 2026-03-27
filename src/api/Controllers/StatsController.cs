@@ -10,11 +10,13 @@ public class StatsController : ControllerBase
 {
     private readonly ClipService _clipService;
     private readonly HealthService _healthService;
+    private readonly PiUpdateService _piUpdateService;
 
-    public StatsController(ClipService clipService, HealthService healthService)
+    public StatsController(ClipService clipService, HealthService healthService, PiUpdateService piUpdateService)
     {
         _clipService = clipService;
         _healthService = healthService;
+        _piUpdateService = piUpdateService;
     }
 
     [HttpGet]
@@ -43,6 +45,20 @@ public class StatsController : ControllerBase
     public async Task<ActionResult<object>> GetHealth()
     {
         var piOnline = await _healthService.IsPiOnlineAsync();
-        return Ok(new { piOnline, checkedAt = DateTime.UtcNow.ToString("O") });
+        var shadow = await _piUpdateService.GetPiShadowAsync();
+        var latestVersion = await _piUpdateService.GetLatestVersionAsync();
+
+        return Ok(new
+        {
+            piOnline,
+            checkedAt = DateTime.UtcNow.ToString("O"),
+            piVersion = shadow?.Version,
+            piHostname = shadow?.Hostname,
+            lastHeartbeat = shadow?.LastHeartbeat,
+            updateStatus = shadow?.UpdateStatus ?? "idle",
+            services = shadow?.Services,
+            latestVersion,
+            updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
+        });
     }
 }
