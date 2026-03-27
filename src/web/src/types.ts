@@ -36,4 +36,11 @@ export interface StatsOverview {
 export interface SystemHealth {
   piOnline: boolean;
   checkedAt: string;
+  piVersion?: string;
+  piHostname?: string;
+  lastHeartbeat?: string;
+  updateStatus?: string;
+  services?: Record<string, string>;
+  latestVersion?: string;
+  updateAvailable?: boolean;
 }
