@@ -32,18 +32,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push Docker image
-        run: |
-          IMAGE_TAG=${{ github.sha }}
-          REGISTRY=${{ steps.ecr-login.outputs.registry }}
-          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $REGISTRY/$ECR_REPOSITORY:latest src/lambdas/SnoutSpotter.Lambda.IngestClip
-          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $REGISTRY/$ECR_REPOSITORY:latest
-
       - name: Setup .NET (for CDK infra)
         uses: actions/setup-dotnet@v4
         with:
