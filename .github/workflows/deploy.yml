@@ -27,6 +27,11 @@ jobs:
     uses: ./.github/workflows/deploy-ingest.yml
     secrets: inherit
 
+  inference:
+    needs: infra
+    uses: ./.github/workflows/deploy-inference.yml
+    secrets: inherit
+
   web:
     needs: infra
     uses: ./.github/workflows/deploy-web.yml
