@@ -66,23 +66,23 @@ export default function Dashboard() {
           icon={Video}
           label="Total Clips"
           value={stats.totalClips}
-          sub={`${stats.clipsTodayCount} today`}
+          sub={`${stats.clipsToday} today`}
         />
         <StatCard
           icon={Search}
           label="Detections"
           value={stats.totalDetections}
-          sub={`${stats.averageConfidence.toFixed(0)}% avg confidence`}
         />
         <StatCard
           icon={Dog}
-          label="Target Dog"
-          value={stats.targetDogDetections}
+          label="My Dog"
+          value={stats.myDogDetections}
         />
         <StatCard
           icon={HardDrive}
-          label="Storage Used"
-          value={formatBytes(stats.storageUsedBytes)}
+          label="Pi Status"
+          value={stats.piOnline ? "Online" : "Offline"}
+          sub={stats.lastUploadTime ? `Last: ${new Date(stats.lastUploadTime).toLocaleString()}` : undefined}
         />
       </div>
     </div>

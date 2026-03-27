@@ -21,11 +21,11 @@ export interface Detection {
 
 export interface StatsOverview {
   totalClips: number;
+  clipsToday: number;
   totalDetections: number;
-  targetDogDetections: number;
-  clipsTodayCount: number;
-  averageConfidence: number;
-  storageUsedBytes: number;
+  myDogDetections: number;
+  lastUploadTime: string | null;
+  piOnline: boolean;
 }
 
 export interface SystemHealth {
