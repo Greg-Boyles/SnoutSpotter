@@ -31,9 +31,5 @@ export interface StatsOverview {
 
 export interface SystemHealth {
   piOnline: boolean;
-  piLastSeen: string;
-  cpuTemp: number;
-  diskUsagePercent: number;
-  uploadQueueSize: number;
-  apiHealthy: boolean;
+  checkedAt: string;
 }
