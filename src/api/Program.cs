@@ -11,6 +11,7 @@ builder.Services.AddSingleton<IAmazonS3, AmazonS3Client>();
 builder.Services.AddSingleton<IAmazonCloudWatch, AmazonCloudWatchClient>();
 
 // Application services
+builder.Services.AddSingleton<S3UrlService>();
 builder.Services.AddSingleton<ClipService>();
 builder.Services.AddSingleton<S3PresignService>();
 builder.Services.AddSingleton<HealthService>();

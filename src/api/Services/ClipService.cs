@@ -7,11 +7,13 @@ namespace SnoutSpotter.Api.Services;
 public class ClipService
 {
     private readonly IAmazonDynamoDB _dynamoClient;
+    private readonly S3UrlService _s3UrlService;
     private const string TableName = "snout-spotter-clips";
 
-    public ClipService(IAmazonDynamoDB dynamoClient)
+    public ClipService(IAmazonDynamoDB dynamoClient, S3UrlService s3UrlService)
     {
         _dynamoClient = dynamoClient;
+        _s3UrlService = s3UrlService;
     }
 
     public async Task<ClipListResponse> GetClipsAsync(string? date = null, int limit = 20, string? nextPageKey = null)
@@ -106,31 +108,53 @@ public class ClipService
         return new ClipListResponse(clips, lastKey, response.Count);
     }
 
-    private static ClipSummary MapToClipSummary(Dictionary<string, AttributeValue> item) => new(
-        ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
-        S3Key: item.GetValueOrDefault("s3_key")?.S ?? "",
-        Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
-        DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
-        Date: item.GetValueOrDefault("date")?.S ?? "",
-        KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
-        DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
-        DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
-        CreatedAt: item.GetValueOrDefault("created_at")?.S ?? "");
+    private ClipSummary MapToClipSummary(Dictionary<string, AttributeValue> item)
+    {
+        var keyframeKeys = item.GetValueOrDefault("keyframe_keys")?.SS ?? new List<string>();
+        var thumbnailUrl = keyframeKeys.Count > 0 ? _s3UrlService.GetPresignedUrl(keyframeKeys[0]) : null;
 
-    private static ClipDetail MapToClipDetail(Dictionary<string, AttributeValue> item) => new(
-        ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
-        S3Key: item.GetValueOrDefault("s3_key")?.S ?? "",
-        Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
-        DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
-        Date: item.GetValueOrDefault("date")?.S ?? "",
-        KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
-        KeyframeKeys: item.GetValueOrDefault("keyframe_keys")?.SS ?? new List<string>(),
-        DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
-        DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
-        Detections: item.GetValueOrDefault("detections")?.S,
-        Labeled: item.GetValueOrDefault("labeled")?.BOOL ?? false,
-        CreatedAt: item.GetValueOrDefault("created_at")?.S ?? "",
-        InferenceAt: item.GetValueOrDefault("inference_at")?.S);
+        return new ClipSummary(
+            ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
+            S3Key: item.GetValueOrDefault("s3_key")?.S ?? "",
+            Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
+            DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
+            Date: item.GetValueOrDefault("date")?.S ?? "",
+            KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
+            DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
+            DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
+            CreatedAt: item.GetValueOrDefault("created_at")?.S ?? "")
+        {
+            ThumbnailUrl = thumbnailUrl
+        };
+    }
+
+    private ClipDetail MapToClipDetail(Dictionary<string, AttributeValue> item)
+    {
+        var s3Key = item.GetValueOrDefault("s3_key")?.S ?? "";
+        var keyframeKeys = item.GetValueOrDefault("keyframe_keys")?.SS ?? new List<string>();
+
+        var videoUrl = !string.IsNullOrEmpty(s3Key) ? _s3UrlService.GetPresignedUrl(s3Key) : null;
+        var keyframeUrls = keyframeKeys.Count > 0 ? _s3UrlService.GetPresignedUrls(keyframeKeys) : null;
+
+        return new ClipDetail(
+            ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
+            S3Key: s3Key,
+            Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
+            DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
+            Date: item.GetValueOrDefault("date")?.S ?? "",
+            KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
+            KeyframeKeys: keyframeKeys,
+            DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
+            DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
+            Detections: item.GetValueOrDefault("detections")?.S,
+            Labeled: item.GetValueOrDefault("labeled")?.BOOL ?? false,
+            CreatedAt: item.GetValueOrDefault("created_at")?.S ?? "",
+            InferenceAt: item.GetValueOrDefault("inference_at")?.S)
+        {
+            VideoUrl = videoUrl,
+            KeyframeUrls = keyframeUrls
+        };
+    }
 
     private static DetectionSummary MapToDetectionSummary(Dictionary<string, AttributeValue> item) => new(
         ClipId: item.GetValueOrDefault("clip_id")?.S ?? "",
