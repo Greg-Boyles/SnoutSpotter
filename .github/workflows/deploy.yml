@@ -13,21 +13,44 @@ permissions:
   contents: read
 
 jobs:
-  infra:
+  # Stage 1: Deploy infrastructure
+  stage-1-infra:
     uses: ./.github/workflows/deploy-infra.yml
     secrets: inherit
 
-  api:
-    needs: infra
+  # Stage 2: Build Docker images (in parallel after infra)
+  build-api-image:
+    needs: stage-1-infra
+    uses: ./.github/workflows/build-api-image.yml
+    secrets: inherit
+
+  build-ingest-image:
+    needs: stage-1-infra
+    uses: ./.github/workflows/build-ingest-image.yml
+    secrets: inherit
+
+  build-inference-image:
+    needs: stage-1-infra
+    uses: ./.github/workflows/build-inference-image.yml
+    secrets: inherit
+
+  # Stage 3: Deploy application stacks (after images are built)
+  deploy-api:
+    needs: build-api-image
     uses: ./.github/workflows/deploy-api.yml
     secrets: inherit
 
-  ingest:
-    needs: infra
+  deploy-ingest:
+    needs: build-ingest-image
     uses: ./.github/workflows/deploy-ingest.yml
     secrets: inherit
 
-  web:
-    needs: infra
+  deploy-inference:
+    needs: build-inference-image
+    uses: ./.github/workflows/deploy-inference.yml
+    secrets: inherit
+
+  deploy-web:
+    needs: stage-1-infra
     uses: ./.github/workflows/deploy-web.yml
     secrets: inherit
