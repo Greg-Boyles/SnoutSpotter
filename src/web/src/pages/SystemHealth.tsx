@@ -3,9 +3,6 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Wifi,
   WifiOff,
-  Thermometer,
-  HardDrive,
-  Upload,
   Server,
 } from "lucide-react";
 import { api } from "../api";
