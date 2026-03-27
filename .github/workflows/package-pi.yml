@@ -1,4 +1,4 @@
-name: Package Pi Software
+name: Package Pi software
 
 on:
   push:
