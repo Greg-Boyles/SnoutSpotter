@@ -49,6 +49,7 @@ jobs:
         run: >-
           cdk deploy
           SnoutSpotter-Core
+          SnoutSpotter-IoT
           SnoutSpotter-Web
           SnoutSpotter-Monitoring
           SnoutSpotter-CiCd
