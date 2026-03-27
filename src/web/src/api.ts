@@ -1,6 +1,16 @@
 import type { Clip, Detection, StatsOverview, SystemHealth } from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
+const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
+
+interface DeviceRegistrationResult {
+  thingName: string;
+  certificatePem: string;
+  privateKey: string;
+  certificateArn: string;
+  ioTEndpoint: string;
+  rootCaUrl: string;
+}
 
 async function fetchJson<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
@@ -8,11 +18,19 @@ async function fetchJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function postJson<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+async function postJson<T>(path: string, body?: unknown, baseUrl = BASE): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
+async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "DELETE",
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return res.json() as Promise<T>;
@@ -40,4 +58,14 @@ export const api = {
 
   triggerPiUpdateAll: (version?: string) =>
     postJson<{ message: string; deviceCount: number; version: string }>("/pi/update-all", version ? { version } : {}),
+
+  // Pi Management API (separate endpoint)
+  registerDevice: (name: string) =>
+    postJson<DeviceRegistrationResult>("/api/devices/register", { name }, PI_MGMT_BASE),
+
+  deregisterDevice: (thingName: string) =>
+    deleteJson<{ message: string }>(`/api/devices/${thingName}`, PI_MGMT_BASE),
+
+  listManagedDevices: () =>
+    fetchJson<{ devices: string[] }>("/api/devices"),
 };
