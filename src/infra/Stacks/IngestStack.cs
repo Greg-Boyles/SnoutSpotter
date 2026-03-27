@@ -23,7 +23,7 @@ public class IngestStack : Stack
     {
         var ingestFunction = new DockerImageFunction(this, "IngestClipFunction", new DockerImageFunctionProps
         {
-            FunctionName = "snout-spotter-ingest-clip",
+            FunctionName = "snout-spotter-ingest-clip-v2",
             Description = "Processes uploaded video clips: extracts keyframes and writes metadata to DynamoDB",
             Code = DockerImageCode.FromEcr(props.IngestEcrRepo, new EcrImageCodeProps
             {
