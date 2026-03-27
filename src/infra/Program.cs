@@ -18,7 +18,9 @@ var ingestStack = new IngestStack(app, "SnoutSpotter-Ingest", new IngestStackPro
 {
     Env = env,
     DataBucket = coreStack.DataBucket,
-    ClipsTable = coreStack.ClipsTable
+    ClipsTable = coreStack.ClipsTable,
+    IngestEcrRepo = coreStack.IngestEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
 var inferenceStack = new InferenceStack(app, "SnoutSpotter-Inference", new InferenceStackProps

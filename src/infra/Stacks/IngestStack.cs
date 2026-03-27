@@ -1,5 +1,6 @@
 using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
+using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.Events;
 using Amazon.CDK.AWS.Events.Targets;
 using Amazon.CDK.AWS.Lambda;
@@ -12,21 +13,24 @@ public class IngestStackProps : StackProps
 {
     public required Bucket DataBucket { get; init; }
     public required Table ClipsTable { get; init; }
+    public required Repository IngestEcrRepo { get; init; }
+    public required string ImageTag { get; init; }
 }
 
 public class IngestStack : Stack
 {
     public IngestStack(Construct scope, string id, IngestStackProps props) : base(scope, id, props)
     {
-        // Note: FFmpeg layer removed - keyframe extraction can be added later with custom layer
-        var ingestFunction = new Function(this, "IngestClipFunction", new FunctionProps
+        var ingestFunction = new DockerImageFunction(this, "IngestClipFunction", new DockerImageFunctionProps
         {
             FunctionName = "snout-spotter-ingest-clip",
-            Runtime = Runtime.DOTNET_8,
-            Handler = "SnoutSpotter.Lambda.IngestClip::SnoutSpotter.Lambda.IngestClip.Function::FunctionHandler",
-            Code = Code.FromAsset("../lambdas/SnoutSpotter.Lambda.IngestClip/bin/Release/net8.0/publish"),
-            MemorySize = 512,
-            Timeout = Duration.Minutes(2),
+            Description = "Processes uploaded video clips: extracts keyframes and writes metadata to DynamoDB",
+            Code = DockerImageCode.FromEcr(props.IngestEcrRepo, new EcrImageCodeProps
+            {
+                TagOrDigest = props.ImageTag
+            }),
+            MemorySize = 1024,
+            Timeout = Duration.Minutes(5),
             Environment = new Dictionary<string, string>
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
