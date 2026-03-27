@@ -34,6 +34,11 @@ jobs:
     uses: ./.github/workflows/build-inference-image.yml
     secrets: inherit
 
+  build-pi-mgmt-image:
+    needs: stage-1-infra
+    uses: ./.github/workflows/build-pi-mgmt-image.yml
+    secrets: inherit
+
   # Stage 3: Deploy application stacks (after images are built)
   deploy-api:
     needs: build-api-image
@@ -48,6 +53,11 @@ jobs:
   deploy-inference:
     needs: build-inference-image
     uses: ./.github/workflows/deploy-inference.yml
+    secrets: inherit
+
+  deploy-pi-mgmt:
+    needs: build-pi-mgmt-image
+    uses: ./.github/workflows/deploy-pi-mgmt.yml
     secrets: inherit
 
   deploy-web:

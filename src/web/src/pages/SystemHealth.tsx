@@ -5,6 +5,11 @@ import {
   WifiOff,
   Server,
   RefreshCw,
+  Plus,
+  Trash2,
+  X,
+  Copy,
+  Check,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
@@ -29,6 +34,12 @@ export default function SystemHealthPage() {
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState("");
+  const [registrationResult, setRegistrationResult] = useState<any>(null);
+  const [registering, setRegistering] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const refreshHealth = () =>
     api.getHealth().then(setHealth).catch(console.error);
@@ -76,6 +87,49 @@ export default function SystemHealthPage() {
     }
   };
 
+  const handleAddDevice = async () => {
+    if (!newDeviceName.trim()) return;
+    setRegistering(true);
+    try {
+      const result = await api.registerDevice(newDeviceName.trim());
+      setRegistrationResult(result);
+      setTimeout(refreshHealth, 2000);
+    } catch (e) {
+      setUpdateMessage(`Registration failed: ${(e as Error).message}`);
+      setShowAddDialog(false);
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  const handleRemoveDevice = async (thingName: string) => {
+    if (!confirm(`Are you sure you want to remove device "${thingName}"? This cannot be undone.`)) {
+      return;
+    }
+    setRemoving(thingName);
+    try {
+      await api.deregisterDevice(thingName);
+      setUpdateMessage(`Device "${thingName}" removed successfully`);
+      setTimeout(refreshHealth, 1000);
+    } catch (e) {
+      setUpdateMessage(`Failed to remove device: ${(e as Error).message}`);
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const closeAddDialog = () => {
+    setShowAddDialog(false);
+    setNewDeviceName("");
+    setRegistrationResult(null);
+  };
+
   if (error) {
     return (
       <div className="text-red-600 bg-red-50 p-4 rounded-lg">{error}</div>
@@ -96,6 +150,13 @@ export default function SystemHealthPage() {
             ok={allOnline}
             label={allOnline ? "All Systems Go" : `${health.devices.filter((d) => !d.online).length} Offline`}
           />
+          <button
+            onClick={() => setShowAddDialog(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+          >
+            <Plus className="w-3 h-3" />
+            Add Pi
+          </button>
           {anyUpdateAvailable && (
             <button
               onClick={handleUpdateAll}
@@ -130,6 +191,107 @@ export default function SystemHealthPage() {
         </p>
       </div>
 
+      {/* Add Pi Dialog */}
+      {showAddDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            {!registrationResult ? (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Add Raspberry Pi Device</h3>
+                  <button onClick={closeAddDialog} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Enter a name for your new Pi device (e.g., "garage", "front-door").
+                </p>
+                <input
+                  type="text"
+                  value={newDeviceName}
+                  onChange={(e) => setNewDeviceName(e.target.value)}
+                  placeholder="Device name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={registering}
+                />
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleAddDevice}
+                    disabled={registering || !newDeviceName.trim()}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {registering ? "Registering..." : "Register Device"}
+                  </button>
+                  <button
+                    onClick={closeAddDialog}
+                    disabled={registering}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-green-600">Device Registered!</h3>
+                  <button onClick={closeAddDialog} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Save these credentials securely. You'll need them to set up the Pi.
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">Thing Name:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="flex-1 p-2 bg-gray-100 rounded text-xs break-all">{registrationResult.thingName}</code>
+                      <button onClick={() => copyToClipboard(registrationResult.thingName, "thingName")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "thingName" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">IoT Endpoint:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="flex-1 p-2 bg-gray-100 rounded text-xs break-all">{registrationResult.ioTEndpoint}</code>
+                      <button onClick={() => copyToClipboard(registrationResult.ioTEndpoint, "endpoint")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "endpoint" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">Certificate:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <textarea readOnly value={registrationResult.certificatePem} className="flex-1 p-2 bg-gray-100 rounded text-xs font-mono h-20 resize-none" />
+                      <button onClick={() => copyToClipboard(registrationResult.certificatePem, "cert")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "cert" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">Private Key:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <textarea readOnly value={registrationResult.privateKey} className="flex-1 p-2 bg-gray-100 rounded text-xs font-mono h-20 resize-none" />
+                      <button onClick={() => copyToClipboard(registrationResult.privateKey, "key")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "key" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={closeAddDialog}
+                  className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Done
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Pi Devices */}
       <h2 className="text-lg font-semibold text-gray-900 mb-3">Raspberry Pi Devices</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -149,9 +311,19 @@ export default function SystemHealthPage() {
                   {device.hostname || device.thingName}
                 </span>
               </div>
-              <span
-                className={`w-2 h-2 rounded-full ${device.online ? "bg-green-500" : "bg-red-500"}`}
-              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleRemoveDevice(device.thingName)}
+                  disabled={removing === device.thingName}
+                  className="p-1 text-gray-400 hover:text-red-600 disabled:opacity-50"
+                  title="Remove device"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <span
+                  className={`w-2 h-2 rounded-full ${device.online ? "bg-green-500" : "bg-red-500"}`}
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
