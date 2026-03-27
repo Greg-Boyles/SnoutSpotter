@@ -7,10 +7,12 @@ namespace SnoutSpotter.Infra.Stacks;
 public class IoTStack : Stack
 {
     public string ThingGroupName { get; }
+    public string PolicyName { get; }
 
     public IoTStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
         ThingGroupName = "snoutspotter-pis";
+        PolicyName = "snoutspotter-pi-policy";
 
         // Thing Group for all SnoutSpotter Pi devices
         // Individual things will be registered dynamically via Pi Management API
@@ -27,7 +29,7 @@ public class IoTStack : Stack
         // registered thing can connect and manage its own shadow
         var iotPolicy = new CfnPolicy(this, "PiPolicy", new CfnPolicyProps
         {
-            PolicyName = "snoutspotter-pi-policy",
+            PolicyName = PolicyName,
             PolicyDocument = new Dictionary<string, object>
             {
                 ["Version"] = "2012-10-17",
