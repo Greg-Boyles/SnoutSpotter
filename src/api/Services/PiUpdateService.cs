@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Amazon.IoT;
+using Amazon.IoT.Model;
 using Amazon.IotData;
 using Amazon.IotData.Model;
 using Amazon.S3;
@@ -8,31 +10,49 @@ namespace SnoutSpotter.Api.Services;
 
 public class PiUpdateService
 {
+    private readonly IAmazonIoT _iot;
     private readonly IAmazonIotData _iotData;
     private readonly IAmazonS3 _s3Client;
     private readonly string _bucketName;
-    private readonly string _thingName;
+    private readonly string _thingGroupName;
 
     private string? _cachedLatestVersion;
     private DateTime _cacheExpiry = DateTime.MinValue;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
-    public PiUpdateService(IAmazonIotData iotData, IAmazonS3 s3Client, IConfiguration configuration)
+    public PiUpdateService(IAmazonIoT iot, IAmazonIotData iotData, IAmazonS3 s3Client, IConfiguration configuration)
     {
+        _iot = iot;
         _iotData = iotData;
         _s3Client = s3Client;
         _bucketName = configuration["BUCKET_NAME"]
             ?? throw new InvalidOperationException("BUCKET_NAME not configured");
-        _thingName = configuration["IOT_THING_NAME"] ?? "snoutspotter-pi";
+        _thingGroupName = configuration["IOT_THING_GROUP"] ?? "snoutspotter-pis";
     }
 
-    public async Task<PiShadowState?> GetPiShadowAsync()
+    public async Task<List<string>> ListPisAsync()
+    {
+        try
+        {
+            var response = await _iot.ListThingsInThingGroupAsync(new ListThingsInThingGroupRequest
+            {
+                ThingGroupName = _thingGroupName
+            });
+            return response.Things;
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    public async Task<PiShadowState?> GetPiShadowAsync(string thingName)
     {
         try
         {
             var response = await _iotData.GetThingShadowAsync(new GetThingShadowRequest
             {
-                ThingName = _thingName
+                ThingName = thingName
             });
 
             using var reader = new StreamReader(response.Payload);
@@ -43,6 +63,7 @@ public class PiUpdateService
 
             return new PiShadowState
             {
+                ThingName = thingName,
                 Version = reported.TryGetProperty("version", out var v) ? v.GetString() : null,
                 Hostname = reported.TryGetProperty("hostname", out var h) ? h.GetString() : null,
                 LastHeartbeat = reported.TryGetProperty("lastHeartbeat", out var lb) ? lb.GetString() : null,
@@ -52,7 +73,7 @@ public class PiUpdateService
                     : null
             };
         }
-        catch (ResourceNotFoundException)
+        catch (Amazon.IotData.Model.ResourceNotFoundException)
         {
             return null; // Shadow doesn't exist yet
         }
@@ -85,7 +106,7 @@ public class PiUpdateService
         }
     }
 
-    public async Task TriggerUpdateAsync(string? version = null)
+    public async Task TriggerUpdateAsync(string thingName, string? version = null)
     {
         version ??= await GetLatestVersionAsync()
             ?? throw new InvalidOperationException("No version available for update");
@@ -100,14 +121,25 @@ public class PiUpdateService
 
         await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
         {
-            ThingName = _thingName,
+            ThingName = thingName,
             Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
         });
+    }
+
+    public async Task TriggerUpdateAllAsync(string? version = null)
+    {
+        var things = await ListPisAsync();
+        version ??= await GetLatestVersionAsync()
+            ?? throw new InvalidOperationException("No version available for update");
+
+        var tasks = things.Select(thing => TriggerUpdateAsync(thing, version));
+        await Task.WhenAll(tasks);
     }
 }
 
 public class PiShadowState
 {
+    public string ThingName { get; set; } = string.Empty;
     public string? Version { get; set; }
     public string? Hostname { get; set; }
     public string? LastHeartbeat { get; set; }

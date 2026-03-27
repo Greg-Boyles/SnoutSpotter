@@ -33,14 +33,19 @@ export interface StatsOverview {
   piOnline: boolean;
 }
 
-export interface SystemHealth {
-  piOnline: boolean;
-  checkedAt: string;
-  piVersion?: string;
-  piHostname?: string;
+export interface PiDevice {
+  thingName: string;
+  online: boolean;
+  version?: string;
+  hostname?: string;
   lastHeartbeat?: string;
   updateStatus?: string;
   services?: Record<string, string>;
-  latestVersion?: string;
   updateAvailable?: boolean;
+}
+
+export interface SystemHealth {
+  checkedAt: string;
+  latestVersion?: string;
+  devices: PiDevice[];
 }
