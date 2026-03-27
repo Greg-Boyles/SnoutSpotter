@@ -8,6 +8,16 @@ async function fetchJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
 export const api = {
   getStats: () => fetchJson<StatsOverview>("/stats"),
 
@@ -24,4 +34,7 @@ export const api = {
     ),
 
   getHealth: () => fetchJson<SystemHealth>("/stats/health"),
+
+  triggerPiUpdate: (version?: string) =>
+    postJson<{ message: string; version: string }>("/pi/update", version ? { version } : {}),
 };

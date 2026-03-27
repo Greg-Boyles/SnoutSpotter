@@ -1,5 +1,6 @@
 using Amazon.CloudWatch;
 using Amazon.DynamoDBv2;
+using Amazon.IotData;
 using Amazon.S3;
 using SnoutSpotter.Api.Services;
 
@@ -9,12 +10,18 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IAmazonDynamoDB, AmazonDynamoDBClient>();
 builder.Services.AddSingleton<IAmazonS3, AmazonS3Client>();
 builder.Services.AddSingleton<IAmazonCloudWatch, AmazonCloudWatchClient>();
+builder.Services.AddSingleton<IAmazonIotData>(_ =>
+    new AmazonIotDataClient(new AmazonIotDataConfig
+    {
+        RegionEndpoint = Amazon.RegionEndpoint.EUWest1
+    }));
 
 // Application services
 builder.Services.AddSingleton<S3UrlService>();
 builder.Services.AddSingleton<ClipService>();
 builder.Services.AddSingleton<S3PresignService>();
 builder.Services.AddSingleton<HealthService>();
+builder.Services.AddSingleton<PiUpdateService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

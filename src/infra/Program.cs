@@ -41,6 +41,8 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
+var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new StackProps { Env = env });
+
 var webStack = new WebStack(app, "SnoutSpotter-Web", new StackProps { Env = env });
 
 var monitoringStack = new MonitoringStack(app, "SnoutSpotter-Monitoring", new MonitoringStackProps

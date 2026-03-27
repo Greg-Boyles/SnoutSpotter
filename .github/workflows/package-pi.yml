@@ -1,0 +1,61 @@
+name: Package Pi Software
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/pi/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: "eu-west-1"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' src/pi/version.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Pi software version: $VERSION"
+
+      - name: Create tarball
+        run: |
+          cd src/pi
+          tar -czf /tmp/pi-v${{ steps.version.outputs.version }}.tar.gz .
+
+      - name: Upload to S3
+        run: |
+          BUCKET=${{ secrets.DATA_BUCKET_NAME }}
+          VERSION=${{ steps.version.outputs.version }}
+          aws s3 cp /tmp/pi-v${VERSION}.tar.gz s3://${BUCKET}/releases/pi/v${VERSION}.tar.gz
+
+      - name: Update manifest
+        run: |
+          BUCKET=${{ secrets.DATA_BUCKET_NAME }}
+          VERSION=${{ steps.version.outputs.version }}
+          MANIFEST=$(cat <<EOF
+          {
+            "latest": "${VERSION}",
+            "url": "releases/pi/v${VERSION}.tar.gz",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "commit": "${{ github.sha }}"
+          }
+          EOF
+          )
+          echo "$MANIFEST" | aws s3 cp - s3://${BUCKET}/releases/pi/manifest.json --content-type application/json
+          echo "Published manifest for v${VERSION}"

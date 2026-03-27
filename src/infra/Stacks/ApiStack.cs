@@ -15,6 +15,7 @@ public class ApiStackProps : StackProps
     public required Table ClipsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
     public required string ImageTag { get; init; }
+    public string IoTThingName { get; init; } = "snoutspotter-pi";
 }
 
 public class ApiStack : Stack
@@ -38,7 +39,8 @@ public class ApiStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
-                ["AWS_LWA_PORT"] = "8080"
+            ["AWS_LWA_PORT"] = "8080",
+            ["IOT_THING_NAME"] = props.IoTThingName
             }
         });
 
@@ -53,6 +55,14 @@ public class ApiStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[] { "cloudwatch:GetMetricData", "cloudwatch:ListMetrics" },
             Resources = new[] { "*" }
+        }));
+
+        // IoT Device Shadow permissions
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot-data:GetThingShadow", "iot-data:UpdateThingShadow" },
+            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thing/{props.IoTThingName}" }
         }));
 
         // HTTP API Gateway
