@@ -47,7 +47,15 @@ export default function ClipsBrowser() {
             className="group bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
           >
             <div className="aspect-video bg-gray-100 flex items-center justify-center">
-              <Video className="w-10 h-10 text-gray-300" />
+              {clip.thumbnailUrl ? (
+                <img
+                  src={clip.thumbnailUrl}
+                  alt="Clip thumbnail"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <Video className="w-10 h-10 text-gray-300" />
+              )}
             </div>
             <div className="p-3">
               <div className="flex items-center gap-2 text-xs text-gray-500">

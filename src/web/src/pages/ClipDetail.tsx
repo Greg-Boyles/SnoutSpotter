@@ -42,6 +42,16 @@ export default function ClipDetail() {
         Clip {clip.clipId}
       </h1>
 
+      {/* Video Player */}
+      {clip.videoUrl && (
+        <div className="mb-6 max-w-2xl">
+          <video controls className="w-full rounded-lg border border-gray-200">
+            <source src={clip.videoUrl} type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
+        </div>
+      )}
+
       {/* Clip Info */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6 max-w-md">
         <div className="space-y-2 text-sm">
@@ -67,6 +77,25 @@ export default function ClipDetail() {
           </div>
         </div>
       </div>
+
+      {/* Keyframes */}
+      {clip.keyframeUrls && clip.keyframeUrls.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-700 mb-2">
+            Keyframes ({clip.keyframeUrls.length})
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {clip.keyframeUrls.map((url, idx) => (
+              <img
+                key={idx}
+                src={url}
+                alt={`Keyframe ${idx + 1}`}
+                className="w-full rounded-lg border border-gray-200"
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Detections */}
       {detections.length > 0 && (
