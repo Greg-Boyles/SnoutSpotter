@@ -15,52 +15,62 @@ permissions:
 jobs:
   # Stage 1: Deploy infrastructure
   stage-1-infra:
+    name: Deploy infrastructure
     uses: ./.github/workflows/deploy-infra.yml
     secrets: inherit
 
   # Stage 2: Build Docker images (in parallel after infra)
   build-api-image:
+    name: Build API image
     needs: stage-1-infra
     uses: ./.github/workflows/build-api-image.yml
     secrets: inherit
 
   build-ingest-image:
+    name: Build ingest image
     needs: stage-1-infra
     uses: ./.github/workflows/build-ingest-image.yml
     secrets: inherit
 
   build-inference-image:
+    name: Build inference image
     needs: stage-1-infra
     uses: ./.github/workflows/build-inference-image.yml
     secrets: inherit
 
   build-pi-mgmt-image:
+    name: Build Pi management image
     needs: stage-1-infra
     uses: ./.github/workflows/build-pi-mgmt-image.yml
     secrets: inherit
 
   # Stage 3: Deploy application stacks (after images are built)
   deploy-api:
+    name: Deploy API
     needs: build-api-image
     uses: ./.github/workflows/deploy-api.yml
     secrets: inherit
 
   deploy-ingest:
+    name: Deploy ingest
     needs: build-ingest-image
     uses: ./.github/workflows/deploy-ingest.yml
     secrets: inherit
 
   deploy-inference:
+    name: Deploy inference
     needs: build-inference-image
     uses: ./.github/workflows/deploy-inference.yml
     secrets: inherit
 
   deploy-pi-mgmt:
+    name: Deploy Pi management
     needs: build-pi-mgmt-image
     uses: ./.github/workflows/deploy-pi-mgmt.yml
     secrets: inherit
 
   deploy-web:
+    name: Deploy web
     needs: stage-1-infra
     uses: ./.github/workflows/deploy-web.yml
     secrets: inherit
