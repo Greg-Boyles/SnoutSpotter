@@ -1,12 +1,13 @@
 export interface Clip {
   clipId: string;
-  uploadedAt: string;
+  s3Key: string;
+  timestamp: number;
   durationSeconds: number;
-  fileSizeBytes: number;
-  status: "pending" | "processing" | "complete" | "error";
-  thumbnailUrl?: string;
-  videoUrl?: string;
-  keyframeUrls?: string[];
+  date: string;
+  keyframeCount: number;
+  detectionType: string;
+  detectionCount: number;
+  createdAt: string;
 }
 
 export interface Detection {

@@ -12,7 +12,7 @@ export const api = {
   getStats: () => fetchJson<StatsOverview>("/stats"),
 
   getClips: (page = 1, pageSize = 20) =>
-    fetchJson<{ items: Clip[]; total: number }>(
+    fetchJson<{ clips: Clip[]; nextPageKey: string | null; totalCount: number }>(
       `/clips?page=${page}&pageSize=${pageSize}`,
     ),
 

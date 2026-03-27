@@ -16,8 +16,8 @@ export default function ClipsBrowser() {
     api
       .getClips(page, pageSize)
       .then((data) => {
-        setClips(data.items);
-        setTotal(data.total);
+        setClips(data.clips);
+        setTotal(data.totalCount);
       })
       .catch((e: Error) => setError(e.message));
   }, [page]);
@@ -47,20 +47,12 @@ export default function ClipsBrowser() {
             className="group bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
           >
             <div className="aspect-video bg-gray-100 flex items-center justify-center">
-              {clip.thumbnailUrl ? (
-                <img
-                  src={clip.thumbnailUrl}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <Video className="w-10 h-10 text-gray-300" />
-              )}
+              <Video className="w-10 h-10 text-gray-300" />
             </div>
             <div className="p-3">
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <Clock className="w-3 h-3" />
-                {formatDistanceToNow(new Date(clip.uploadedAt), {
+                {formatDistanceToNow(new Date(clip.createdAt), {
                   addSuffix: true,
                 })}
               </div>
@@ -70,14 +62,14 @@ export default function ClipsBrowser() {
                 </span>
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full ${
-                    clip.status === "complete"
-                      ? "bg-green-50 text-green-700"
-                      : clip.status === "error"
-                        ? "bg-red-50 text-red-700"
-                        : "bg-yellow-50 text-yellow-700"
+                    clip.detectionType === "my_dog"
+                      ? "bg-amber-50 text-amber-700"
+                      : clip.detectionType === "other_dog"
+                        ? "bg-blue-50 text-blue-700"
+                        : "bg-gray-50 text-gray-700"
                   }`}
                 >
-                  {clip.status}
+                  {clip.detectionType}
                 </span>
               </div>
             </div>
