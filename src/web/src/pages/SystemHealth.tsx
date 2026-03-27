@@ -55,36 +55,15 @@ export default function SystemHealthPage() {
       icon: health.piOnline ? Wifi : WifiOff,
       label: "Pi Status",
       value: health.piOnline ? "Online" : "Offline",
-      sub: `Last seen ${formatDistanceToNow(new Date(health.piLastSeen), { addSuffix: true })}`,
+      sub: `Checked ${formatDistanceToNow(new Date(health.checkedAt), { addSuffix: true })}`,
       ok: health.piOnline,
-    },
-    {
-      icon: Thermometer,
-      label: "CPU Temp",
-      value: `${health.cpuTemp.toFixed(1)}°C`,
-      sub: health.cpuTemp > 80 ? "⚠ Running hot" : "Normal",
-      ok: health.cpuTemp <= 80,
-    },
-    {
-      icon: HardDrive,
-      label: "Disk Usage",
-      value: `${health.diskUsagePercent.toFixed(0)}%`,
-      sub: health.diskUsagePercent > 90 ? "⚠ Nearly full" : "Healthy",
-      ok: health.diskUsagePercent <= 90,
-    },
-    {
-      icon: Upload,
-      label: "Upload Queue",
-      value: health.uploadQueueSize.toString(),
-      sub: "clips pending upload",
-      ok: health.uploadQueueSize < 50,
     },
     {
       icon: Server,
       label: "API",
-      value: health.apiHealthy ? "Healthy" : "Unhealthy",
-      sub: "",
-      ok: health.apiHealthy,
+      value: "Healthy",
+      sub: "Responding normally",
+      ok: true,
     },
   ];
 
@@ -93,10 +72,8 @@ export default function SystemHealthPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">System Health</h1>
         <StatusBadge
-          ok={health.piOnline && health.apiHealthy}
-          label={
-            health.piOnline && health.apiHealthy ? "All Systems Go" : "Issues"
-          }
+          ok={health.piOnline}
+          label={health.piOnline ? "All Systems Go" : "Pi Offline"}
         />
       </div>
 
