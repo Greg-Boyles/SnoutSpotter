@@ -70,11 +70,15 @@ mkdir -p "$HOME/.snoutspotter"
 
 echo "[6/7] Installing systemd services..."
 
-for SERVICE_NAME in motion uploader health; do
+# Create IoT certs directory
+mkdir -p "$HOME/.snoutspotter/certs"
+
+for SERVICE_NAME in motion uploader health ota; do
     case "$SERVICE_NAME" in
         motion)   SCRIPT="motion_detector.py"; DESC="Motion Detection" ;;
         uploader) SCRIPT="uploader.py";        DESC="Upload" ;;
         health)   SCRIPT="health.py";          DESC="Health Monitoring" ;;
+        ota)      SCRIPT="ota_agent.py";       DESC="OTA Update" ;;
     esac
 
     cat > "/tmp/snoutspotter-${SERVICE_NAME}.service" << EOF
@@ -100,10 +104,10 @@ done
 
 sudo cp /tmp/snoutspotter-*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable snoutspotter-motion snoutspotter-uploader snoutspotter-health
+sudo systemctl enable snoutspotter-motion snoutspotter-uploader snoutspotter-health snoutspotter-ota
 
 echo "[7/7] Starting services..."
-sudo systemctl start snoutspotter-motion snoutspotter-uploader snoutspotter-health
+sudo systemctl start snoutspotter-motion snoutspotter-uploader snoutspotter-health snoutspotter-ota
 
 # Wait a moment for services to start
 sleep 5
@@ -116,7 +120,7 @@ echo ""
 
 # Check service status
 FAILED=0
-for SERVICE_NAME in motion uploader health; do
+for SERVICE_NAME in motion uploader health ota; do
     STATUS=$(systemctl is-active "snoutspotter-${SERVICE_NAME}" 2>/dev/null || true)
     if [[ "$STATUS" == "active" ]]; then
         echo "  ✓ snoutspotter-${SERVICE_NAME}: running"
