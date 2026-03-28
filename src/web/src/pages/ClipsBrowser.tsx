@@ -18,10 +18,7 @@ export default function ClipsBrowser() {
     api
       .getClips(pageSize, pageKeys[pageIndex])
       .then((data) => {
-        const sorted = [...data.clips].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setClips(sorted);
+        setClips(data.clips);
         setTotal(data.totalCount);
         setNextPageKey(data.nextPageKey);
       })

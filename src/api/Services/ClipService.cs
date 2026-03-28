@@ -23,21 +23,39 @@ public class ClipService
             return await QueryByDateAsync(date, limit, nextPageKey);
         }
 
-        var request = new ScanRequest
+        var request = new QueryRequest
         {
             TableName = TableName,
+            IndexName = "all-by-time",
+            KeyConditionExpression = "pk = :pk",
+            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            {
+                [":pk"] = new() { S = "CLIP" }
+            },
+            ScanIndexForward = false, // newest first
             Limit = limit
         };
 
         if (nextPageKey != null)
         {
-            request.ExclusiveStartKey = new Dictionary<string, AttributeValue>
+            // GSI pagination requires PK + SK + table PK
+            var keyItem = await _dynamoClient.GetItemAsync(TableName, new Dictionary<string, AttributeValue>
             {
                 ["clip_id"] = new() { S = nextPageKey }
-            };
+            });
+
+            if (keyItem.IsItemSet)
+            {
+                request.ExclusiveStartKey = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = "CLIP" },
+                    ["timestamp"] = keyItem.Item["timestamp"],
+                    ["clip_id"] = new() { S = nextPageKey }
+                };
+            }
         }
 
-        var response = await _dynamoClient.ScanAsync(request);
+        var response = await _dynamoClient.QueryAsync(request);
         var clips = response.Items.Select(MapToClipSummary).ToList();
         var lastKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
 

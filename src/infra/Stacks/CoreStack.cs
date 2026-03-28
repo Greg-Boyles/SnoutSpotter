@@ -79,6 +79,15 @@ public class CoreStack : Stack
             ProjectionType = ProjectionType.ALL
         });
 
+        // GSI for listing all clips ordered by timestamp (newest first)
+        ClipsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "all-by-time",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "pk", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
+            ProjectionType = ProjectionType.ALL
+        });
+
         // GSI for querying detections
         ClipsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
         {

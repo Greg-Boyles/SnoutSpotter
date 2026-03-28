@@ -166,6 +166,7 @@ public class Function
         var item = new Dictionary<string, AttributeValue>
         {
             ["clip_id"] = new() { S = clipId },
+            ["pk"] = new() { S = "CLIP" },
             ["s3_key"] = new() { S = s3Key },
             ["timestamp"] = new() { N = timestamp.ToString() },
             ["duration_s"] = new() { N = durationSeconds.ToString() },
