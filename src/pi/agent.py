@@ -467,6 +467,26 @@ def on_shadow_delta(topic, payload, **kwargs):
         logger.error(f"Error processing shadow delta: {e}")
 
 
+def on_shadow_get_accepted(topic, payload, **kwargs):
+    """Called when shadow/get/accepted is received — check for pending delta on startup."""
+    try:
+        shadow = json.loads(payload)
+        state = shadow.get("state", {})
+        delta = state.get("delta", {})
+        desired_version = delta.get("version")
+        if desired_version:
+            current_version = load_version()
+            if desired_version != current_version:
+                logger.info(f"Pending shadow delta found on startup: {current_version} -> {desired_version}")
+                on_shadow_delta.pending_version = desired_version
+            else:
+                logger.info("Shadow delta version matches current — no update needed")
+        else:
+            logger.info("No pending shadow delta")
+    except Exception as e:
+        logger.error(f"Error processing shadow get response: {e}")
+
+
 on_shadow_delta.pending_version = None
 
 
@@ -520,6 +540,19 @@ def main():
     )
     subscribe_future.result(timeout=10)
     logger.info(f"Subscribed to {delta_topic}")
+
+    # Subscribe to shadow get response, then request current shadow to catch any pending delta
+    get_accepted_topic = f"$aws/things/{thing_name}/shadow/get/accepted"
+    sub_future, _ = connection.subscribe(
+        topic=get_accepted_topic,
+        qos=mqtt.QoS.AT_LEAST_ONCE,
+        callback=on_shadow_get_accepted,
+    )
+    sub_future.result(timeout=10)
+
+    get_topic = f"$aws/things/{thing_name}/shadow/get"
+    connection.publish(topic=get_topic, payload="", qos=mqtt.QoS.AT_LEAST_ONCE)
+    logger.info("Requested current shadow to check for pending updates")
 
     # Report initial state
     version = load_version()
