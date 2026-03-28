@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SnoutSpotter.Lambda.PiMgmt.Services;
 
@@ -6,7 +5,6 @@ namespace SnoutSpotter.Lambda.PiMgmt.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
 public class DevicesController : ControllerBase
 {
     private readonly DeviceProvisioningService _provisioningService;

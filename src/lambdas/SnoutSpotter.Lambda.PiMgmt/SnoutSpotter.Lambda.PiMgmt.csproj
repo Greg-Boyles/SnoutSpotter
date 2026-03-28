@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.IoT" Version="3.7.400" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.12" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
   </ItemGroup>
 
