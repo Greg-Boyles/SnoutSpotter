@@ -39,6 +39,12 @@ public class PiController : ControllerBase
                 lastHeartbeat = shadow?.LastHeartbeat,
                 updateStatus = shadow?.UpdateStatus ?? "idle",
                 services = shadow?.Services,
+                camera = shadow?.Camera,
+                lastMotionAt = shadow?.LastMotionAt,
+                lastUploadAt = shadow?.LastUploadAt,
+                uploadStats = shadow?.UploadStats,
+                clipsPending = shadow?.ClipsPending,
+                system = shadow?.System,
                 latestVersion,
                 updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
             });
@@ -65,6 +71,12 @@ public class PiController : ControllerBase
             lastHeartbeat = shadow?.LastHeartbeat,
             updateStatus = shadow?.UpdateStatus ?? "idle",
             services = shadow?.Services,
+            camera = shadow?.Camera,
+            lastMotionAt = shadow?.LastMotionAt,
+            lastUploadAt = shadow?.LastUploadAt,
+            uploadStats = shadow?.UploadStats,
+            clipsPending = shadow?.ClipsPending,
+            system = shadow?.System,
             latestVersion,
             updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
         });

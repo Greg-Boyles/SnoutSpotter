@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SnoutSpotter motion detection and recording service for Pi Zero 2 W."""
 
+import json
 import os
 import time
 import logging
@@ -23,6 +24,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("snout-spotter")
+
+STATUS_DIR = Path.home() / ".snoutspotter"
+STATUS_FILE = STATUS_DIR / "motion-status.json"
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -47,6 +51,39 @@ class MotionDetector:
         self.picam2 = None
         self.encoder = None
 
+        # Status tracking
+        self._camera_ok = False
+        self._last_motion_at = None
+        self._last_recording_started = None
+        self._last_recording_stopped = None
+        self._recordings_today = 0
+        self._recordings_today_date = None
+        self._last_status_write = 0.0
+
+    def _write_status(self):
+        try:
+            STATUS_DIR.mkdir(parents=True, exist_ok=True)
+            status = {
+                "cameraOk": self._camera_ok,
+                "lastMotionAt": self._last_motion_at,
+                "lastRecordingStartedAt": self._last_recording_started,
+                "lastRecordingStoppedAt": self._last_recording_stopped,
+                "recordingsToday": self._recordings_today,
+                "pid": os.getpid(),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+            tmp = STATUS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(status, indent=2))
+            tmp.rename(STATUS_FILE)
+        except Exception as e:
+            logger.warning(f"Failed to write status file: {e}")
+
+    def _check_today_reset(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._recordings_today_date != today:
+            self._recordings_today = 0
+            self._recordings_today_date = today
+
     def setup_camera(self):
         if Picamera2 is None:
             raise RuntimeError("picamera2 not available - must run on Raspberry Pi")
@@ -63,6 +100,8 @@ class MotionDetector:
         )
         self.picam2.configure(config)
         self.picam2.start()
+        self._camera_ok = True
+        self._write_status()
         logger.info(f"Camera started: preview={preview_w}x{preview_h}, record={record_w}x{record_h}")
 
     def detect_motion(self, frame: np.ndarray) -> bool:
@@ -101,6 +140,13 @@ class MotionDetector:
         self.recording = True
         self.record_start_time = time.time()
         self.last_motion_time = time.time()
+
+        now = datetime.now(timezone.utc).isoformat()
+        self._last_motion_at = now
+        self._last_recording_started = now
+        self._check_today_reset()
+        self._write_status()
+
         logger.info(f"Recording started: {filepath}")
         return str(filepath)
 
@@ -118,6 +164,11 @@ class MotionDetector:
 
         self.recording = False
         self.encoder = None
+
+        self._last_recording_stopped = datetime.now(timezone.utc).isoformat()
+        self._recordings_today += 1
+        self._write_status()
+
         logger.info(f"Recording stopped: {dst} ({duration}s)")
 
     def run(self):
@@ -133,24 +184,45 @@ class MotionDetector:
 
         try:
             while True:
-                # Capture low-res frame for motion detection
-                frame = self.picam2.capture_array("lores")
-                motion = self.detect_motion(frame)
+                try:
+                    # Capture low-res frame for motion detection
+                    frame = self.picam2.capture_array("lores")
+                    motion = self.detect_motion(frame)
 
-                if motion:
-                    self.last_motion_time = time.time()
+                    if not self._camera_ok:
+                        self._camera_ok = True
+                        self._write_status()
 
-                    if not self.recording:
-                        current_filepath = self.start_recording()
+                    if motion:
+                        self.last_motion_time = time.time()
+                        self._last_motion_at = datetime.now(timezone.utc).isoformat()
 
-                if self.recording:
-                    elapsed = time.time() - self.record_start_time
-                    since_motion = time.time() - self.last_motion_time
+                        if not self.recording:
+                            current_filepath = self.start_recording()
 
-                    # Stop if max clip length reached or motion stopped + buffer expired
-                    if elapsed >= max_clip or since_motion >= post_buffer:
-                        self.stop_recording(current_filepath)
-                        current_filepath = None
+                    if self.recording:
+                        elapsed = time.time() - self.record_start_time
+                        since_motion = time.time() - self.last_motion_time
+
+                        # Stop if max clip length reached or motion stopped + buffer expired
+                        if elapsed >= max_clip or since_motion >= post_buffer:
+                            self.stop_recording(current_filepath)
+                            current_filepath = None
+
+                except Exception as e:
+                    if "timed out" in str(e).lower() or "camera" in str(e).lower():
+                        if self._camera_ok:
+                            self._camera_ok = False
+                            self._write_status()
+                            logger.error(f"Camera error: {e}")
+                    else:
+                        raise
+
+                # Periodic status write every 30s
+                now = time.time()
+                if now - self._last_status_write >= 30:
+                    self._write_status()
+                    self._last_status_write = now
 
                 time.sleep(fps_delay)
 

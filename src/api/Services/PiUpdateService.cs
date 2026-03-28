@@ -61,7 +61,7 @@ public class PiUpdateService
 
             var reported = doc.RootElement.GetProperty("state").GetProperty("reported");
 
-            return new PiShadowState
+            var state = new PiShadowState
             {
                 ThingName = thingName,
                 Version = reported.TryGetProperty("version", out var v) ? v.GetString() : null,
@@ -70,8 +70,52 @@ public class PiUpdateService
                 UpdateStatus = reported.TryGetProperty("updateStatus", out var us) ? us.GetString() : "idle",
                 Services = reported.TryGetProperty("services", out var svc)
                     ? JsonSerializer.Deserialize<Dictionary<string, string>>(svc.GetRawText())
-                    : null
+                    : null,
+                LastMotionAt = reported.TryGetProperty("lastMotionAt", out var lm) ? lm.GetString() : null,
+                LastUploadAt = reported.TryGetProperty("lastUploadAt", out var lu) ? lu.GetString() : null,
+                ClipsPending = reported.TryGetProperty("clipsPending", out var cp) ? cp.GetInt32() : null
             };
+
+            if (reported.TryGetProperty("camera", out var cam))
+            {
+                state.Camera = new CameraStatus(
+                    Connected: cam.TryGetProperty("connected", out var cc) && cc.GetBoolean(),
+                    Healthy: cam.TryGetProperty("healthy", out var ch) && ch.GetBoolean(),
+                    Sensor: cam.TryGetProperty("sensor", out var cs) ? cs.GetString() : null,
+                    Resolution: cam.TryGetProperty("resolution", out var cr) ? cr.GetString() : null,
+                    RecordResolution: cam.TryGetProperty("recordResolution", out var crr) ? crr.GetString() : null
+                );
+            }
+
+            if (reported.TryGetProperty("uploadStats", out var ups))
+            {
+                state.UploadStats = new UploadStats(
+                    UploadsToday: ups.TryGetProperty("uploadsToday", out var ut) ? ut.GetInt32() : 0,
+                    FailedToday: ups.TryGetProperty("failedToday", out var ft) ? ft.GetInt32() : 0,
+                    TotalUploaded: ups.TryGetProperty("totalUploaded", out var tu) ? tu.GetInt32() : 0
+                );
+            }
+
+            if (reported.TryGetProperty("system", out var sys))
+            {
+                state.System = new SystemInfo(
+                    CpuTempC: sys.TryGetProperty("cpuTempC", out var ct) ? ct.GetDouble() : null,
+                    MemUsedPercent: sys.TryGetProperty("memUsedPercent", out var mu) ? mu.GetDouble() : null,
+                    DiskUsedPercent: sys.TryGetProperty("diskUsedPercent", out var du) ? du.GetDouble() : null,
+                    DiskFreeGb: sys.TryGetProperty("diskFreeGb", out var df) ? df.GetDouble() : null,
+                    UptimeSeconds: sys.TryGetProperty("uptimeSeconds", out var ut2) ? ut2.GetInt64() : null,
+                    LoadAvg: sys.TryGetProperty("loadAvg", out var la)
+                        ? JsonSerializer.Deserialize<double[]>(la.GetRawText())
+                        : null,
+                    PiModel: sys.TryGetProperty("piModel", out var pm) ? pm.GetString() : null,
+                    IpAddress: sys.TryGetProperty("ipAddress", out var ip) ? ip.GetString() : null,
+                    WifiSignalDbm: sys.TryGetProperty("wifiSignalDbm", out var ws) ? ws.GetInt32() : null,
+                    WifiSsid: sys.TryGetProperty("wifiSsid", out var wn) ? wn.GetString() : null,
+                    PythonVersion: sys.TryGetProperty("pythonVersion", out var pv) ? pv.GetString() : null
+                );
+            }
+
+            return state;
         }
         catch (Amazon.IotData.Model.ResourceNotFoundException)
         {
@@ -145,4 +189,38 @@ public class PiShadowState
     public string? LastHeartbeat { get; set; }
     public string? UpdateStatus { get; set; }
     public Dictionary<string, string>? Services { get; set; }
+    public CameraStatus? Camera { get; set; }
+    public string? LastMotionAt { get; set; }
+    public string? LastUploadAt { get; set; }
+    public UploadStats? UploadStats { get; set; }
+    public int? ClipsPending { get; set; }
+    public SystemInfo? System { get; set; }
 }
+
+public record CameraStatus(
+    bool Connected,
+    bool Healthy,
+    string? Sensor,
+    string? Resolution,
+    string? RecordResolution
+);
+
+public record UploadStats(
+    int UploadsToday,
+    int FailedToday,
+    int TotalUploaded
+);
+
+public record SystemInfo(
+    double? CpuTempC,
+    double? MemUsedPercent,
+    double? DiskUsedPercent,
+    double? DiskFreeGb,
+    long? UptimeSeconds,
+    double[]? LoadAvg,
+    string? PiModel,
+    string? IpAddress,
+    int? WifiSignalDbm,
+    string? WifiSsid,
+    string? PythonVersion
+);
