@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SnoutSpotter S3 upload service - watches for new clips and uploads them."""
 
+import json
 import os
 import time
 import sqlite3
@@ -17,6 +18,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("snout-spotter-upload")
+
+STATUS_DIR = Path.home() / ".snoutspotter"
+STATUS_FILE = STATUS_DIR / "uploader-status.json"
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -80,6 +84,35 @@ class Uploader:
         self.prefix = self.config["prefix"]
         self.ledger = UploadLedger()
 
+        # Status tracking
+        self._last_upload_at = None
+        self._uploads_today = 0
+        self._failed_today = 0
+        self._uploads_today_date = None
+
+    def _check_today_reset(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._uploads_today_date != today:
+            self._uploads_today = 0
+            self._failed_today = 0
+            self._uploads_today_date = today
+
+    def _write_status(self):
+        try:
+            STATUS_DIR.mkdir(parents=True, exist_ok=True)
+            status = {
+                "lastUploadAt": self._last_upload_at,
+                "uploadsToday": self._uploads_today,
+                "failedToday": self._failed_today,
+                "pid": os.getpid(),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+            tmp = STATUS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(status, indent=2))
+            tmp.rename(STATUS_FILE)
+        except Exception as e:
+            logger.warning(f"Failed to write status file: {e}")
+
     def get_s3_key(self, filename: str) -> str:
         """Generate S3 key from filename: raw-clips/YYYY/MM/DD/filename."""
         now = datetime.now(timezone.utc)
@@ -88,6 +121,7 @@ class Uploader:
     def upload_file(self, filepath: Path) -> bool:
         """Upload a single file to S3 with multipart upload."""
         s3_key = self.get_s3_key(filepath.name)
+        self._check_today_reset()
         try:
             logger.info(f"Uploading {filepath.name} -> s3://{self.bucket}/{s3_key}")
             self.s3.upload_file(
@@ -102,6 +136,10 @@ class Uploader:
             self.ledger.record_attempt(filepath.name, s3_key, success=True)
             logger.info(f"Upload complete: {filepath.name}")
 
+            self._last_upload_at = datetime.now(timezone.utc).isoformat()
+            self._uploads_today += 1
+            self._write_status()
+
             if self.config["delete_after_upload"]:
                 filepath.unlink()
                 logger.info(f"Deleted local file: {filepath.name}")
@@ -111,6 +149,8 @@ class Uploader:
         except ClientError as e:
             logger.error(f"Upload failed for {filepath.name}: {e}")
             self.ledger.record_attempt(filepath.name, s3_key, success=False)
+            self._failed_today += 1
+            self._write_status()
             return False
 
     def retry_failed(self):
