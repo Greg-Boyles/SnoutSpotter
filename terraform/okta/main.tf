@@ -29,6 +29,7 @@ resource "okta_app_oauth" "snoutspotter" {
   response_types             = ["code"]
   token_endpoint_auth_method = "none"
   pkce_required              = true
+  authentication_policy      = okta_app_signon_policy.snoutspotter.id
 
   redirect_uris = [
     "https://${var.cloudfront_domain}/login/callback",
@@ -43,6 +44,21 @@ resource "okta_app_oauth" "snoutspotter" {
   lifecycle {
     prevent_destroy = true
   }
+}
+
+# Sign-on policy — password only, no MFA required
+resource "okta_app_signon_policy" "snoutspotter" {
+  name        = "SnoutSpotter Sign-On Policy"
+  description = "Password only, no MFA required"
+}
+
+resource "okta_app_signon_policy_rule" "no_mfa" {
+  policy_id           = okta_app_signon_policy.snoutspotter.id
+  name                = "Allow password only"
+  factor_mode         = "NO_FACTOR"
+  re_authentication_frequency = "PT0S"
+  groups_included     = [okta_group.snoutspotter_users.id]
+  depends_on          = [okta_group.snoutspotter_users]
 }
 
 resource "okta_group" "snoutspotter_users" {
