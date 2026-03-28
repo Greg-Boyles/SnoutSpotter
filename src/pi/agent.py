@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""SnoutSpotter OTA update agent - listens for Device Shadow deltas and applies updates."""
+"""SnoutSpotter Pi agent — health heartbeat, shadow reporting, and OTA updates via a single MQTT connection."""
 
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tarfile
 import time
@@ -18,12 +19,14 @@ from awsiot import mqtt_connection_builder
 from awscrt import mqtt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("snout-spotter-ota")
+logger = logging.getLogger("snout-spotter-agent")
 
 INSTALL_DIR = Path(__file__).parent
 BACKUP_DIR = Path.home() / ".snoutspotter" / "backups"
-SERVICES = ["snoutspotter-motion", "snoutspotter-uploader", "snoutspotter-health"]
+SERVICES = ["snoutspotter-motion", "snoutspotter-uploader", "snoutspotter-agent"]
 
+
+# ── Config & version ──────────────────────────────────────────────────
 
 def load_config(path: str = "config.yaml") -> dict:
     with open(path) as f:
@@ -43,11 +46,17 @@ def save_version(version: str):
         json.dump({"version": version, "updated_at": datetime.now(timezone.utc).isoformat()}, f, indent=4)
 
 
-def update_shadow(connection, thing_name: str, reported: dict):
-    payload = json.dumps({"state": {"reported": reported}})
-    topic = f"$aws/things/{thing_name}/shadow/update"
-    connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
-    logger.info(f"Shadow updated: {reported}")
+# ── Service status ────────────────────────────────────────────────────
+
+def get_service_status(service_name: str) -> str:
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", service_name],
+            capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
 
 
 def check_services_healthy() -> bool:
@@ -65,6 +74,57 @@ def check_services_healthy() -> bool:
             return False
     return True
 
+
+# ── CloudWatch heartbeat ──────────────────────────────────────────────
+
+def send_heartbeat(cloudwatch, namespace: str, metric_name: str):
+    cloudwatch.put_metric_data(
+        Namespace=namespace,
+        MetricData=[
+            {
+                "MetricName": metric_name,
+                "Timestamp": datetime.now(timezone.utc),
+                "Value": 1.0,
+                "Unit": "Count",
+            }
+        ],
+    )
+    logger.info("CloudWatch heartbeat sent")
+
+
+# ── IoT Shadow ────────────────────────────────────────────────────────
+
+def build_shadow_state(version: str) -> dict:
+    services = {svc.replace("snoutspotter-", ""): get_service_status(svc) for svc in SERVICES}
+    return {
+        "state": {
+            "reported": {
+                "version": version,
+                "hostname": socket.gethostname(),
+                "services": services,
+                "lastHeartbeat": datetime.now(timezone.utc).isoformat(),
+                "updateStatus": "idle",
+            }
+        }
+    }
+
+
+def update_shadow(connection, thing_name: str, reported: dict):
+    payload = json.dumps({"state": {"reported": reported}})
+    topic = f"$aws/things/{thing_name}/shadow/update"
+    connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
+    logger.info(f"Shadow updated: {reported}")
+
+
+def report_full_shadow(connection, thing_name: str, version: str):
+    shadow_state = build_shadow_state(version)
+    topic = f"$aws/things/{thing_name}/shadow/update"
+    payload = json.dumps(shadow_state)
+    connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
+    logger.info(f"Full shadow reported (version={version})")
+
+
+# ── OTA update logic ──────────────────────────────────────────────────
 
 def backup_current(old_version: str):
     backup_path = BACKUP_DIR / old_version
@@ -113,20 +173,16 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
     update_shadow(connection, thing_name, {"updateStatus": "updating"})
 
     try:
-        # Download package
         logger.info(f"Downloading s3://{bucket}/{s3_key}")
         s3 = boto3.client("s3", region_name=region)
         s3.download_file(bucket, s3_key, str(local_path))
 
-        # Backup current installation
         backup_current(old_version)
 
-        # Extract new package
         logger.info(f"Extracting to {INSTALL_DIR}")
         with tarfile.open(local_path, "r:gz") as tar:
             tar.extractall(path=INSTALL_DIR)
 
-        # Install dependencies
         logger.info("Installing Python dependencies")
         subprocess.run(
             ["pip3", "install", "-r", str(INSTALL_DIR / "requirements.txt"),
@@ -134,13 +190,9 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
             timeout=120, check=True
         )
 
-        # Update version file
         save_version(version)
-
-        # Restart services
         restart_services()
 
-        # Wait and check health
         logger.info("Waiting 30 seconds for services to stabilize...")
         time.sleep(30)
 
@@ -150,7 +202,6 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
                 "version": version,
                 "updateStatus": "success"
             })
-            # Reset status after 60 seconds
             time.sleep(60)
             update_shadow(connection, thing_name, {"updateStatus": "idle"})
         else:
@@ -173,6 +224,8 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
             local_path.unlink()
 
 
+# ── Shadow delta handler ──────────────────────────────────────────────
+
 def on_shadow_delta(topic, payload, **kwargs):
     """Called when a shadow delta is received."""
     try:
@@ -183,7 +236,6 @@ def on_shadow_delta(topic, payload, **kwargs):
             current_version = load_version()
             if desired_version != current_version:
                 logger.info(f"Shadow delta: update requested {current_version} -> {desired_version}")
-                # Store context for main loop to process
                 on_shadow_delta.pending_version = desired_version
     except Exception as e:
         logger.error(f"Error processing shadow delta: {e}")
@@ -192,9 +244,12 @@ def on_shadow_delta(topic, payload, **kwargs):
 on_shadow_delta.pending_version = None
 
 
+# ── Main loop ─────────────────────────────────────────────────────────
+
 def main():
     config = load_config()
     iot_cfg = config.get("iot", {})
+    health_cfg = config["health"]
     upload_cfg = config["upload"]
 
     endpoint = iot_cfg.get("endpoint", "")
@@ -207,13 +262,21 @@ def main():
     key_path = os.path.expanduser(iot_cfg["key_path"])
     root_ca_path = os.path.expanduser(iot_cfg["root_ca_path"])
 
-    # Connect to IoT Core
+    if not all(Path(p).exists() for p in [cert_path, key_path, root_ca_path]):
+        logger.error("IoT certificates not found. Run setup-pi.sh first.")
+        return
+
+    # CloudWatch client for heartbeats
+    cloudwatch = boto3.client("cloudwatch", region_name=upload_cfg["region"])
+    heartbeat_interval = health_cfg["interval_seconds"]
+
+    # Single MQTT connection for shadow + OTA
     connection = mqtt_connection_builder.mtls_from_path(
         endpoint=endpoint,
         cert_filepath=cert_path,
         pri_key_filepath=key_path,
         ca_filepath=root_ca_path,
-        client_id=f"{thing_name}-ota",
+        client_id=thing_name,
         clean_session=False,
         keep_alive_secs=30,
     )
@@ -222,7 +285,7 @@ def main():
     connect_future.result(timeout=10)
     logger.info(f"Connected to IoT Core at {endpoint}")
 
-    # Subscribe to shadow delta
+    # Subscribe to shadow delta for OTA
     delta_topic = f"$aws/things/{thing_name}/shadow/update/delta"
     subscribe_future, _ = connection.subscribe(
         topic=delta_topic,
@@ -232,30 +295,49 @@ def main():
     subscribe_future.result(timeout=10)
     logger.info(f"Subscribed to {delta_topic}")
 
-    # Report current state
-    current_version = load_version()
-    update_shadow(connection, thing_name, {
-        "version": current_version,
-        "updateStatus": "idle",
-    })
+    # Report initial state
+    version = load_version()
+    report_full_shadow(connection, thing_name, version)
 
-    logger.info(f"OTA agent started (version={current_version}). Waiting for updates...")
+    logger.info(f"Agent started (version={version}). Heartbeat every {heartbeat_interval}s, watching for OTA updates.")
+
+    last_heartbeat = 0
 
     try:
         while True:
+            now = time.time()
+
+            # Heartbeat + shadow report on interval
+            if now - last_heartbeat >= heartbeat_interval:
+                try:
+                    send_heartbeat(cloudwatch, health_cfg["namespace"], health_cfg["metric_name"])
+                except Exception as e:
+                    logger.error(f"Failed to send CloudWatch heartbeat: {e}")
+
+                try:
+                    version = load_version()
+                    report_full_shadow(connection, thing_name, version)
+                except Exception as e:
+                    logger.error(f"Failed to update shadow: {e}")
+
+                last_heartbeat = now
+
+            # Check for pending OTA updates
             if on_shadow_delta.pending_version:
-                version = on_shadow_delta.pending_version
+                pending = on_shadow_delta.pending_version
                 on_shadow_delta.pending_version = None
                 apply_update(
-                    version=version,
+                    version=pending,
                     bucket=upload_cfg["bucket_name"],
                     region=upload_cfg["region"],
                     connection=connection,
                     thing_name=thing_name,
                 )
+
             time.sleep(5)
+
     except KeyboardInterrupt:
-        logger.info("Shutting down OTA agent...")
+        logger.info("Shutting down agent...")
         connection.disconnect().result(timeout=5)
 
 

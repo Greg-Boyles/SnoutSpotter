@@ -1,4 +1,4 @@
-name: Deploy infrastructure
+name: Deploy Pi management
 
 on:
   workflow_call:
@@ -11,10 +11,11 @@ permissions:
 env:
   DOTNET_VERSION: "8.0.x"
   AWS_REGION: "eu-west-1"
+  ECR_REPOSITORY: "snout-spotter-pi-mgmt"
 
 jobs:
-  deploy:
-    name: Deploy
+  build-and-deploy:
+    name: Build and deploy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,21 +39,12 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Restore & build
+      - name: Build CDK
         run: dotnet build --configuration Release
         working-directory: src/infra
 
-      - name: CDK diff
-        run: cdk diff --all
+      - name: CDK deploy Pi management stack
+        run: cdk deploy SnoutSpotter-PiMgmt --require-approval never
         working-directory: src/infra
-
-      - name: CDK deploy infrastructure stacks
-        run: >-
-          cdk deploy
-          SnoutSpotter-Core
-          SnoutSpotter-IoT
-          SnoutSpotter-Web
-          SnoutSpotter-Monitoring
-          SnoutSpotter-CiCd
-          --require-approval never
-        working-directory: src/infra
+        env:
+          IMAGE_TAG: ${{ github.sha }}

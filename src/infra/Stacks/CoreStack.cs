@@ -14,6 +14,7 @@ public class CoreStack : Stack
     public Repository ApiEcrRepo { get; }
     public Repository IngestEcrRepo { get; }
     public Repository InferenceEcrRepo { get; }
+    public Repository PiMgmtEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -74,6 +75,15 @@ public class CoreStack : Stack
         {
             IndexName = "by-date",
             PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "date", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
+            ProjectionType = ProjectionType.ALL
+        });
+
+        // GSI for listing all clips ordered by timestamp (newest first)
+        ClipsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "all-by-time",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "pk", Type = AttributeType.STRING },
             SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
             ProjectionType = ProjectionType.ALL
         });
@@ -144,6 +154,21 @@ public class CoreStack : Stack
         InferenceEcrRepo = new Repository(this, "InferenceEcrRepo", new RepositoryProps
         {
             RepositoryName = "snout-spotter-inference",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        // ECR repository for Pi Management Lambda Docker image
+        PiMgmtEcrRepo = new Repository(this, "PiMgmtEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-pi-mgmt",
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {

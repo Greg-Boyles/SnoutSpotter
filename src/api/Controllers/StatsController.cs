@@ -44,21 +44,35 @@ public class StatsController : ControllerBase
     [HttpGet("health")]
     public async Task<ActionResult<object>> GetHealth()
     {
-        var piOnline = await _healthService.IsPiOnlineAsync();
-        var shadow = await _piUpdateService.GetPiShadowAsync();
+        var thingNames = await _piUpdateService.ListPisAsync();
         var latestVersion = await _piUpdateService.GetLatestVersionAsync();
+
+        var devices = new List<object>();
+        foreach (var thingName in thingNames)
+        {
+            var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
+            var piOnline = shadow?.LastHeartbeat != null &&
+                DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
+                (DateTime.UtcNow - lastHb).TotalMinutes < 5;
+
+            devices.Add(new
+            {
+                thingName,
+                online = piOnline,
+                version = shadow?.Version,
+                hostname = shadow?.Hostname,
+                lastHeartbeat = shadow?.LastHeartbeat,
+                updateStatus = shadow?.UpdateStatus ?? "idle",
+                services = shadow?.Services,
+                updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
+            });
+        }
 
         return Ok(new
         {
-            piOnline,
             checkedAt = DateTime.UtcNow.ToString("O"),
-            piVersion = shadow?.Version,
-            piHostname = shadow?.Hostname,
-            lastHeartbeat = shadow?.LastHeartbeat,
-            updateStatus = shadow?.UpdateStatus ?? "idle",
-            services = shadow?.Services,
             latestVersion,
-            updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
+            devices
         });
     }
 }

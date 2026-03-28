@@ -4,8 +4,12 @@ import {
   Wifi,
   WifiOff,
   Server,
-  Package,
   RefreshCw,
+  Plus,
+  Trash2,
+  X,
+  Copy,
+  Check,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
@@ -28,8 +32,14 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
 export default function SystemHealthPage() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
+  const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState("");
+  const [registrationResult, setRegistrationResult] = useState<any>(null);
+  const [registering, setRegistering] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const refreshHealth = () =>
     api.getHealth().then(setHealth).catch(console.error);
@@ -44,12 +54,12 @@ export default function SystemHealthPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleUpdate = async () => {
-    setUpdating(true);
+  const handleUpdate = async (thingName: string) => {
+    setUpdating((prev) => ({ ...prev, [thingName]: true }));
     setUpdateMessage(null);
     try {
-      const result = await api.triggerPiUpdate();
-      setUpdateMessage(`Update to v${result.version} triggered`);
+      const result = await api.triggerPiUpdate(thingName);
+      setUpdateMessage(`Update to v${result.version} triggered for ${thingName}`);
       // Poll for status changes
       setTimeout(refreshHealth, 5000);
       setTimeout(refreshHealth, 15000);
@@ -57,8 +67,67 @@ export default function SystemHealthPage() {
     } catch (e) {
       setUpdateMessage(`Update failed: ${(e as Error).message}`);
     } finally {
-      setUpdating(false);
+      setUpdating((prev) => ({ ...prev, [thingName]: false }));
     }
+  };
+
+  const handleUpdateAll = async () => {
+    setUpdating((prev) => ({ ...prev, all: true }));
+    setUpdateMessage(null);
+    try {
+      const result = await api.triggerPiUpdateAll();
+      setUpdateMessage(`Update to v${result.version} triggered for ${result.deviceCount} device(s)`);
+      setTimeout(refreshHealth, 5000);
+      setTimeout(refreshHealth, 15000);
+      setTimeout(refreshHealth, 30000);
+    } catch (e) {
+      setUpdateMessage(`Update failed: ${(e as Error).message}`);
+    } finally {
+      setUpdating((prev) => ({ ...prev, all: false }));
+    }
+  };
+
+  const handleAddDevice = async () => {
+    if (!newDeviceName.trim()) return;
+    setRegistering(true);
+    try {
+      const result = await api.registerDevice(newDeviceName.trim());
+      setRegistrationResult(result);
+      setTimeout(refreshHealth, 2000);
+    } catch (e) {
+      setUpdateMessage(`Registration failed: ${(e as Error).message}`);
+      setShowAddDialog(false);
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  const handleRemoveDevice = async (thingName: string) => {
+    if (!confirm(`Are you sure you want to remove device "${thingName}"? This cannot be undone.`)) {
+      return;
+    }
+    setRemoving(thingName);
+    try {
+      await api.deregisterDevice(thingName);
+      setUpdateMessage(`Device "${thingName}" removed successfully`);
+      setTimeout(refreshHealth, 1000);
+    } catch (e) {
+      setUpdateMessage(`Failed to remove device: ${(e as Error).message}`);
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const closeAddDialog = () => {
+    setShowAddDialog(false);
+    setNewDeviceName("");
+    setRegistrationResult(null);
   };
 
   if (error) {
@@ -69,102 +138,270 @@ export default function SystemHealthPage() {
 
   if (!health) return <div className="text-gray-400">Loading...</div>;
 
-  const metrics = [
-    {
-      icon: health.piOnline ? Wifi : WifiOff,
-      label: "Pi Status",
-      value: health.piOnline ? "Online" : "Offline",
-      sub: `Checked ${formatDistanceToNow(new Date(health.checkedAt), { addSuffix: true })}`,
-      ok: health.piOnline,
-    },
-    {
-      icon: Server,
-      label: "API",
-      value: "Healthy",
-      sub: "Responding normally",
-      ok: true,
-    },
-  ];
+  const allOnline = health.devices.every((d) => d.online);
+  const anyUpdateAvailable = health.devices.some((d) => d.updateAvailable);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">System Health</h1>
-        <StatusBadge
-          ok={health.piOnline}
-          label={health.piOnline ? "All Systems Go" : "Pi Offline"}
-        />
+        <div className="flex items-center gap-3">
+          <StatusBadge
+            ok={allOnline}
+            label={allOnline ? "All Systems Go" : `${health.devices.filter((d) => !d.online).length} Offline`}
+          />
+          <button
+            onClick={() => setShowAddDialog(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+          >
+            <Plus className="w-3 h-3" />
+            Add Pi
+          </button>
+          {anyUpdateAvailable && (
+            <button
+              onClick={handleUpdateAll}
+              disabled={updating.all}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-3 h-3 ${updating.all ? "animate-spin" : ""}`} />
+              {updating.all ? "Updating..." : "Update All"}
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {metrics.map((m) => (
+      {updateMessage && (
+        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-lg text-sm">
+          {updateMessage}
+        </div>
+      )}
+
+      {/* API Health */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Server className="w-5 h-5 text-gray-400" />
+            <span className="text-sm text-gray-500">API</span>
+          </div>
+          <span className="w-2 h-2 rounded-full bg-green-500" />
+        </div>
+        <p className="text-2xl font-bold text-gray-900 mt-2">Healthy</p>
+        <p className="text-xs text-gray-400 mt-1">
+          Checked {formatDistanceToNow(new Date(health.checkedAt), { addSuffix: true })}
+        </p>
+      </div>
+
+      {/* Add Pi Dialog */}
+      {showAddDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            {!registrationResult ? (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Add Raspberry Pi Device</h3>
+                  <button onClick={closeAddDialog} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Enter a name for your new Pi device (e.g., "garage", "front-door").
+                </p>
+                <input
+                  type="text"
+                  value={newDeviceName}
+                  onChange={(e) => setNewDeviceName(e.target.value)}
+                  placeholder="Device name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={registering}
+                />
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleAddDevice}
+                    disabled={registering || !newDeviceName.trim()}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {registering ? "Registering..." : "Register Device"}
+                  </button>
+                  <button
+                    onClick={closeAddDialog}
+                    disabled={registering}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-green-600">Device Registered!</h3>
+                  <button onClick={closeAddDialog} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Save these credentials securely. You'll need them to set up the Pi.
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">Thing Name:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="flex-1 p-2 bg-gray-100 rounded text-xs break-all">{registrationResult.thingName}</code>
+                      <button onClick={() => copyToClipboard(registrationResult.thingName, "thingName")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "thingName" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">IoT Endpoint:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="flex-1 p-2 bg-gray-100 rounded text-xs break-all">{registrationResult.ioTEndpoint}</code>
+                      <button onClick={() => copyToClipboard(registrationResult.ioTEndpoint, "endpoint")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "endpoint" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">Certificate:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <textarea readOnly value={registrationResult.certificatePem} className="flex-1 p-2 bg-gray-100 rounded text-xs font-mono h-20 resize-none" />
+                      <button onClick={() => copyToClipboard(registrationResult.certificatePem, "cert")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "cert" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-500">Private Key:</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <textarea readOnly value={registrationResult.privateKey} className="flex-1 p-2 bg-gray-100 rounded text-xs font-mono h-20 resize-none" />
+                      <button onClick={() => copyToClipboard(registrationResult.privateKey, "key")} className="p-2 hover:bg-gray-100 rounded">
+                        {copied === "key" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={closeAddDialog}
+                  className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Done
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Pi Devices */}
+      <h2 className="text-lg font-semibold text-gray-900 mb-3">Raspberry Pi Devices</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {health.devices.map((device) => (
           <div
-            key={m.label}
+            key={device.thingName}
             className="bg-white rounded-xl border border-gray-200 p-5"
           >
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <m.icon className="w-5 h-5 text-gray-400" />
-                <span className="text-sm text-gray-500">{m.label}</span>
+                {device.online ? (
+                  <Wifi className="w-5 h-5 text-green-500" />
+                ) : (
+                  <WifiOff className="w-5 h-5 text-red-500" />
+                )}
+                <span className="font-medium text-gray-900">
+                  {device.hostname || device.thingName}
+                </span>
               </div>
-              <span
-                className={`w-2 h-2 rounded-full ${m.ok ? "bg-green-500" : "bg-red-500"}`}
-              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleRemoveDevice(device.thingName)}
+                  disabled={removing === device.thingName}
+                  className="p-1 text-gray-400 hover:text-red-600 disabled:opacity-50"
+                  title="Remove device"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <span
+                  className={`w-2 h-2 rounded-full ${device.online ? "bg-green-500" : "bg-red-500"}`}
+                />
+              </div>
             </div>
-            <p className="text-2xl font-bold text-gray-900">{m.value}</p>
-            {m.sub && <p className="text-xs text-gray-400 mt-1">{m.sub}</p>}
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">Status</span>
+                <StatusBadge ok={device.online} label={device.online ? "Online" : "Offline"} />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">Version</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {device.version ? `v${device.version}` : "Unknown"}
+                </span>
+              </div>
+
+              {device.lastHeartbeat && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">Last seen</span>
+                  <span className="text-xs text-gray-400">
+                    {formatDistanceToNow(new Date(device.lastHeartbeat), { addSuffix: true })}
+                  </span>
+                </div>
+              )}
+
+              {device.updateStatus && device.updateStatus !== "idle" && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">Update Status</span>
+                  <span
+                    className={`text-xs font-medium ${
+                      device.updateStatus === "success"
+                        ? "text-green-600"
+                        : device.updateStatus === "failed"
+                        ? "text-red-600"
+                        : "text-blue-600"
+                    }`}
+                  >
+                    {device.updateStatus}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {device.updateAvailable && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-amber-600">
+                    v{health.latestVersion} available
+                  </span>
+                  <button
+                    onClick={() => handleUpdate(device.thingName)}
+                    disabled={updating[device.thingName] || device.updateStatus === "updating"}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw
+                      className={`w-3 h-3 ${
+                        updating[device.thingName] ? "animate-spin" : ""
+                      }`}
+                    />
+                    {updating[device.thingName] ? "Updating..." : "Update"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!device.updateAvailable && device.version && (
+              <p className="text-xs text-green-600 mt-3 pt-3 border-t border-gray-100">
+                Up to date
+              </p>
+            )}
           </div>
         ))}
 
-        {/* Pi Software Version */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Package className="w-5 h-5 text-gray-400" />
-              <span className="text-sm text-gray-500">Pi Software</span>
-            </div>
-            {health.updateAvailable && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
-                Update Available
-              </span>
-            )}
+        {health.devices.length === 0 && (
+          <div className="col-span-2 bg-gray-50 rounded-xl border border-gray-200 p-8 text-center">
+            <WifiOff className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500">No Pi devices registered</p>
           </div>
-          <p className="text-2xl font-bold text-gray-900">
-            {health.piVersion ? `v${health.piVersion}` : "Unknown"}
-          </p>
-          {health.latestVersion && health.piVersion !== health.latestVersion && (
-            <p className="text-xs text-amber-600 mt-1">
-              v{health.latestVersion} available
-            </p>
-          )}
-          {health.piVersion && !health.updateAvailable && (
-            <p className="text-xs text-green-600 mt-1">Up to date</p>
-          )}
-          {health.updateStatus && health.updateStatus !== "idle" && (
-            <p className={`text-xs mt-1 ${
-              health.updateStatus === "success" ? "text-green-600" :
-              health.updateStatus === "failed" ? "text-red-600" :
-              "text-blue-600"
-            }`}>
-              Status: {health.updateStatus}
-            </p>
-          )}
-
-          {health.updateAvailable && (
-            <button
-              onClick={handleUpdate}
-              disabled={updating || health.updateStatus === "updating"}
-              className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`w-3 h-3 ${updating ? "animate-spin" : ""}`} />
-              {updating ? "Triggering..." : "Update Now"}
-            </button>
-          )}
-
-          {updateMessage && (
-            <p className="text-xs text-gray-500 mt-2">{updateMessage}</p>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

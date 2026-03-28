@@ -1,4 +1,4 @@
-name: Deploy Web
+name: Deploy web
 
 on:
   workflow_call:
@@ -13,6 +13,7 @@ env:
 
 jobs:
   build-and-deploy:
+    name: Build and deploy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

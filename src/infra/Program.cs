@@ -43,6 +43,15 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
 
 var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new StackProps { Env = env });
 
+var piMgmtStack = new PiMgmtStack(app, "SnoutSpotter-PiMgmt", new PiMgmtStackProps
+{
+    Env = env,
+    PiMgmtEcrRepo = coreStack.PiMgmtEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    IoTThingGroupName = iotStack.ThingGroupName,
+    IoTPolicyName = iotStack.PolicyName
+});
+
 var webStack = new WebStack(app, "SnoutSpotter-Web", new StackProps { Env = env });
 
 var monitoringStack = new MonitoringStack(app, "SnoutSpotter-Monitoring", new MonitoringStackProps

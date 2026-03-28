@@ -1,4 +1,4 @@
-name: Build ingest image
+name: Build Pi management image
 
 on:
   workflow_call:
@@ -10,7 +10,7 @@ permissions:
 
 env:
   AWS_REGION: "eu-west-1"
-  ECR_REPOSITORY: "snout-spotter-ingest"
+  ECR_REPOSITORY: "snout-spotter-pi-mgmt"
 
 jobs:
   build:
@@ -29,10 +29,15 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Login to Amazon ECR public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
       - name: Build and push Docker image
         run: |
           IMAGE_TAG=${{ github.sha }}
           REGISTRY=${{ steps.ecr-login.outputs.registry }}
-          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $REGISTRY/$ECR_REPOSITORY:latest src/lambdas/SnoutSpotter.Lambda.IngestClip
+          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $REGISTRY/$ECR_REPOSITORY:latest src/lambdas/SnoutSpotter.Lambda.PiMgmt
           docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $REGISTRY/$ECR_REPOSITORY:latest

@@ -15,7 +15,7 @@ public class ApiStackProps : StackProps
     public required Table ClipsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
     public required string ImageTag { get; init; }
-    public string IoTThingName { get; init; } = "snoutspotter-pi";
+    public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
 }
 
 public class ApiStack : Stack
@@ -39,8 +39,8 @@ public class ApiStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
-            ["AWS_LWA_PORT"] = "8080",
-            ["IOT_THING_NAME"] = props.IoTThingName
+                ["AWS_LWA_PORT"] = "8080",
+                ["IOT_THING_GROUP"] = props.IoTThingGroupName
             }
         });
 
@@ -57,15 +57,23 @@ public class ApiStack : Stack
             Resources = new[] { "*" }
         }));
 
-        // IoT Device Shadow permissions
+        // IoT Device Shadow permissions (all snoutspotter things)
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
             Actions = new[] { "iot:GetThingShadow", "iot:UpdateThingShadow" },
-            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thing/{props.IoTThingName}" }
+            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thing/snoutspotter-*" }
         }));
 
-        // IoT DescribeEndpoint (required to resolve the IoT Data ATS endpoint at startup)
+        // IoT list things in group
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot:ListThingsInThingGroup" },
+            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
+        }));
+
+        // IoT DescribeEndpoint (global action, no resource-level scoping)
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
