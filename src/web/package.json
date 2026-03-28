@@ -19,6 +19,8 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
+    "@okta/okta-auth-js": "^8.0.0",
+    "@okta/okta-react": "^6.11.0",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.575.0",
     "react": "^19.2.4",
