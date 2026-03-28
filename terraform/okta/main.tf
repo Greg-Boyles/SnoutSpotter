@@ -49,11 +49,12 @@ resource "okta_auth_server_policy" "snoutspotter" {
 }
 
 resource "okta_auth_server_policy_rule" "snoutspotter" {
-  auth_server_id       = "default"
-  policy_id            = okta_auth_server_policy.snoutspotter.id
-  name                 = "Allow SPA access"
-  priority             = 1
-  grant_type_whitelist = ["authorization_code"]
-  scope_whitelist      = ["openid", "profile", "email"]
+  auth_server_id        = "default"
+  policy_id             = okta_auth_server_policy.snoutspotter.id
+  name                  = "Allow SPA access"
+  priority              = 1
+  grant_type_whitelist  = ["authorization_code"]
+  scope_whitelist       = ["openid", "profile", "email"]
+  group_whitelist       = ["EVERYONE"]
   access_token_lifetime_minutes = 60
 }
