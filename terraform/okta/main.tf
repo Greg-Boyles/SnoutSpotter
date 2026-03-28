@@ -38,6 +38,11 @@ resource "okta_app_oauth" "snoutspotter" {
   }
 }
 
+resource "okta_app_group_assignment" "everyone" {
+  app_id   = okta_app_oauth.snoutspotter.id
+  group_id = "EVERYONE"
+}
+
 
 # Access policy on the default authorization server for the SPA app
 resource "okta_auth_server_policy" "snoutspotter" {
