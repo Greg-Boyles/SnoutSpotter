@@ -38,6 +38,16 @@ resource "okta_app_oauth" "snoutspotter" {
   }
 }
 
+resource "okta_group" "snoutspotter_users" {
+  name        = "SnoutSpotter Users"
+  description = "Users with access to the SnoutSpotter application"
+}
+
+resource "okta_app_group_assignment" "snoutspotter_users" {
+  app_id   = okta_app_oauth.snoutspotter.id
+  group_id = okta_group.snoutspotter_users.id
+}
+
 
 # Access policy on the default authorization server for the SPA app
 resource "okta_auth_server_policy" "snoutspotter" {
@@ -49,11 +59,12 @@ resource "okta_auth_server_policy" "snoutspotter" {
 }
 
 resource "okta_auth_server_policy_rule" "snoutspotter" {
-  auth_server_id       = "default"
-  policy_id            = okta_auth_server_policy.snoutspotter.id
-  name                 = "Allow SPA access"
-  priority             = 1
-  grant_type_whitelist = ["authorization_code"]
-  scope_whitelist      = ["openid", "profile", "email"]
+  auth_server_id        = "default"
+  policy_id             = okta_auth_server_policy.snoutspotter.id
+  name                  = "Allow SPA access"
+  priority              = 1
+  grant_type_whitelist  = ["authorization_code"]
+  scope_whitelist       = ["openid", "profile", "email"]
+  group_whitelist       = [okta_group.snoutspotter_users.id]
   access_token_lifetime_minutes = 60
 }
