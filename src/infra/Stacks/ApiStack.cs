@@ -69,8 +69,16 @@ public class ApiStack : Stack
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
-            Actions = new[] { "iot:ListThingsInThingGroup", "iot:DescribeEndpoint" },
+            Actions = new[] { "iot:ListThingsInThingGroup" },
             Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
+        }));
+
+        // IoT DescribeEndpoint (global action, no resource-level scoping)
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot:DescribeEndpoint" },
+            Resources = new[] { "*" }
         }));
 
         // HTTP API Gateway
