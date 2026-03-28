@@ -3,6 +3,17 @@ import type { Clip, Detection, StatsOverview, SystemHealth } from "./types";
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
 
+let getAccessToken: (() => string | undefined) | null = null;
+
+export function setAuthGetter(getter: () => string | undefined) {
+  getAccessToken = getter;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getAccessToken?.();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 interface DeviceRegistrationResult {
   thingName: string;
   certificatePem: string;
@@ -13,7 +24,9 @@ interface DeviceRegistrationResult {
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { ...authHeaders() },
+  });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return res.json() as Promise<T>;
 }
@@ -21,7 +34,7 @@ async function fetchJson<T>(path: string): Promise<T> {
 async function postJson<T>(path: string, body?: unknown, baseUrl = BASE): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -31,6 +44,7 @@ async function postJson<T>(path: string, body?: unknown, baseUrl = BASE): Promis
 async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "DELETE",
+    headers: { ...authHeaders() },
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return res.json() as Promise<T>;

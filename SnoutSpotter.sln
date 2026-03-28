@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SnoutSpotter.Lambda.IngestC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SnoutSpotter.Lambda.RunInference", "src\lambdas\SnoutSpotter.Lambda.RunInference\SnoutSpotter.Lambda.RunInference.csproj", "{BF0A470A-9899-44A1-975A-3513A7AEAE82}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SnoutSpotter.Lambda.PiMgmt", "src\lambdas\SnoutSpotter.Lambda.PiMgmt\SnoutSpotter.Lambda.PiMgmt.csproj", "{04AEC4B5-4329-432F-BDFF-EED242377A6A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,6 +42,10 @@ Global
 		{BF0A470A-9899-44A1-975A-3513A7AEAE82}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BF0A470A-9899-44A1-975A-3513A7AEAE82}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BF0A470A-9899-44A1-975A-3513A7AEAE82}.Release|Any CPU.Build.0 = Release|Any CPU
+		{04AEC4B5-4329-432F-BDFF-EED242377A6A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{04AEC4B5-4329-432F-BDFF-EED242377A6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{04AEC4B5-4329-432F-BDFF-EED242377A6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{04AEC4B5-4329-432F-BDFF-EED242377A6A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B7A97D22-ECFA-407A-80C9-964908C5A861} = {09EF550C-6043-4983-B0BD-1882FD6B1A28}
@@ -47,5 +53,6 @@ Global
 		{41384DDF-9701-4878-B525-A688F41F585E} = {09EF550C-6043-4983-B0BD-1882FD6B1A28}
 		{01ABECFC-48E4-4C13-9465-71405B6124DD} = {41384DDF-9701-4878-B525-A688F41F585E}
 		{BF0A470A-9899-44A1-975A-3513A7AEAE82} = {41384DDF-9701-4878-B525-A688F41F585E}
+		{04AEC4B5-4329-432F-BDFF-EED242377A6A} = {41384DDF-9701-4878-B525-A688F41F585E}
 	EndGlobalSection
 EndGlobal

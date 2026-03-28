@@ -32,6 +32,12 @@ cdk.out/
 .DS_Store
 Thumbs.db
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+terraform.tfvars
+
 # Environment
 .env
 .env.*

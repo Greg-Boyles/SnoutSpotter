@@ -16,6 +16,8 @@ public class ApiStackProps : StackProps
     public required Repository ApiEcrRepo { get; init; }
     public required string ImageTag { get; init; }
     public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
+    public required string OktaIssuer { get; init; }
+    public required string AllowedOrigin { get; init; }
 }
 
 public class ApiStack : Stack
@@ -40,7 +42,9 @@ public class ApiStack : Stack
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
                 ["AWS_LWA_PORT"] = "8080",
-                ["IOT_THING_GROUP"] = props.IoTThingGroupName
+                ["IOT_THING_GROUP"] = props.IoTThingGroupName,
+                ["OKTA_ISSUER"] = props.OktaIssuer,
+                ["ALLOWED_ORIGIN"] = props.AllowedOrigin
             }
         });
 
@@ -88,9 +92,9 @@ public class ApiStack : Stack
             ProtocolType = "HTTP",
             CorsConfiguration = new CfnApi.CorsProperty
             {
-                AllowOrigins = new[] { "*" },
+                AllowOrigins = new[] { props.AllowedOrigin },
                 AllowMethods = new[] { "GET", "POST", "PUT", "DELETE", "OPTIONS" },
-                AllowHeaders = new[] { "*" },
+                AllowHeaders = new[] { "Authorization", "Content-Type" },
                 MaxAge = 3600
             }
         });
