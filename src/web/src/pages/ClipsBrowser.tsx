@@ -16,7 +16,10 @@ export default function ClipsBrowser() {
     api
       .getClips(page, pageSize)
       .then((data) => {
-        setClips(data.clips);
+        const sorted = [...data.clips].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        setClips(sorted);
         setTotal(data.totalCount);
       })
       .catch((e: Error) => setError(e.message));
