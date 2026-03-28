@@ -453,8 +453,11 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
 # ── Shadow delta handler ──────────────────────────────────────────────
 
 def on_shadow_delta(topic, payload, **kwargs):
-    """Called when a shadow delta is received."""
+    """Called when a shadow delta is received (push notification)."""
     try:
+        if on_shadow_delta.updating:
+            logger.info("Shadow delta received but update already in progress — ignoring")
+            return
         delta = json.loads(payload)
         state = delta.get("state", {})
         desired_version = state.get("version")
@@ -463,6 +466,8 @@ def on_shadow_delta(topic, payload, **kwargs):
             if desired_version != current_version:
                 logger.info(f"Shadow delta: update requested {current_version} -> {desired_version}")
                 on_shadow_delta.pending_version = desired_version
+            else:
+                logger.info(f"Shadow delta version {desired_version} matches current — ignoring")
     except Exception as e:
         logger.error(f"Error processing shadow delta: {e}")
 
@@ -488,6 +493,7 @@ def on_shadow_get_accepted(topic, payload, **kwargs):
 
 
 on_shadow_delta.pending_version = None
+on_shadow_delta.updating = False
 
 
 # ── Main loop ─────────────────────────────────────────────────────────
@@ -585,13 +591,21 @@ def main():
             if on_shadow_delta.pending_version:
                 pending = on_shadow_delta.pending_version
                 on_shadow_delta.pending_version = None
-                apply_update(
-                    version=pending,
-                    bucket=upload_cfg["bucket_name"],
-                    region=upload_cfg["region"],
-                    connection=connection,
-                    thing_name=thing_name,
-                )
+                # Final check: skip if version already matches (e.g. duplicate delta)
+                if pending == load_version():
+                    logger.info(f"Skipping update to {pending} — already running this version")
+                else:
+                    on_shadow_delta.updating = True
+                    try:
+                        apply_update(
+                            version=pending,
+                            bucket=upload_cfg["bucket_name"],
+                            region=upload_cfg["region"],
+                            connection=connection,
+                            thing_name=thing_name,
+                        )
+                    finally:
+                        on_shadow_delta.updating = False
 
             time.sleep(5)
 
