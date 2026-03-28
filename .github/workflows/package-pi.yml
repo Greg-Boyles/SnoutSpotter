@@ -29,10 +29,18 @@ jobs:
       - name: Compute version
         id: version
         run: |
-          PATCH=$(git rev-list --count HEAD -- src/pi/)
+          BUCKET=${{ secrets.DATA_BUCKET_NAME }}
+          # Read current version from S3 manifest and bump patch number
+          CURRENT=$(aws s3 cp s3://${BUCKET}/releases/pi/manifest.json - 2>/dev/null | jq -r '.latest // empty' || true)
+          if [ -n "$CURRENT" ]; then
+            PATCH=$(echo "$CURRENT" | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+          else
+            PATCH=1
+          fi
           VERSION="1.0.$PATCH"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Pi software version: $VERSION"
+          echo "Pi software version: $VERSION (previous: ${CURRENT:-none})"
 
       - name: Create tarball
         run: |
