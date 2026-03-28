@@ -53,12 +53,10 @@ resource "okta_app_signon_policy" "snoutspotter" {
 }
 
 resource "okta_app_signon_policy_rule" "no_mfa" {
-  policy_id           = okta_app_signon_policy.snoutspotter.id
-  name                = "Allow password only"
-  factor_mode         = "NO_FACTOR"
-  re_authentication_frequency = "PT0S"
-  groups_included     = [okta_group.snoutspotter_users.id]
-  depends_on          = [okta_group.snoutspotter_users]
+  policy_id   = okta_app_signon_policy.snoutspotter.id
+  name        = "Allow password only"
+  factor_mode = "1FA"
+  depends_on  = [okta_group.snoutspotter_users]
 }
 
 resource "okta_group" "snoutspotter_users" {
