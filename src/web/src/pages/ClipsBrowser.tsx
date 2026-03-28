@@ -8,22 +8,25 @@ import type { Clip } from "../types";
 export default function ClipsBrowser() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [nextPageKey, setNextPageKey] = useState<string | null>(null);
+  const [pageKeys, setPageKeys] = useState<(string | undefined)[]>([undefined]);
+  const [pageIndex, setPageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const pageSize = 20;
 
   useEffect(() => {
     api
-      .getClips(page, pageSize)
+      .getClips(pageSize, pageKeys[pageIndex])
       .then((data) => {
         const sorted = [...data.clips].sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
         setClips(sorted);
         setTotal(data.totalCount);
+        setNextPageKey(data.nextPageKey);
       })
       .catch((e: Error) => setError(e.message));
-  }, [page]);
+  }, [pageIndex]);
 
   if (error) {
     return (
@@ -32,8 +35,6 @@ export default function ClipsBrowser() {
       </div>
     );
   }
-
-  const totalPages = Math.ceil(total / pageSize);
 
   return (
     <div>
@@ -88,21 +89,30 @@ export default function ClipsBrowser() {
         ))}
       </div>
 
-      {totalPages > 1 && (
+      {(pageIndex > 0 || nextPageKey) && (
         <div className="flex items-center justify-center gap-2 mt-6">
           <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
+            onClick={() => setPageIndex((i) => i - 1)}
+            disabled={pageIndex === 0}
             className="px-3 py-1 text-sm rounded-lg border border-gray-200 disabled:opacity-40"
           >
             Prev
           </button>
           <span className="text-sm text-gray-500">
-            {page} / {totalPages}
+            Page {pageIndex + 1}
           </span>
           <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
+            onClick={() => {
+              if (nextPageKey) {
+                const newKeys = [...pageKeys];
+                if (newKeys.length <= pageIndex + 1) {
+                  newKeys.push(nextPageKey);
+                }
+                setPageKeys(newKeys);
+                setPageIndex((i) => i + 1);
+              }
+            }}
+            disabled={!nextPageKey}
             className="px-3 py-1 text-sm rounded-lg border border-gray-200 disabled:opacity-40"
           >
             Next
