@@ -213,7 +213,7 @@ def main():
         cert_filepath=cert_path,
         pri_key_filepath=key_path,
         ca_filepath=root_ca_path,
-        client_id=f"{thing_name}-ota",
+        client_id=thing_name,
         clean_session=False,
         keep_alive_secs=30,
     )
