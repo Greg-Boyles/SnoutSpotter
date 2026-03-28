@@ -37,3 +37,23 @@ resource "okta_app_oauth" "snoutspotter" {
     prevent_destroy = true
   }
 }
+
+
+# Access policy on the default authorization server for the SPA app
+resource "okta_auth_server_policy" "snoutspotter" {
+  auth_server_id   = "default"
+  name             = "SnoutSpotter SPA"
+  description      = "Access policy for SnoutSpotter frontend"
+  priority         = 1
+  client_whitelist = [okta_app_oauth.snoutspotter.client_id]
+}
+
+resource "okta_auth_server_policy_rule" "snoutspotter" {
+  auth_server_id       = "default"
+  policy_id            = okta_auth_server_policy.snoutspotter.id
+  name                 = "Allow SPA access"
+  priority             = 1
+  grant_type_whitelist = ["authorization_code"]
+  scope_whitelist      = ["openid", "profile", "email"]
+  access_token_lifetime_minutes = 60
+}
