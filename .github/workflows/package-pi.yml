@@ -37,7 +37,7 @@ jobs:
       - name: Create tarball
         run: |
           cd src/pi
-          tar -czf /tmp/pi-v${{ steps.version.outputs.version }}.tar.gz .
+          tar -czf /tmp/pi-v${{ steps.version.outputs.version }}.tar.gz --exclude='config.yaml' .
 
       - name: Upload to S3
         run: |

@@ -407,7 +407,9 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
 
         logger.info(f"Extracting to {INSTALL_DIR}")
         with tarfile.open(local_path, "r:gz") as tar:
-            tar.extractall(path=INSTALL_DIR)
+            # Exclude config.yaml to preserve device-specific settings
+            members = [m for m in tar.getmembers() if m.name not in ("./config.yaml", "config.yaml")]
+            tar.extractall(path=INSTALL_DIR, members=members)
 
         logger.info("Installing Python dependencies")
         subprocess.run(
