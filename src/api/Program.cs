@@ -3,6 +3,7 @@ using Amazon.DynamoDBv2;
 using Amazon.IoT;
 using Amazon.IotData;
 using Amazon.S3;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using SnoutSpotter.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,6 +34,14 @@ builder.Services.AddSingleton<S3PresignService>();
 builder.Services.AddSingleton<HealthService>();
 builder.Services.AddSingleton<PiUpdateService>();
 
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = Environment.GetEnvironmentVariable("OKTA_ISSUER");
+        options.Audience = "api://default";
+    });
+builder.Services.AddAuthorization();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -42,8 +51,12 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.AllowAnyOrigin()
-            .AllowAnyMethod()
+        var allowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN");
+        if (!string.IsNullOrEmpty(allowedOrigin))
+            policy.WithOrigins(allowedOrigin);
+        else
+            policy.AllowAnyOrigin();
+        policy.AllowAnyMethod()
             .AllowAnyHeader();
     });
 });
@@ -57,6 +70,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapControllers();
 
 app.Run();

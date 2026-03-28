@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SnoutSpotter.Api.Services;
 
@@ -5,6 +6,7 @@ namespace SnoutSpotter.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class PiController : ControllerBase
 {
     private readonly PiUpdateService _piUpdateService;
