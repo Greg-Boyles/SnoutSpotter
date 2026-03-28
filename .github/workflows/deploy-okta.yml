@@ -1,0 +1,38 @@
+name: Deploy Okta config
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/okta/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: terraform/okta
+
+jobs:
+  deploy:
+    name: Terraform apply
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform plan
+        run: terraform plan -out=tfplan
+        env:
+          TF_VAR_okta_api_token: ${{ secrets.OKTA_API_TOKEN }}
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_okta_api_token: ${{ secrets.OKTA_API_TOKEN }}

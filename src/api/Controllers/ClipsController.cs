@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services;
@@ -6,6 +7,7 @@ namespace SnoutSpotter.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ClipsController : ControllerBase
 {
     private readonly ClipService _clipService;

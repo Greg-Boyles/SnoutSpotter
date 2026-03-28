@@ -32,13 +32,18 @@ var inferenceStack = new InferenceStack(app, "SnoutSpotter-Inference", new Infer
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
+var oktaIssuer = (string?)app.Node.TryGetContext("oktaIssuer") ?? "https://integrator-4203185.okta.com/oauth2/default";
+var allowedOrigin = (string?)app.Node.TryGetContext("allowedOrigin") ?? "https://d2c95zo6ucmtrt.cloudfront.net";
+
 var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
 {
     Env = env,
     DataBucket = coreStack.DataBucket,
     ClipsTable = coreStack.ClipsTable,
     ApiEcrRepo = coreStack.ApiEcrRepo,
-    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    OktaIssuer = oktaIssuer,
+    AllowedOrigin = allowedOrigin
 });
 
 var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new StackProps { Env = env });

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/Greg/Dev/SnoutSpotter/src/web -name *.env* -o -name .env*)",
+      "Bash(grep -E \"\\\\.\\(tsx|ts|css\\)$\")",
+      "Bash(ls -la /c/Users/Greg/Dev/SnoutSpotter/src/web/*.json)",
+      "Bash(find /c/Users/Greg/Dev/SnoutSpotter -maxdepth 2 -type f \\\\\\(-name .gitignore -o -name README* -o -name *.md \\\\\\))",
+      "Bash(dotnet build:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

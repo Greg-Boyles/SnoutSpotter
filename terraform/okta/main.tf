@@ -38,6 +38,7 @@ resource "okta_app_oauth" "snoutspotter" {
   }
 }
 
+
 # Access policy on the default authorization server for the SPA app
 resource "okta_auth_server_policy" "snoutspotter" {
   auth_server_id   = "default"
