@@ -32,6 +32,6 @@ health:
 iot:
   endpoint: ""             # Set to your IoT endpoint (xxxxx-ats.iot.eu-west-1.amazonaws.com)
   thing_name: snoutspotter-pi
-  cert_path: ~/.snoutspotter/certs/device.pem.crt
+  cert_path: ~/.snoutspotter/certs/certificate.pem.crt
   key_path: ~/.snoutspotter/certs/private.pem.key
   root_ca_path: ~/.snoutspotter/certs/AmazonRootCA1.pem
