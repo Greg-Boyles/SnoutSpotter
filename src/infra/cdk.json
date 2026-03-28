@@ -18,6 +18,8 @@
     "@aws-cdk/core:target-partitions": ["aws"],
     "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": true,
     "@aws-cdk/aws-iam:minimizePolicies": true,
-    "@aws-cdk/core:enablePartitionLiterals": true
+    "@aws-cdk/core:enablePartitionLiterals": true,
+    "oktaIssuer": "https://integrator-4203185.okta.com/oauth2/default",
+    "allowedOrigin": "https://d2c95zo6ucmtrt.cloudfront.net"
   }
 }
