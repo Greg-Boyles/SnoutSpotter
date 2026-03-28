@@ -10,9 +10,32 @@ import {
   X,
   Copy,
   Check,
+  Camera,
+  CameraOff,
+  Upload,
+  HardDrive,
+  Cpu,
+  Thermometer,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
+
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
+function UsageBar({ percent, color }: { percent: number; color: string }) {
+  return (
+    <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(percent, 100)}%` }} />
+    </div>
+  );
+}
 
 function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -365,6 +388,132 @@ export default function SystemHealthPage() {
                 </div>
               )}
             </div>
+
+            {/* Camera Status */}
+            {device.camera && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex items-center gap-2 mb-2">
+                  {device.camera.healthy ? (
+                    <Camera className="w-4 h-4 text-green-500" />
+                  ) : (
+                    <CameraOff className="w-4 h-4 text-red-500" />
+                  )}
+                  <span className="text-xs font-medium text-gray-700">Camera</span>
+                  <StatusBadge
+                    ok={device.camera.healthy}
+                    label={device.camera.connected ? (device.camera.healthy ? "Healthy" : "Error") : "Disconnected"}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500">
+                  {device.camera.sensor && <span>Sensor: {device.camera.sensor}</span>}
+                  {device.camera.resolution && <span>Native: {device.camera.resolution}</span>}
+                  {device.camera.recordResolution && <span>Record: {device.camera.recordResolution}</span>}
+                </div>
+              </div>
+            )}
+
+            {/* Motion & Upload Times */}
+            {(device.lastMotionAt || device.lastUploadAt) && (
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
+                {device.lastMotionAt && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Last motion</span>
+                    <span className="text-xs text-gray-700">
+                      {formatDistanceToNow(new Date(device.lastMotionAt), { addSuffix: true })}
+                    </span>
+                  </div>
+                )}
+                {device.lastUploadAt && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Last upload</span>
+                    <span className="text-xs text-gray-700">
+                      {formatDistanceToNow(new Date(device.lastUploadAt), { addSuffix: true })}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Upload Stats */}
+            {device.uploadStats && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex items-center gap-2 mb-1">
+                  <Upload className="w-3.5 h-3.5 text-gray-400" />
+                  <span className="text-xs font-medium text-gray-700">Uploads</span>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-gray-500">
+                  <span>{device.uploadStats.uploadsToday} today</span>
+                  {device.uploadStats.failedToday > 0 && (
+                    <span className="text-red-600">{device.uploadStats.failedToday} failed</span>
+                  )}
+                  <span>{device.uploadStats.totalUploaded} total</span>
+                </div>
+                {device.clipsPending != null && device.clipsPending > 0 && (
+                  <span className="text-xs text-amber-600 mt-1 block">
+                    {device.clipsPending} clip{device.clipsPending !== 1 ? "s" : ""} pending upload
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* System Health */}
+            {device.system && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex items-center gap-2 mb-2">
+                  <Cpu className="w-3.5 h-3.5 text-gray-400" />
+                  <span className="text-xs font-medium text-gray-700">System</span>
+                </div>
+                <div className="space-y-2">
+                  {device.system.cpuTempC != null && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-500 flex items-center gap-1">
+                        <Thermometer className="w-3 h-3" /> CPU Temp
+                      </span>
+                      <span className={
+                        device.system.cpuTempC > 75 ? "text-red-600 font-medium" :
+                        device.system.cpuTempC > 60 ? "text-amber-600" : "text-gray-700"
+                      }>
+                        {device.system.cpuTempC.toFixed(1)}°C
+                      </span>
+                    </div>
+                  )}
+                  {device.system.memUsedPercent != null && (
+                    <div>
+                      <div className="flex items-center justify-between text-xs mb-0.5">
+                        <span className="text-gray-500">Memory</span>
+                        <span className="text-gray-700">{device.system.memUsedPercent.toFixed(0)}%</span>
+                      </div>
+                      <UsageBar percent={device.system.memUsedPercent} color={device.system.memUsedPercent > 85 ? "bg-red-500" : "bg-blue-500"} />
+                    </div>
+                  )}
+                  {device.system.diskUsedPercent != null && (
+                    <div>
+                      <div className="flex items-center justify-between text-xs mb-0.5">
+                        <span className="text-gray-500 flex items-center gap-1">
+                          <HardDrive className="w-3 h-3" /> Disk
+                        </span>
+                        <span className="text-gray-700">
+                          {device.system.diskUsedPercent.toFixed(0)}%
+                          {device.system.diskFreeGb != null && ` (${device.system.diskFreeGb.toFixed(1)} GB free)`}
+                        </span>
+                      </div>
+                      <UsageBar percent={device.system.diskUsedPercent} color={device.system.diskUsedPercent > 85 ? "bg-red-500" : "bg-blue-500"} />
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500 mt-1">
+                    {device.system.uptimeSeconds != null && (
+                      <span>Uptime: {formatUptime(device.system.uptimeSeconds)}</span>
+                    )}
+                    {device.system.wifiSignalDbm != null && (
+                      <span>WiFi: {device.system.wifiSignalDbm} dBm</span>
+                    )}
+                    {device.system.ipAddress && <span>IP: {device.system.ipAddress}</span>}
+                    {device.system.wifiSsid && <span>SSID: {device.system.wifiSsid}</span>}
+                    {device.system.piModel && <span className="col-span-2">{device.system.piModel}</span>}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {device.updateAvailable && (
               <div className="mt-4 pt-4 border-t border-gray-100">

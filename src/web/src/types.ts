@@ -33,6 +33,34 @@ export interface StatsOverview {
   piOnline: boolean;
 }
 
+export interface CameraStatus {
+  connected: boolean;
+  healthy: boolean;
+  sensor?: string;
+  resolution?: string;
+  recordResolution?: string;
+}
+
+export interface UploadStats {
+  uploadsToday: number;
+  failedToday: number;
+  totalUploaded: number;
+}
+
+export interface SystemInfo {
+  cpuTempC?: number;
+  memUsedPercent?: number;
+  diskUsedPercent?: number;
+  diskFreeGb?: number;
+  uptimeSeconds?: number;
+  loadAvg?: number[];
+  piModel?: string;
+  ipAddress?: string;
+  wifiSignalDbm?: number;
+  wifiSsid?: string;
+  pythonVersion?: string;
+}
+
 export interface PiDevice {
   thingName: string;
   online: boolean;
@@ -41,6 +69,12 @@ export interface PiDevice {
   lastHeartbeat?: string;
   updateStatus?: string;
   services?: Record<string, string>;
+  camera?: CameraStatus;
+  lastMotionAt?: string;
+  lastUploadAt?: string;
+  uploadStats?: UploadStats;
+  clipsPending?: number;
+  system?: SystemInfo;
   updateAvailable?: boolean;
 }
 
