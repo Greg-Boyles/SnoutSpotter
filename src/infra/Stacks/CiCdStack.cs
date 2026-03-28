@@ -82,7 +82,8 @@ public class CiCdStack : Stack
                 $"arn:aws:s3:::snout-spotter-{Account}",
                 $"arn:aws:s3:::snout-spotter-{Account}/models/*",
                 $"arn:aws:s3:::snout-spotter-{Account}/training-packages/*",
-                $"arn:aws:s3:::snout-spotter-{Account}/releases/*"
+                $"arn:aws:s3:::snout-spotter-{Account}/releases/*",
+                $"arn:aws:s3:::snout-spotter-{Account}/terraform/*"
             }
         }));
 
