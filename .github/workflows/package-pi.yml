@@ -26,10 +26,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Read version
+      - name: Compute version
         id: version
         run: |
-          VERSION=$(jq -r '.version' src/pi/version.json)
+          PATCH=$(git rev-list --count HEAD -- src/pi/)
+          VERSION="1.0.$PATCH"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Pi software version: $VERSION"
 
