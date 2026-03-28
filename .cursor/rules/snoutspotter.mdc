@@ -1,0 +1,61 @@
+---
+description: SnoutSpotter project conventions and rules
+globs:
+  - "**/*"
+---
+
+# SnoutSpotter Project Rules
+
+## General
+- Read `AGENTS.md` at the repo root for full project context before making changes.
+- Region is `eu-west-1`. Never hardcode AWS account IDs — use CDK `Account` and `Region` tokens.
+- All resources are tagged `Project: SnoutSpotter`.
+
+## .NET / C#
+- Target **.NET 8**. Use top-level statements in `Program.cs`.
+- Use **record types** for API response models (see `src/api/Models/ClipModels.cs`).
+- Register AWS SDK clients as singletons in DI.
+- `AmazonIotDataClient` must use `ServiceURL` (not `RegionEndpoint`) — obtain via `iot:DescribeEndpoint`.
+- After editing C# files, verify with: `dotnet build SnoutSpotter.sln`
+
+## CDK Infrastructure
+- Stacks live in `src/infra/Stacks/` and are wired in `src/infra/Program.cs`.
+- Pass dependencies between stacks via typed `*Props` classes (e.g. `ApiStackProps`).
+- ECR repos are created in **CoreStack** — never create them in consuming stacks.
+- `IMAGE_TAG` env var controls Docker image tag at deploy time.
+- Always deploy CoreStack before any stack that references its resources.
+
+## Lambdas
+- All Lambdas use **Docker-based deployment** via ECR.
+- ASP.NET Core Lambdas use **Lambda Web Adapter** with `AWS_LWA_PORT=8080`.
+- Each Lambda has its own `.csproj`, `Dockerfile`, and ECR repo.
+- IoT control plane actions (e.g. `iot:DescribeEndpoint`) need `Resource: "*"` in IAM policies.
+
+## Frontend (React)
+- Stack: React 18 + TypeScript + Vite + Tailwind CSS.
+- Source is in `src/web/src/`. Pages in `pages/`, shared types in `types.ts`.
+- API client is in `api.ts` — two base URLs: `VITE_API_URL` and `VITE_PI_MGMT_URL`.
+- After editing frontend files, verify with: `npm run build` (from `src/web/`)
+- DynamoDB Scan returns items in no guaranteed order — always sort client-side when needed.
+- Use cursor-based pagination (`nextPageKey`), not offset-based (`page`/`pageSize`).
+
+## Pi Software (Python)
+- Scripts are in `src/pi/`. Config is in `config.yaml`.
+- IoT thing names are prefixed `snoutspotter-` (e.g. `snoutspotter-garden`).
+- `setup-pi.sh` handles full device provisioning — it calls the Pi Management API.
+- Four systemd services: motion, uploader, health, ota.
+
+## CI/CD
+- GitHub Actions with OIDC AWS auth. Main pipeline is `deploy.yml`.
+- Pipeline stages: infra → build images (parallel) → deploy stacks + web.
+- Each component has its own build and deploy workflow in `.github/workflows/`.
+- CloudFront must be invalidated after web deploys.
+
+## Naming Conventions
+- S3 bucket: `snout-spotter-{account-id}`
+- DynamoDB table: `snout-spotter-clips`
+- Lambda functions: `snout-spotter-api`, `snout-spotter-pi-mgmt`
+- ECR repos: `snout-spotter-api`, `snout-spotter-ingest`, `snout-spotter-inference`, `snout-spotter-pi-mgmt`
+- IoT Thing Group: `snoutspotter-pis`
+- IoT Policy: `snoutspotter-pi-policy`
+- IoT Things: `snoutspotter-{device-name}`
