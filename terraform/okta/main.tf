@@ -38,9 +38,14 @@ resource "okta_app_oauth" "snoutspotter" {
   }
 }
 
-resource "okta_app_group_assignment" "everyone" {
+resource "okta_group" "snoutspotter_users" {
+  name        = "SnoutSpotter Users"
+  description = "Users with access to the SnoutSpotter application"
+}
+
+resource "okta_app_group_assignment" "snoutspotter_users" {
   app_id   = okta_app_oauth.snoutspotter.id
-  group_id = "EVERYONE"
+  group_id = okta_group.snoutspotter_users.id
 }
 
 
@@ -60,6 +65,6 @@ resource "okta_auth_server_policy_rule" "snoutspotter" {
   priority              = 1
   grant_type_whitelist  = ["authorization_code"]
   scope_whitelist       = ["openid", "profile", "email"]
-  group_whitelist       = ["EVERYONE"]
+  group_whitelist       = [okta_group.snoutspotter_users.id]
   access_token_lifetime_minutes = 60
 }
