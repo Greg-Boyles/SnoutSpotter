@@ -4,8 +4,13 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/**"
-      - ".github/workflows/**"
+      - "src/api/**"
+      - "src/web/**"
+      - "src/lambdas/**"
+      - "src/infra/**"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/deploy-*.yml"
+      - ".github/workflows/build-*.yml"
   workflow_dispatch:
 
 permissions:
@@ -13,64 +18,135 @@ permissions:
   contents: read
 
 jobs:
-  # Stage 1: Deploy infrastructure
+  # Detect which areas changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      infra: ${{ steps.filter.outputs.infra }}
+      api: ${{ steps.filter.outputs.api }}
+      ingest: ${{ steps.filter.outputs.ingest }}
+      inference: ${{ steps.filter.outputs.inference }}
+      pi-mgmt: ${{ steps.filter.outputs.pi-mgmt }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            infra:
+              - 'src/infra/**'
+            api:
+              - 'src/api/**'
+              - 'src/infra/**'
+            ingest:
+              - 'src/lambdas/SnoutSpotter.Lambda.Ingest/**'
+              - 'src/infra/**'
+            inference:
+              - 'src/lambdas/SnoutSpotter.Lambda.RunInference/**'
+              - 'src/infra/**'
+            pi-mgmt:
+              - 'src/lambdas/SnoutSpotter.Lambda.PiMgmt/**'
+              - 'src/infra/**'
+            web:
+              - 'src/web/**'
+
+  # Stage 1: Deploy infrastructure (only if infra changed)
   stage-1-infra:
     name: Deploy infrastructure
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/deploy-infra.yml
     secrets: inherit
 
-  # Stage 2: Build Docker images (in parallel after infra)
+  # Stage 2: Build images (each only if relevant source changed)
   build-api-image:
     name: Build API image
-    needs: stage-1-infra
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.api == 'true' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/build-api-image.yml
     secrets: inherit
 
   build-ingest-image:
     name: Build ingest image
-    needs: stage-1-infra
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.ingest == 'true' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/build-ingest-image.yml
     secrets: inherit
 
   build-inference-image:
     name: Build inference image
-    needs: stage-1-infra
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.inference == 'true' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/build-inference-image.yml
     secrets: inherit
 
   build-pi-mgmt-image:
     name: Build Pi management image
-    needs: stage-1-infra
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.pi-mgmt == 'true' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/build-pi-mgmt-image.yml
     secrets: inherit
 
-  # Stage 3: Deploy application stacks (after images are built)
+  # Stage 3: Deploy application stacks
   deploy-api:
     name: Deploy API
     needs: build-api-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-api-image.result == 'success'
     uses: ./.github/workflows/deploy-api.yml
     secrets: inherit
 
   deploy-ingest:
     name: Deploy ingest
     needs: build-ingest-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-ingest-image.result == 'success'
     uses: ./.github/workflows/deploy-ingest.yml
     secrets: inherit
 
   deploy-inference:
     name: Deploy inference
     needs: build-inference-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-inference-image.result == 'success'
     uses: ./.github/workflows/deploy-inference.yml
     secrets: inherit
 
   deploy-pi-mgmt:
     name: Deploy Pi management
     needs: build-pi-mgmt-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-pi-mgmt-image.result == 'success'
     uses: ./.github/workflows/deploy-pi-mgmt.yml
     secrets: inherit
 
   deploy-web:
     name: Deploy web
-    needs: stage-1-infra
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.web == 'true' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/deploy-web.yml
     secrets: inherit
