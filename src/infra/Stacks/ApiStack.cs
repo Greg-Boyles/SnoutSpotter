@@ -61,7 +61,7 @@ public class ApiStack : Stack
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
-            Actions = new[] { "iot-data:GetThingShadow", "iot-data:UpdateThingShadow" },
+            Actions = new[] { "iotdata:GetThingShadow", "iotdata:UpdateThingShadow" },
             Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thing/snoutspotter-*" }
         }));
 
