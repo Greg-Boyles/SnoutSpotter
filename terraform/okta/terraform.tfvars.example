@@ -1,0 +1,3 @@
+okta_org_name     = "integrator-4203185"
+cloudfront_domain = "d2c95zo6ucmtrt.cloudfront.net"
+# okta_api_token  = "set via TF_VAR_okta_api_token env var or -var flag"
