@@ -7,6 +7,13 @@ terraform {
       version = "~> 4.0"
     }
   }
+
+  backend "s3" {
+    bucket  = "snout-spotter-490204853569"
+    key     = "terraform/okta/terraform.tfstate"
+    region  = "eu-west-1"
+    encrypt = true
+  }
 }
 
 provider "okta" {
