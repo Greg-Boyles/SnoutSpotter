@@ -1,0 +1,7 @@
+# System packages installed via apt during OTA updates.
+# One package per line. Lines starting with # are ignored.
+python3-pip
+python3-opencv
+python3-picamera2
+ffmpeg
+git

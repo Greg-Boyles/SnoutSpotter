@@ -36,7 +36,12 @@ sudo raspi-config nonint do_camera 0 2>/dev/null || true
 
 echo "[2/7] Installing system dependencies..."
 sudo apt update -qq
-sudo apt install -y -qq python3-pip python3-opencv python3-picamera2 ffmpeg git
+if [ -f "$SCRIPT_DIR/system-deps.txt" ]; then
+    PACKAGES=$(grep -v '^\s*#' "$SCRIPT_DIR/system-deps.txt" | grep -v '^\s*$' | tr '\n' ' ')
+    sudo apt install -y -qq --no-install-recommends $PACKAGES
+else
+    sudo apt install -y -qq python3-pip python3-opencv python3-picamera2 ffmpeg git
+fi
 
 echo "[3/7] Installing Python packages..."
 pip3 install -r "$SCRIPT_DIR/requirements.txt" --break-system-packages --quiet
@@ -93,26 +98,25 @@ EOF
 
 chmod 600 ~/.aws/credentials ~/.aws/config
 
-echo "[7/7] Updating config.yaml..."
-sed -i "s|bucket_name: .*|bucket_name: \"$BUCKET_NAME\"|" "$SCRIPT_DIR/config.yaml"
-sed -i "s|region: .*|region: $AWS_REGION|" "$SCRIPT_DIR/config.yaml"
-sed -i "s|output_dir: .*|output_dir: $HOME/clips|" "$SCRIPT_DIR/config.yaml"
+echo "[7/7] Writing config.yaml (device-specific overrides)..."
+cat > "$SCRIPT_DIR/config.yaml" << EOF
+# Device-specific overrides (not shipped via OTA).
+# All other settings come from defaults.yaml.
 
-# Update IoT configuration
-if grep -q "iot:" "$SCRIPT_DIR/config.yaml"; then
-    sed -i "s|thing_name: .*|thing_name: \"$THING_NAME\"|" "$SCRIPT_DIR/config.yaml"
-    sed -i "s|endpoint: .*|endpoint: \"$IOT_ENDPOINT\"|" "$SCRIPT_DIR/config.yaml"
-else
-    cat >> "$SCRIPT_DIR/config.yaml" << EOF
+recording:
+  output_dir: $HOME/clips
+
+upload:
+  bucket_name: "$BUCKET_NAME"
+  region: $AWS_REGION
 
 iot:
-  thing_name: "$THING_NAME"
   endpoint: "$IOT_ENDPOINT"
-  cert_path: "$HOME/.snoutspotter/certs/certificate.pem.crt"
-  key_path: "$HOME/.snoutspotter/certs/private.pem.key"
-  ca_path: "$HOME/.snoutspotter/certs/AmazonRootCA1.pem"
+  thing_name: "$THING_NAME"
+  cert_path: $HOME/.snoutspotter/certs/certificate.pem.crt
+  key_path: $HOME/.snoutspotter/certs/private.pem.key
+  root_ca_path: $HOME/.snoutspotter/certs/AmazonRootCA1.pem
 EOF
-fi
 
 # Fix hardcoded paths in uploader.py
 sed -i "s|/home/pi/snout-spotter/uploads.db|$HOME/.snoutspotter/uploads.db|" "$SCRIPT_DIR/uploader.py"
