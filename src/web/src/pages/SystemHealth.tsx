@@ -523,6 +523,18 @@ export default function SystemHealthPage() {
                       <UsageBar percent={device.system.diskUsedPercent} color={device.system.diskUsedPercent > 85 ? "bg-red-500" : "bg-blue-500"} />
                     </div>
                   )}
+                  {device.system.loadAvg != null && device.system.loadAvg.length === 3 && (() => {
+                    const [l1, , l15] = device.system.loadAvg;
+                    const diff = l1 - l15;
+                    const arrow = diff > 0.1 ? "↑" : diff < -0.1 ? "↓" : "→";
+                    const color = l1 > 3.5 ? "text-red-600 font-medium" : l1 > 2.0 ? "text-amber-600" : "text-gray-700";
+                    return (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-500">Load avg</span>
+                        <span className={color}>{l1.toFixed(2)} <span className="opacity-60">{arrow}</span></span>
+                      </div>
+                    );
+                  })()}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500 mt-1">
                     {device.system.uptimeSeconds != null && (
                       <span>Uptime: {formatUptime(device.system.uptimeSeconds)}</span>
