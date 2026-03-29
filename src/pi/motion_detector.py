@@ -28,6 +28,8 @@ logger = logging.getLogger("snout-spotter")
 STATUS_DIR = Path.home() / ".snoutspotter"
 STATUS_FILE = STATUS_DIR / "motion-status.json"
 SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
+CONFIG_RELOAD_FLAG = STATUS_DIR / "config-reload-motion"
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -232,6 +234,21 @@ class MotionDetector:
                 if now - self._last_status_write >= 30:
                     self._write_status()
                     self._last_status_write = now
+
+                # Hot-reload config when agent signals a change
+                if CONFIG_RELOAD_FLAG.exists():
+                    try:
+                        CONFIG_RELOAD_FLAG.unlink(missing_ok=True)
+                        new_config = load_config(str(CONFIG_PATH))
+                        self.motion_cfg = new_config["motion"]
+                        self.camera_cfg = new_config["camera"]
+                        self.record_cfg = new_config["recording"]
+                        fps_delay = 1.0 / self.camera_cfg["detection_fps"]
+                        max_clip = self.record_cfg["max_clip_length"]
+                        post_buffer = self.record_cfg["post_motion_buffer"]
+                        logger.info("Config reloaded (motion detector)")
+                    except Exception as e:
+                        logger.warning(f"Failed to reload config: {e}")
 
                 time.sleep(fps_delay)
 
