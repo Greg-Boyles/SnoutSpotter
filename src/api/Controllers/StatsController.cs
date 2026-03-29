@@ -72,6 +72,8 @@ public class StatsController : ControllerBase
                 uploadStats = shadow?.UploadStats,
                 clipsPending = shadow?.ClipsPending,
                 system = shadow?.System,
+                config = shadow?.Config,
+                configErrors = shadow?.ConfigErrors,
                 updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
             });
         }
