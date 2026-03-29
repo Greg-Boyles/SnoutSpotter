@@ -391,6 +391,27 @@ export default function SystemHealthPage() {
               )}
             </div>
 
+            {/* Services */}
+            {device.services && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex items-center flex-wrap gap-1.5">
+                  {Object.entries(device.services).map(([name, status]) => (
+                    <span
+                      key={name}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                        status === "active"
+                          ? "bg-green-50 text-green-700"
+                          : "bg-red-50 text-red-700"
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${status === "active" ? "bg-green-500" : "bg-red-500"}`} />
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Camera Status */}
             {device.camera && (
               <div className="mt-3 pt-3 border-t border-gray-100">
