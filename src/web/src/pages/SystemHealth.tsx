@@ -524,14 +524,32 @@ export default function SystemHealthPage() {
                     </div>
                   )}
                   {device.system.loadAvg != null && device.system.loadAvg.length === 3 && (() => {
-                    const [l1, , l15] = device.system.loadAvg;
-                    const diff = l1 - l15;
-                    const arrow = diff > 0.1 ? "↑" : diff < -0.1 ? "↓" : "→";
+                    const [l1, l5, l15] = device.system.loadAvg;
                     const color = l1 > 3.5 ? "text-red-600 font-medium" : l1 > 2.0 ? "text-amber-600" : "text-gray-700";
+                    const strokeColor = l1 > 3.5 ? "#dc2626" : l1 > 2.0 ? "#d97706" : "#60a5fa";
+                    // Sparkline: oldest (15m) → 5m → newest (1m), left to right
+                    const vals = [l15, l5, l1];
+                    const W = 40, H = 16;
+                    const maxVal = Math.max(...vals, 0.5);
+                    const x = (i: number) => (i / 2) * W;
+                    const y = (v: number) => H - Math.min(v / maxVal, 1) * H;
+                    const points = vals.map((v, i) => `${x(i)},${y(v)}`).join(" ");
                     return (
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-gray-500">Load avg</span>
-                        <span className={color}>{l1.toFixed(2)} <span className="opacity-60">{arrow}</span></span>
+                      <div className="text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">Load avg</span>
+                          <svg width={W} height={H} className="overflow-visible">
+                            <polyline points={points} fill="none" stroke={strokeColor} strokeWidth="1.5" strokeLinejoin="round" />
+                            {vals.map((v, i) => (
+                              <circle key={i} cx={x(i)} cy={y(v)} r="2" fill={strokeColor} />
+                            ))}
+                          </svg>
+                        </div>
+                        <div className="flex justify-between text-gray-400">
+                          <span>15m <span className="text-gray-600">{l15.toFixed(2)}</span></span>
+                          <span>5m <span className="text-gray-600">{l5.toFixed(2)}</span></span>
+                          <span>1m <span className={color}>{l1.toFixed(2)}</span></span>
+                        </div>
                       </div>
                     );
                   })()}
