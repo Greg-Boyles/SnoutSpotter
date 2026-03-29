@@ -115,6 +115,12 @@ public class PiUpdateService
                 );
             }
 
+            if (reported.TryGetProperty("config", out var cfg))
+                state.Config = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(cfg.GetRawText());
+
+            if (reported.TryGetProperty("configErrors", out var ce))
+                state.ConfigErrors = JsonSerializer.Deserialize<Dictionary<string, string>>(ce.GetRawText());
+
             return state;
         }
         catch (Amazon.IotData.Model.ResourceNotFoundException)
@@ -148,6 +154,83 @@ public class PiUpdateService
         {
             return null; // Manifest doesn't exist yet
         }
+    }
+
+    private record ConfigKeySpec(string Type, int? Min = null, int? Max = null, bool Odd = false);
+
+    private static readonly Dictionary<string, ConfigKeySpec> ConfigurableKeys = new()
+    {
+        ["motion.threshold"]            = new("int", Min: 500,  Max: 50000),
+        ["motion.blur_kernel"]          = new("int", Min: 3,    Max: 51,   Odd: true),
+        ["camera.detection_fps"]        = new("int", Min: 1,    Max: 15),
+        ["recording.max_clip_length"]   = new("int", Min: 10,   Max: 300),
+        ["recording.post_motion_buffer"]= new("int", Min: 3,    Max: 60),
+        ["upload.max_retries"]          = new("int", Min: 1,    Max: 20),
+        ["upload.delete_after_upload"]  = new("bool"),
+        ["health.interval_seconds"]     = new("int", Min: 60,   Max: 3600),
+    };
+
+    public async Task<Dictionary<string, string>> UpdateConfigAsync(
+        string thingName, Dictionary<string, JsonElement> changes)
+    {
+        var errors = new Dictionary<string, string>();
+        var valid = new Dictionary<string, JsonElement>();
+
+        foreach (var (key, value) in changes)
+        {
+            if (!ConfigurableKeys.TryGetValue(key, out var spec))
+            {
+                errors[key] = $"Unknown config key: {key}";
+                continue;
+            }
+
+            if (spec.Type == "bool")
+            {
+                if (value.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+                    errors[key] = $"{key} must be a boolean";
+                else
+                    valid[key] = value;
+            }
+            else // int
+            {
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var intVal))
+                {
+                    errors[key] = $"{key} must be an integer";
+                }
+                else if (spec.Min.HasValue && intVal < spec.Min.Value)
+                {
+                    errors[key] = $"{key} must be >= {spec.Min}";
+                }
+                else if (spec.Max.HasValue && intVal > spec.Max.Value)
+                {
+                    errors[key] = $"{key} must be <= {spec.Max}";
+                }
+                else if (spec.Odd && intVal % 2 == 0)
+                {
+                    errors[key] = $"{key} must be an odd number";
+                }
+                else
+                {
+                    valid[key] = value;
+                }
+            }
+        }
+
+        if (valid.Count > 0)
+        {
+            var payload = JsonSerializer.Serialize(new
+            {
+                state = new { desired = new { config = valid } }
+            });
+
+            await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
+            {
+                ThingName = thingName,
+                Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
+            });
+        }
+
+        return errors;
     }
 
     public async Task TriggerUpdateAsync(string thingName, string? version = null)
@@ -195,6 +278,8 @@ public class PiShadowState
     public UploadStats? UploadStats { get; set; }
     public int? ClipsPending { get; set; }
     public SystemInfo? System { get; set; }
+    public Dictionary<string, JsonElement>? Config { get; set; }
+    public Dictionary<string, string>? ConfigErrors { get; set; }
 }
 
 public record CameraStatus(

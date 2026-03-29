@@ -47,6 +47,8 @@ public class PiController : ControllerBase
                 uploadStats = shadow?.UploadStats,
                 clipsPending = shadow?.ClipsPending,
                 system = shadow?.System,
+                config = shadow?.Config,
+                configErrors = shadow?.ConfigErrors,
                 latestVersion,
                 updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
             });
@@ -79,9 +81,34 @@ public class PiController : ControllerBase
             uploadStats = shadow?.UploadStats,
             clipsPending = shadow?.ClipsPending,
             system = shadow?.System,
+            config = shadow?.Config,
+            configErrors = shadow?.ConfigErrors,
             latestVersion,
             updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
         });
+    }
+
+    [HttpGet("{thingName}/config")]
+    public async Task<ActionResult> GetConfig(string thingName)
+    {
+        var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
+        if (shadow == null) return NotFound(new { error = "Device shadow not found" });
+        return Ok(new { config = shadow.Config, configErrors = shadow.ConfigErrors });
+    }
+
+    [HttpPost("{thingName}/config")]
+    public async Task<ActionResult> UpdateConfig(
+        string thingName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> changes)
+    {
+        if (changes == null || changes.Count == 0)
+            return BadRequest(new { error = "No changes provided" });
+
+        var errors = await _piUpdateService.UpdateConfigAsync(thingName, changes);
+
+        if (errors.Count == changes.Count)
+            return BadRequest(new { errors });
+
+        return Ok(new { message = "Config update queued", errors });
     }
 
     [HttpPost("{thingName}/update")]
