@@ -23,6 +23,7 @@ from awsiot import mqtt_connection_builder
 from awscrt import mqtt
 
 import config_schema
+import config_loader
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("snout-spotter-agent")
@@ -44,9 +45,8 @@ _cached_sensor_model = None
 
 # ── Config & version ──────────────────────────────────────────────────
 
-def load_config(path: str = "config.yaml") -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+def load_config() -> dict:
+    return config_loader.load_config()
 
 
 def load_version() -> str:
@@ -440,6 +440,50 @@ def rollback(old_version: str):
     return True
 
 
+def parse_system_deps(path: Path) -> set[str]:
+    """Parse system-deps.txt into a set of package names, ignoring comments and blanks."""
+    if not path.exists():
+        return set()
+    packages = set()
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            packages.add(line)
+    return packages
+
+
+def install_system_deps(old_version: str | None):
+    """Install system apt packages if system-deps.txt has changed since the previous version."""
+    new_deps_path = INSTALL_DIR / "system-deps.txt"
+    new_deps = parse_system_deps(new_deps_path)
+    if not new_deps:
+        return
+
+    old_deps = set()
+    if old_version:
+        old_deps_path = BACKUP_DIR / old_version / "system-deps.txt"
+        old_deps = parse_system_deps(old_deps_path)
+
+    if new_deps == old_deps:
+        logger.info("System deps unchanged — skipping apt install")
+        return
+
+    added = new_deps - old_deps
+    if added:
+        logger.info(f"New system packages to install: {added}")
+    else:
+        logger.info("System deps file changed — ensuring all packages are installed")
+
+    packages = sorted(new_deps)
+    logger.info(f"Running apt install for: {packages}")
+    subprocess.run(["sudo", "apt-get", "update", "-qq"], timeout=120, check=True)
+    subprocess.run(
+        ["sudo", "apt-get", "install", "-y", "-qq", "--no-install-recommends"] + packages,
+        timeout=600, check=True,
+    )
+    logger.info("System packages installed successfully")
+
+
 def restart_services():
     for svc in SERVICES:
         try:
@@ -469,6 +513,8 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
             # Exclude config.yaml to preserve device-specific settings
             members = [m for m in tar.getmembers() if m.name not in ("./config.yaml", "config.yaml")]
             tar.extractall(path=INSTALL_DIR, members=members)
+
+        install_system_deps(old_version)
 
         logger.info("Installing Python dependencies")
         subprocess.run(
@@ -583,7 +629,7 @@ def main():
 
     endpoint = iot_cfg.get("endpoint", "")
     if not endpoint:
-        logger.error("IoT endpoint not configured. Set iot.endpoint in config.yaml.")
+        logger.error("IoT endpoint not configured. Set iot.endpoint in config.yaml or defaults.yaml.")
         return
 
     thing_name = iot_cfg["thing_name"]

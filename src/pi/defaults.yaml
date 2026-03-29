@@ -1,0 +1,38 @@
+# SnoutSpotter default configuration
+# Shipped via OTA. Device-specific values in config.yaml override these.
+
+motion:
+  threshold: 5000
+  blur_kernel: 21
+  min_area: 500
+
+camera:
+  preview_resolution: [640, 480]
+  record_resolution: [1920, 1080]
+  detection_fps: 5
+  record_fps: 30
+
+recording:
+  post_motion_buffer: 10
+  max_clip_length: 60
+  output_dir: /home/pi/clips
+
+upload:
+  bucket_name: ""
+  region: eu-west-1
+  prefix: raw-clips
+  max_retries: 5
+  retry_delay: 5
+  delete_after_upload: true
+
+health:
+  namespace: SnoutSpotter
+  metric_name: PiHeartbeat
+  interval_seconds: 300
+
+iot:
+  endpoint: ""
+  thing_name: ""
+  cert_path: ~/.snoutspotter/certs/certificate.pem.crt
+  key_path: ~/.snoutspotter/certs/private.pem.key
+  root_ca_path: ~/.snoutspotter/certs/AmazonRootCA1.pem

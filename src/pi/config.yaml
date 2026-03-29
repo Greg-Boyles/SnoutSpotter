@@ -1,37 +1,13 @@
-# SnoutSpotter Pi Zero Configuration
-
-motion:
-  threshold: 5000          # Number of changed pixels to trigger recording
-  blur_kernel: 21          # Gaussian blur kernel size for noise reduction
-  min_area: 500            # Minimum contour area to count as motion
-
-camera:
-  preview_resolution: [640, 480]
-  record_resolution: [1920, 1080]
-  detection_fps: 5
-  record_fps: 30
+# Device-specific overrides (not shipped via OTA).
+# All other settings come from defaults.yaml.
 
 recording:
-  post_motion_buffer: 10   # Seconds to keep recording after last motion
-  max_clip_length: 60      # Maximum clip duration in seconds
   output_dir: /home/pi/clips
 
 upload:
-  bucket_name: ""          # Set to your S3 bucket name (snout-spotter-{account-id})
+  bucket_name: ""          # Set by setup-pi.sh
   region: eu-west-1
-  prefix: raw-clips
-  max_retries: 5
-  retry_delay: 5           # Initial retry delay in seconds (exponential backoff)
-  delete_after_upload: true
-
-health:
-  namespace: SnoutSpotter
-  metric_name: PiHeartbeat
-  interval_seconds: 300    # 5 minutes
 
 iot:
-  endpoint: ""             # Set to your IoT endpoint (xxxxx-ats.iot.eu-west-1.amazonaws.com)
-  thing_name: snoutspotter-pi
-  cert_path: ~/.snoutspotter/certs/certificate.pem.crt
-  key_path: ~/.snoutspotter/certs/private.pem.key
-  root_ca_path: ~/.snoutspotter/certs/AmazonRootCA1.pem
+  endpoint: ""             # Set by setup-pi.sh
+  thing_name: ""           # Set by setup-pi.sh
