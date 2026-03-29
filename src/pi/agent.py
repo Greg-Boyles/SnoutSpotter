@@ -30,6 +30,8 @@ BACKUP_DIR = Path.home() / ".snoutspotter" / "backups"
 STATUS_DIR = Path.home() / ".snoutspotter"
 SERVICES = ["snoutspotter-motion", "snoutspotter-uploader", "snoutspotter-agent"]
 
+SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
+
 # Cached values that don't change at runtime
 _cached_pi_model = None
 _cached_python_version = None
@@ -588,6 +590,16 @@ def main():
                     logger.error(f"Failed to update shadow: {e}")
 
                 last_heartbeat = now
+
+            # Check for dirty flag — publish shadow immediately on meaningful events from other services
+            if SHADOW_DIRTY_FLAG.exists():
+                try:
+                    SHADOW_DIRTY_FLAG.unlink(missing_ok=True)
+                    version = load_version()
+                    report_full_shadow(connection, thing_name, version, config)
+                    last_heartbeat = now  # reset so heartbeat doesn't fire redundantly right after
+                except Exception as e:
+                    logger.error(f"Failed to process shadow dirty flag: {e}")
 
             # Check for pending OTA updates
             if on_shadow_delta.pending_version:

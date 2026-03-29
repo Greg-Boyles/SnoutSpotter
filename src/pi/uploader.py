@@ -21,6 +21,7 @@ logger = logging.getLogger("snout-spotter-upload")
 
 STATUS_DIR = Path.home() / ".snoutspotter"
 STATUS_FILE = STATUS_DIR / "uploader-status.json"
+SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -90,6 +91,12 @@ class Uploader:
         self._failed_today = 0
         self._uploads_today_date = None
 
+    def _touch_shadow_dirty(self):
+        try:
+            SHADOW_DIRTY_FLAG.touch(exist_ok=True)
+        except Exception:
+            pass
+
     def _check_today_reset(self):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self._uploads_today_date != today:
@@ -139,6 +146,7 @@ class Uploader:
             self._last_upload_at = datetime.now(timezone.utc).isoformat()
             self._uploads_today += 1
             self._write_status()
+            self._touch_shadow_dirty()
 
             if self.config["delete_after_upload"]:
                 filepath.unlink()
@@ -151,6 +159,7 @@ class Uploader:
             self.ledger.record_attempt(filepath.name, s3_key, success=False)
             self._failed_today += 1
             self._write_status()
+            self._touch_shadow_dirty()
             return False
 
     def retry_failed(self):
