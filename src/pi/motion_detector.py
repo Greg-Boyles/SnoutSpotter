@@ -27,6 +27,9 @@ logger = logging.getLogger("snout-spotter")
 
 STATUS_DIR = Path.home() / ".snoutspotter"
 STATUS_FILE = STATUS_DIR / "motion-status.json"
+SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
+CONFIG_RELOAD_FLAG = STATUS_DIR / "config-reload-motion"
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -59,6 +62,12 @@ class MotionDetector:
         self._recordings_today = 0
         self._recordings_today_date = None
         self._last_status_write = 0.0
+
+    def _touch_shadow_dirty(self):
+        try:
+            SHADOW_DIRTY_FLAG.touch(exist_ok=True)
+        except Exception:
+            pass
 
     def _write_status(self):
         try:
@@ -146,6 +155,7 @@ class MotionDetector:
         self._last_recording_started = now
         self._check_today_reset()
         self._write_status()
+        self._touch_shadow_dirty()
 
         logger.info(f"Recording started: {filepath}")
         return str(filepath)
@@ -168,6 +178,7 @@ class MotionDetector:
         self._last_recording_stopped = datetime.now(timezone.utc).isoformat()
         self._recordings_today += 1
         self._write_status()
+        self._touch_shadow_dirty()
 
         logger.info(f"Recording stopped: {dst} ({duration}s)")
 
@@ -223,6 +234,21 @@ class MotionDetector:
                 if now - self._last_status_write >= 30:
                     self._write_status()
                     self._last_status_write = now
+
+                # Hot-reload config when agent signals a change
+                if CONFIG_RELOAD_FLAG.exists():
+                    try:
+                        CONFIG_RELOAD_FLAG.unlink(missing_ok=True)
+                        new_config = load_config(str(CONFIG_PATH))
+                        self.motion_cfg = new_config["motion"]
+                        self.camera_cfg = new_config["camera"]
+                        self.record_cfg = new_config["recording"]
+                        fps_delay = 1.0 / self.camera_cfg["detection_fps"]
+                        max_clip = self.record_cfg["max_clip_length"]
+                        post_buffer = self.record_cfg["post_motion_buffer"]
+                        logger.info("Config reloaded (motion detector)")
+                    except Exception as e:
+                        logger.warning(f"Failed to reload config: {e}")
 
                 time.sleep(fps_delay)
 

@@ -22,6 +22,8 @@ import yaml
 from awsiot import mqtt_connection_builder
 from awscrt import mqtt
 
+import config_schema
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("snout-spotter-agent")
 
@@ -29,6 +31,10 @@ INSTALL_DIR = Path(__file__).parent
 BACKUP_DIR = Path.home() / ".snoutspotter" / "backups"
 STATUS_DIR = Path.home() / ".snoutspotter"
 SERVICES = ["snoutspotter-motion", "snoutspotter-uploader", "snoutspotter-agent"]
+
+SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
+CONFIG_RELOAD_MOTION = STATUS_DIR / "config-reload-motion"
+CONFIG_RELOAD_UPLOADER = STATUS_DIR / "config-reload-uploader"
 
 # Cached values that don't change at runtime
 _cached_pi_model = None
@@ -330,6 +336,7 @@ def build_shadow_state(version: str, config: dict) -> dict:
                 "uploadStats": get_upload_stats(),
                 "clipsPending": get_clips_pending(config),
                 "system": get_system_health(),
+                "config": config_schema.get_configurable_values(config),
             }
         }
     }
@@ -348,6 +355,58 @@ def report_full_shadow(connection, thing_name: str, version: str, config: dict):
     payload = json.dumps(shadow_state)
     connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
     logger.info(f"Full shadow reported (version={version})")
+
+
+# ── Remote config ────────────────────────────────────────────────────
+
+def apply_remote_config(changes: dict, config: dict, connection, thing_name: str, heartbeat_ref: list):
+    """Validate and apply remote config changes from the shadow delta."""
+    valid_changes = {}
+    errors = {}
+
+    for key, value in changes.items():
+        ok, msg = config_schema.validate_config_value(key, value)
+        if ok:
+            valid_changes[key] = value
+        else:
+            errors[key] = msg
+            logger.warning(f"Config validation error — {msg}")
+
+    if valid_changes:
+        config_path = INSTALL_DIR / "config.yaml"
+        try:
+            with open(config_path) as f:
+                file_config = yaml.safe_load(f)
+
+            for key, value in valid_changes.items():
+                config_schema.apply_to_dict(file_config, key, value)
+                config_schema.apply_to_dict(config, key, value)  # update in-memory config too
+
+            tmp = config_path.with_suffix(".yaml.tmp")
+            with open(tmp, "w") as f:
+                yaml.dump(file_config, f, default_flow_style=False, allow_unicode=True)
+            tmp.rename(config_path)
+            logger.info(f"config.yaml updated: {list(valid_changes.keys())}")
+
+            # Update agent's own heartbeat interval in-process (no restart needed)
+            if "health.interval_seconds" in valid_changes:
+                heartbeat_ref[0] = valid_changes["health.interval_seconds"]
+                logger.info(f"Heartbeat interval updated to {heartbeat_ref[0]}s")
+
+            # Signal motion detector and uploader to hot-reload their config dicts
+            CONFIG_RELOAD_MOTION.touch(exist_ok=True)
+            CONFIG_RELOAD_UPLOADER.touch(exist_ok=True)
+
+        except Exception as e:
+            logger.error(f"Failed to write config.yaml: {e}")
+            errors["_write"] = str(e)
+
+    # Report applied config (and any errors) back to shadow
+    reported: dict = {"config": config_schema.get_configurable_values(config)}
+    if errors:
+        reported["configErrors"] = errors
+    update_shadow(connection, thing_name, reported)
+    SHADOW_DIRTY_FLAG.touch(exist_ok=True)
 
 
 # ── OTA update logic ──────────────────────────────────────────────────
@@ -458,18 +517,25 @@ def on_shadow_delta(topic, payload, **kwargs):
     """Called when a shadow delta is received (push notification)."""
     try:
         if on_shadow_delta.updating:
-            logger.info("Shadow delta received but update already in progress — ignoring")
+            logger.info("Shadow delta received but OTA in progress — ignoring")
             return
         delta = json.loads(payload)
         state = delta.get("state", {})
+
         desired_version = state.get("version")
         if desired_version:
             current_version = load_version()
             if desired_version != current_version:
-                logger.info(f"Shadow delta: update requested {current_version} -> {desired_version}")
+                logger.info(f"Shadow delta: OTA requested {current_version} -> {desired_version}")
                 on_shadow_delta.pending_version = desired_version
             else:
                 logger.info(f"Shadow delta version {desired_version} matches current — ignoring")
+
+        desired_config = state.get("config")
+        if desired_config:
+            logger.info(f"Shadow delta: config change requested for {list(desired_config.keys())}")
+            on_shadow_delta.pending_config = desired_config
+
     except Exception as e:
         logger.error(f"Error processing shadow delta: {e}")
 
@@ -480,21 +546,30 @@ def on_shadow_get_accepted(topic, payload, **kwargs):
         shadow = json.loads(payload)
         state = shadow.get("state", {})
         delta = state.get("delta", {})
+
         desired_version = delta.get("version")
         if desired_version:
             current_version = load_version()
             if desired_version != current_version:
-                logger.info(f"Pending shadow delta found on startup: {current_version} -> {desired_version}")
+                logger.info(f"Pending OTA delta on startup: {current_version} -> {desired_version}")
                 on_shadow_delta.pending_version = desired_version
             else:
-                logger.info("Shadow delta version matches current — no update needed")
-        else:
+                logger.info("Shadow delta version matches current — no OTA needed")
+
+        desired_config = delta.get("config")
+        if desired_config:
+            logger.info(f"Pending config delta on startup: {list(desired_config.keys())}")
+            on_shadow_delta.pending_config = desired_config
+
+        if not desired_version and not desired_config:
             logger.info("No pending shadow delta")
+
     except Exception as e:
         logger.error(f"Error processing shadow get response: {e}")
 
 
 on_shadow_delta.pending_version = None
+on_shadow_delta.pending_config = None
 on_shadow_delta.updating = False
 
 
@@ -522,7 +597,7 @@ def main():
 
     # CloudWatch client for heartbeats
     cloudwatch = boto3.client("cloudwatch", region_name=upload_cfg["region"])
-    heartbeat_interval = health_cfg["interval_seconds"]
+    heartbeat_ref = [health_cfg["interval_seconds"]]  # list so apply_remote_config can update it
 
     # Single MQTT connection for shadow + OTA
     connection = mqtt_connection_builder.mtls_from_path(
@@ -566,7 +641,7 @@ def main():
     version = load_version()
     report_full_shadow(connection, thing_name, version, config)
 
-    logger.info(f"Agent started (version={version}). Heartbeat every {heartbeat_interval}s, watching for OTA updates.")
+    logger.info(f"Agent started (version={version}). Heartbeat every {heartbeat_ref[0]}s, watching for OTA/config updates.")
 
     last_heartbeat = 0
 
@@ -575,7 +650,7 @@ def main():
             now = time.time()
 
             # Heartbeat + shadow report on interval
-            if now - last_heartbeat >= heartbeat_interval:
+            if now - last_heartbeat >= heartbeat_ref[0]:
                 try:
                     send_heartbeat(cloudwatch, health_cfg["namespace"], health_cfg["metric_name"])
                 except Exception as e:
@@ -589,11 +664,20 @@ def main():
 
                 last_heartbeat = now
 
+            # Check for dirty flag — publish shadow immediately on meaningful events from other services
+            if SHADOW_DIRTY_FLAG.exists():
+                try:
+                    SHADOW_DIRTY_FLAG.unlink(missing_ok=True)
+                    version = load_version()
+                    report_full_shadow(connection, thing_name, version, config)
+                    last_heartbeat = now  # reset so heartbeat doesn't fire redundantly right after
+                except Exception as e:
+                    logger.error(f"Failed to process shadow dirty flag: {e}")
+
             # Check for pending OTA updates
             if on_shadow_delta.pending_version:
                 pending = on_shadow_delta.pending_version
                 on_shadow_delta.pending_version = None
-                # Final check: skip if version already matches (e.g. duplicate delta)
                 if pending == load_version():
                     logger.info(f"Skipping update to {pending} — already running this version")
                 else:
@@ -608,6 +692,15 @@ def main():
                         )
                     finally:
                         on_shadow_delta.updating = False
+
+            # Check for pending config changes
+            if on_shadow_delta.pending_config:
+                pending = on_shadow_delta.pending_config
+                on_shadow_delta.pending_config = None
+                if on_shadow_delta.updating:
+                    logger.info("Config change received during OTA — will re-apply on next startup via shadow/get")
+                else:
+                    apply_remote_config(pending, config, connection, thing_name, heartbeat_ref)
 
             time.sleep(5)
 

@@ -75,6 +75,8 @@ export interface PiDevice {
   uploadStats?: UploadStats;
   clipsPending?: number;
   system?: SystemInfo;
+  config?: Record<string, number | boolean>;
+  configErrors?: Record<string, string>;
   updateAvailable?: boolean;
 }
 
