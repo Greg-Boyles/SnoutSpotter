@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-SnoutSpotter is a motion-triggered video capture system running on Raspberry Pi devices, with cloud-based ML inference to detect dogs (and identify a specific dog). Clips are uploaded to AWS, processed through an ingest pipeline, analysed by ML models, and viewable via a React web dashboard.
+SnoutSpotter is a motion-triggered video capture system running on Raspberry Pi devices, with cloud-based ML inference to detect dogs (and identify a specific dog). Clips are uploaded to AWS, processed through an ingest pipeline, analysed by ML models, and viewable via a React web dashboard protected by Okta authentication.
 
-**Tech stack:** .NET 8 / C#, AWS CDK, Python 3, React + TypeScript + Vite + Tailwind CSS, AWS (Lambda, DynamoDB, S3, IoT Core, CloudFront, API Gateway, ECR).
+**Tech stack:** .NET 8 / C#, AWS CDK, Python 3, React + TypeScript + Vite + Tailwind CSS, Terraform, AWS (Lambda, DynamoDB, S3, IoT Core, CloudFront, API Gateway, ECR), Okta OIDC.
 
 **Region:** `eu-west-1`
 
@@ -19,6 +19,11 @@ SnoutSpotter/
 ├── SnoutSpotter.sln                   # .NET solution file
 ├── docs/
 │   └── PLAN.md                        # Original system design document
+├── terraform/
+│   └── okta/                          # Terraform for Okta provisioning
+│       ├── main.tf                    # App, group, access policy, sign-on policy
+│       ├── variables.tf
+│       └── outputs.tf                 # okta_client_id, okta_issuer
 ├── src/
 │   ├── api/                           # ASP.NET Core 8 API (runs on Lambda via Web Adapter)
 │   │   ├── Controllers/
@@ -30,22 +35,22 @@ SnoutSpotter/
 │   │   ├── Services/
 │   │   │   ├── ClipService.cs         # DynamoDB queries for clips
 │   │   │   ├── HealthService.cs       # CloudWatch heartbeat checks
-│   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers
+│   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, health deserialization
 │   │   │   ├── S3PresignService.cs    # Presigned URL generation
 │   │   │   └── S3UrlService.cs        # S3 URL helpers
-│   │   ├── Program.cs                 # DI setup, AWS client registration
-│   │   └── Dockerfile                 # Lambda Web Adapter based image
+│   │   ├── Program.cs                 # DI setup, JWT Bearer auth, AWS client registration
+│   │   └── Dockerfile
 │   │
 │   ├── infra/                         # AWS CDK infrastructure (C#)
 │   │   ├── Program.cs                 # Stack instantiation and wiring
-│   │   ├── cdk.json
+│   │   ├── cdk.json                   # CDK context (oktaIssuer, allowedOrigin)
 │   │   └── Stacks/
 │   │       ├── CoreStack.cs           # S3, DynamoDB, ECR repos, IAM
 │   │       ├── IoTStack.cs            # IoT Thing Group, IoT Policy
 │   │       ├── IngestStack.cs         # IngestClip Lambda + S3 event trigger
 │   │       ├── InferenceStack.cs      # RunInference Lambda + S3 event trigger
-│   │       ├── ApiStack.cs            # API Lambda + HTTP API Gateway
-│   │       ├── PiMgmtStack.cs         # Pi Management Lambda + HTTP API Gateway
+│   │       ├── ApiStack.cs            # API Lambda + HTTP API Gateway + Okta JWT env vars
+│   │       ├── PiMgmtStack.cs         # Pi Management Lambda + HTTP API Gateway (no auth)
 │   │       ├── WebStack.cs            # S3 static site + CloudFront distribution
 │   │       ├── MonitoringStack.cs     # CloudWatch alarms
 │   │       └── CiCdStack.cs           # OIDC role for GitHub Actions
@@ -57,7 +62,7 @@ SnoutSpotter/
 │   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload
 │   │   │   ├── Function.cs                    # ONNX inference (YOLOv8 + MobileNetV3)
 │   │   │   └── Dockerfile
-│   │   └── SnoutSpotter.Lambda.PiMgmt/       # Pi device registration API
+│   │   └── SnoutSpotter.Lambda.PiMgmt/        # Pi device registration API (no Okta auth)
 │   │       ├── Controllers/DevicesController.cs
 │   │       ├── Services/DeviceProvisioningService.cs
 │   │       ├── Program.cs
@@ -65,36 +70,33 @@ SnoutSpotter/
 │   │
 │   ├── web/                           # React frontend
 │   │   ├── src/
-│   │   │   ├── App.tsx                # Router + sidebar navigation
-│   │   │   ├── api.ts                 # API client (main API + Pi Management API)
-│   │   │   ├── types.ts              # TypeScript interfaces
+│   │   │   ├── App.tsx                # Router, sidebar, auth gates, logout
+│   │   │   ├── api.ts                 # API client with Bearer token injection
+│   │   │   ├── types.ts               # TypeScript interfaces (Clip, PiDevice, CameraStatus, etc.)
+│   │   │   ├── auth/
+│   │   │   │   └── oktaConfig.ts      # OktaAuth instance (PKCE, scopes)
 │   │   │   ├── pages/
 │   │   │   │   ├── Dashboard.tsx      # Stats overview
 │   │   │   │   ├── ClipsBrowser.tsx   # Paginated clip grid
 │   │   │   │   ├── ClipDetail.tsx     # Video player + keyframes + detections
 │   │   │   │   ├── Detections.tsx     # Detection results list
-│   │   │   │   └── SystemHealth.tsx   # Pi device status, add/remove devices, OTA updates
+│   │   │   │   └── SystemHealth.tsx   # Pi device status, camera health, system metrics, OTA
 │   │   │   └── components/
 │   │   │       └── BoundingBoxOverlay.tsx
 │   │   ├── vite.config.ts
 │   │   └── package.json
 │   │
-│   ├── pi/                            # Raspberry Pi Python scripts
-│   │   ├── motion_detector.py         # Frame-differencing motion detection + recording
-│   │   ├── uploader.py               # S3 multipart upload with retry
-│   │   ├── health.py                  # CloudWatch heartbeat + IoT shadow reporting
-│   │   ├── ota_agent.py              # OTA updates via IoT shadow desired/reported
-│   │   ├── config.yaml               # Pi configuration (thresholds, S3 bucket, IoT settings)
-│   │   ├── setup-pi.sh               # Full automated setup: deps, registration, certs, services
-│   │   ├── requirements.txt          # Python deps: boto3, opencv, awsiotsdk, pyyaml
-│   │   └── version.json              # Current Pi software version
-│   │
-│   └── ml/                            # ML training scripts
-│       ├── train_detector.py          # YOLOv8n fine-tuning for dog detection
-│       └── train_classifier.py        # MobileNetV3 binary classifier (my_dog vs not_my_dog)
+│   └── pi/                            # Raspberry Pi Python scripts
+│       ├── agent.py                   # Merged agent: heartbeat + IoT shadow + OTA (single MQTT connection)
+│       ├── motion_detector.py         # Frame-differencing motion detection + recording + status file
+│       ├── uploader.py                # S3 multipart upload with retry + status file
+│       ├── config.yaml                # Device-specific config (NOT included in OTA packages)
+│       ├── setup-pi.sh                # Full automated setup: deps, registration, certs, services
+│       ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
+│       └── version.json               # Current Pi software version (written by OTA agent)
 │
 └── .github/workflows/
-    ├── deploy.yml                     # Main pipeline: orchestrates all sub-workflows
+    ├── deploy.yml                     # Main pipeline: path-filtered, only deploys changed components
     ├── deploy-infra.yml               # CDK deploy all stacks
     ├── build-api-image.yml            # Docker build → ECR push
     ├── build-ingest-image.yml
@@ -106,7 +108,8 @@ SnoutSpotter/
     ├── deploy-pi-mgmt.yml
     ├── deploy-web.yml                 # npm build → S3 sync → CloudFront invalidation
     ├── deploy-ml.yml                  # Package models → S3
-    └── package-pi.yml                 # Package Pi release → S3
+    ├── deploy-okta.yml                # Terraform apply for Okta resources (S3 remote state)
+    └── package-pi.yml                 # Package Pi release → S3, auto-bumps version from manifest
 ```
 
 ---
@@ -116,6 +119,7 @@ SnoutSpotter/
 ```
 [Raspberry Pi + Camera]
     │ motion detected → record clip
+    │ status files → ~/.snoutspotter/*.json
     ▼
 [S3: raw-clips/YYYY/MM/DD/timestamp.mp4]
     │ S3 event notification
@@ -130,25 +134,54 @@ SnoutSpotter/
               ▼
          [DynamoDB: detection results updated on clip record]
 
-[React Dashboard] ◄──► [API Lambda + API Gateway]
-                              │
-                              ├── DynamoDB (clips, detections)
-                              ├── S3 (presigned URLs for video/images)
-                              ├── CloudWatch (heartbeat metrics)
-                              └── IoT Core (device shadows for status/OTA)
+[React Dashboard] ──Okta JWT──► [API Lambda + API Gateway]
+                                      │
+                                      ├── DynamoDB (clips, detections)
+                                      ├── S3 (presigned URLs for video/images)
+                                      ├── CloudWatch (heartbeat metrics)
+                                      └── IoT Core (device shadows for status/OTA)
 
-[Pi Management Lambda + API Gateway]
+[Pi Management Lambda + API Gateway]  ← no auth (called by Pi devices)
     │ Device registration/deregistration
     └── IoT Core (create thing, certificates, policy attachment)
+
+[Pi snoutspotter-agent] ◄──MQTT──► [IoT Core]
+    │ Single connection handles:
+    ├── Shadow reporting (heartbeat, camera, system health)
+    └── OTA updates (watches shadow delta, self-updates)
 ```
 
 ### Multi-Pi Device Management
 
 - Devices are registered as IoT Things in the `snoutspotter-pis` thing group
 - Each device gets unique X.509 certificates for MQTT connectivity
-- Device shadows track: version, hostname, heartbeat timestamp, update status, service states
-- OTA updates are triggered by writing `desired.version` to the device shadow
-- The Pi's `ota_agent.py` watches for shadow changes and self-updates
+- Device shadows track: version, hostname, heartbeat, update status, service states, camera health, system metrics, upload stats
+- OTA updates triggered by writing `desired.version` to the device shadow
+- Pi agent requests current shadow on startup to catch any pending delta (not just push notifications)
+- `config.yaml` is excluded from OTA packages — device-specific settings are preserved across updates
+
+---
+
+## Authentication
+
+### Frontend (Okta OIDC/PKCE)
+- All routes gated by `RequiredAuth` — redirects to Okta login if unauthenticated
+- PKCE flow via `@okta/okta-react` + `@okta/okta-auth-js`
+- Access tokens injected into all API calls via `setAuthGetter` in `api.ts`
+- Logout button in sidebar
+
+### API (JWT Bearer)
+- All controllers have `[Authorize]` — validates Okta JWT on every request
+- `Program.cs` configures `AddAuthentication().AddJwtBearer()` with Okta issuer/audience
+- **Pi Management API has no auth** — Pi devices cannot authenticate to Okta
+
+### Okta Terraform resources
+- `okta_app_oauth` — SPA app (PKCE, `authorization_code`)
+- `okta_group` — `SnoutSpotter Users` (add users here to grant access)
+- `okta_app_group_assignment` — assigns group to app
+- `okta_auth_server_policy` + rule — allows token issuance for the app
+- `okta_app_signon_policy` + rule — password only, no MFA (`factor_mode = "1FA"`)
+- State stored in S3 at `terraform/okta/terraform.tfstate`
 
 ---
 
@@ -159,70 +192,63 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 **Stack dependency order:**
 1. **CoreStack** — foundational resources (no dependencies)
 2. **IoTStack** — IoT resources (no dependencies)
-3. **IngestStack** — depends on CoreStack (S3 bucket, DynamoDB table, ECR repo)
-4. **InferenceStack** — depends on CoreStack (S3 bucket, DynamoDB table, ECR repo)
-5. **ApiStack** — depends on CoreStack (S3 bucket, DynamoDB table, ECR repo)
-6. **PiMgmtStack** — depends on CoreStack (ECR repo), IoTStack (thing group name, policy name)
+3. **IngestStack** — depends on CoreStack
+4. **InferenceStack** — depends on CoreStack
+5. **ApiStack** — depends on CoreStack, reads CDK context for `oktaIssuer`/`allowedOrigin`
+6. **PiMgmtStack** — depends on CoreStack, IoTStack
 7. **WebStack** — standalone (S3 + CloudFront)
-8. **MonitoringStack** — depends on CoreStack (S3 bucket)
-9. **CiCdStack** — standalone (OIDC role)
+8. **MonitoringStack** — depends on CoreStack
+9. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
 
 **Key resources by stack:**
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips`, 4 ECR repos (api, ingest, inference, pi-mgmt), IAM user `snout-spotter-pi` |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips`, 4 ECR repos |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy` |
-| ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway |
+| ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
 | InferenceStack | Docker Lambda triggered by S3 `keyframes/` events |
 | WebStack | S3 static site bucket, CloudFront distribution |
-
-**CDK conventions:**
-- All stacks use typed `*Props` classes for dependency injection
-- ECR repos are created in CoreStack and passed to consuming stacks
-- `IMAGE_TAG` environment variable controls which Docker tag to deploy (defaults to `latest`)
-- All resources tagged with `Project: SnoutSpotter`
+| CiCdStack | GitHub Actions OIDC role with S3, ECR, Lambda, CloudFront, CFn permissions |
 
 ---
 
 ## API Endpoints
+
+All main API endpoints require a valid Okta JWT Bearer token.
 
 ### Main API (`snout-spotter-api` Lambda)
 
 **Clips:**
 - `GET /api/clips?limit=20&nextPageKey=xxx&date=YYYY/MM/DD` — list clips (cursor pagination)
 - `GET /api/clips/{id}` — get clip detail with presigned video/keyframe URLs
-- `GET /api/clips/{id}/video` — get presigned video URL
-- `GET /api/clips/{id}/keyframes` — get presigned keyframe URLs
 
 **Stats:**
 - `GET /api/stats` — dashboard stats (total clips, today's clips, detections, Pi online status)
-- `GET /api/stats/health` — multi-device health (all Pi devices with shadow state, versions, update status)
+- `GET /api/stats/health` — multi-device health (all Pi shadows with camera, system, upload stats)
 
 **Detections:**
 - `GET /api/detections?type=my_dog&limit=50` — list detection results
 
 **Pi Management (OTA):**
-- `GET /api/pi/devices` — list all Pi devices with shadow state
+- `GET /api/pi/devices` — list all Pi devices with full shadow state
 - `GET /api/pi/{thingName}/status` — single device status
 - `POST /api/pi/{thingName}/update` — trigger OTA update for one device
 - `POST /api/pi/update-all` — trigger OTA update for all devices
 
-### Pi Management API (`snout-spotter-pi-mgmt` Lambda — separate API Gateway)
+### Pi Management API (`snout-spotter-pi-mgmt` Lambda — no auth)
 
 - `GET /api/devices` — list registered device thing names
-- `POST /api/devices/register` — register new device (body: `{"name": "garden"}`)
-  - Creates IoT Thing `snoutspotter-{name}`, generates certificates, returns credentials
-- `DELETE /api/devices/{thingName}` — deregister device (deletes thing, certs, policy attachments)
+- `POST /api/devices/register` — register new device (`{"name": "garden"}`) → returns certs
+- `DELETE /api/devices/{thingName}` — deregister device
 
 ---
 
 ## DynamoDB Schema
 
-**Table:** `snout-spotter-clips`
-**Billing:** Pay-per-request
+**Table:** `snout-spotter-clips` | **Billing:** Pay-per-request
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
@@ -230,102 +256,124 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 | `s3_key` | String | S3 key for the raw clip |
 | `timestamp` | Number | Unix timestamp |
 | `duration_s` | Number | Clip duration in seconds |
-| `date` | String | `YYYY/MM/DD` format |
+| `date` | String | `YYYY/MM/DD` |
 | `keyframe_count` | Number | Number of extracted keyframes |
 | `keyframe_keys` | String Set | S3 keys for keyframe images |
 | `detection_type` | String | `pending`, `my_dog`, `other_dog`, `no_dog` |
 | `detection_count` | Number | Number of detections found |
 | `detections` | String | JSON string of detection details |
-| `labeled` | Boolean | Whether manually labeled |
 | `created_at` | String | ISO 8601 timestamp |
-| `inference_at` | String | ISO 8601 timestamp of inference run |
 
 **GSIs:**
-- `by-date` — PK: `date`, SK: `timestamp` (newest-first queries by date)
-- `by-detection` — PK: `detection_type`, SK: `timestamp` (query by detection type)
-
----
-
-## Frontend
-
-**Stack:** React 18 + TypeScript + Vite + Tailwind CSS
-**Hosted:** S3 + CloudFront
-
-**Pages:**
-- **Dashboard** (`/`) — stats cards: total clips, today's clips, detections, Pi status
-- **Clips Browser** (`/clips`) — paginated grid with thumbnails, cursor-based pagination via `nextPageKey`
-- **Clip Detail** (`/clips/:id`) — video player, keyframe gallery, detection results with bounding boxes
-- **Detections** (`/detections`) — filterable detection results list
-- **System Health** (`/health`) — multi-Pi device status, "Add Pi" dialog, "Remove" button, OTA update triggers
-
-**API client** (`src/web/src/api.ts`):
-- Two base URLs: `VITE_API_URL` (main API) and `VITE_PI_MGMT_URL` (Pi Management API)
-- `fetchJson`, `postJson`, `deleteJson` helper functions
-- All API calls throw on non-2xx responses
-
-**Environment variables:**
-- `VITE_API_URL` — main API Gateway URL (e.g. `https://xxx.execute-api.eu-west-1.amazonaws.com/api`)
-- `VITE_PI_MGMT_URL` — Pi Management API Gateway URL
+- `all-by-time` — PK: fixed value, SK: `timestamp` (server-side ordering across all clips)
+- `by-date` — PK: `date`, SK: `timestamp`
+- `by-detection` — PK: `detection_type`, SK: `timestamp`
 
 ---
 
 ## Pi Software
 
 **Language:** Python 3 with `picamera2`, `opencv`, `boto3`, `awsiotsdk`
-**Config:** `src/pi/config.yaml`
+**Config:** `src/pi/config.yaml` (device-specific, excluded from OTA packages)
 
 **Services (systemd):**
+
 | Service | Script | Purpose |
 |---------|--------|---------|
-| `snoutspotter-motion` | `motion_detector.py` | Frame-differencing motion detection, records 1080p H.264 clips |
-| `snoutspotter-uploader` | `uploader.py` | Watches for new clips, uploads to S3 with multipart + retry |
-| `snoutspotter-health` | `health.py` | Sends CloudWatch heartbeat metrics, updates IoT device shadow |
-| `snoutspotter-ota` | `ota_agent.py` | Watches IoT shadow for desired version changes, self-updates |
+| `snoutspotter-motion` | `motion_detector.py` | Motion detection, records 1080p H.264 clips, writes `~/.snoutspotter/motion-status.json` |
+| `snoutspotter-uploader` | `uploader.py` | Uploads clips to S3, writes `~/.snoutspotter/uploader-status.json` |
+| `snoutspotter-agent` | `agent.py` | Single MQTT connection: shadow reporting (health + camera + system metrics) + OTA updates |
 
-**Setup:** `setup-pi.sh` automates everything:
-1. Installs system and Python dependencies
-2. Calls Pi Management API to register the device
-3. Saves IoT certificates to `~/.snoutspotter/certs/`
-4. Configures AWS credentials and `config.yaml`
-5. Installs and starts all systemd services
+**Status files** (`~/.snoutspotter/`):
+- `motion-status.json` — `cameraOk`, `lastMotionAt`, `lastRecordingStartedAt`, `recordingsToday`
+- `uploader-status.json` — `lastUploadAt`, `uploadsToday`, `failedToday`
 
 **IoT shadow reported state:**
 ```json
 {
   "state": {
     "reported": {
-      "version": "1.2.0",
-      "hostname": "snoutspotter-garden",
-      "lastHeartbeat": "2026-03-28T10:00:00Z",
+      "version": "1.0.2",
+      "hostname": "snoutspotter-01",
+      "lastHeartbeat": "2026-03-29T10:00:00Z",
       "updateStatus": "idle",
-      "services": {
-        "motion": "running",
-        "uploader": "running",
-        "health": "running",
-        "ota": "running"
+      "services": {"motion": "active", "uploader": "active", "agent": "active"},
+      "camera": {
+        "connected": true,
+        "healthy": true,
+        "sensor": "imx708",
+        "resolution": "2304x1296",
+        "recordResolution": "1920x1080"
+      },
+      "lastMotionAt": "2026-03-29T09:45:00Z",
+      "lastUploadAt": "2026-03-29T09:46:00Z",
+      "uploadStats": {"uploadsToday": 5, "failedToday": 0, "totalUploaded": 120},
+      "clipsPending": 0,
+      "system": {
+        "cpuTempC": 52.3,
+        "memUsedPercent": 45.2,
+        "diskUsedPercent": 23.1,
+        "diskFreeGb": 11.4,
+        "uptimeSeconds": 86400,
+        "loadAvg": [0.5, 0.3, 0.2],
+        "piModel": "Raspberry Pi Zero 2 W Rev 1.0",
+        "ipAddress": "192.168.2.227",
+        "wifiSignalDbm": -42,
+        "wifiSsid": "MyNetwork",
+        "pythonVersion": "3.11.2"
       }
     }
   }
 }
 ```
 
+**OTA process:**
+1. Dashboard triggers update → API writes `desired.version` to shadow
+2. Agent receives delta (or detects it on startup via `shadow/get`)
+3. Downloads `releases/pi/v{version}.tar.gz` from S3
+4. Backs up current version to `~/.snoutspotter/backups/{version}/`
+5. Extracts package (skipping `config.yaml`)
+6. Restarts services, waits 30s, checks health
+7. Reports `updateStatus: success` or rolls back on failure
+
+**Pi version bumping:** `package-pi.yml` reads the current version from the S3 manifest and increments the patch number — guarantees a unique version every run.
+
 ---
 
 ## CI/CD
 
-**Platform:** GitHub Actions with OIDC-based AWS authentication (no long-lived credentials).
+**Platform:** GitHub Actions with OIDC-based AWS auth (no long-lived credentials).
 
-**Main pipeline** (`deploy.yml`) — triggered on push to `main` affecting `src/**`:
-1. **Stage 1:** Deploy infrastructure (CDK all stacks)
-2. **Stage 2:** Build Docker images in parallel (api, ingest, inference, pi-mgmt) → push to ECR
-3. **Stage 3:** Deploy application stacks (api, ingest, inference, pi-mgmt, web) — each via CDK
+**Main pipeline** (`deploy.yml`) — path-filtered, only runs jobs for changed components:
+
+| Path changed | Jobs triggered |
+|-------------|----------------|
+| `src/infra/**` | infra + all downstream |
+| `src/api/**` | build API image → deploy API |
+| `src/web/**` | deploy web |
+| `src/lambdas/Ingest/**` | build ingest image → deploy ingest |
+| `src/lambdas/RunInference/**` | build inference image → deploy inference |
+| `src/lambdas/PiMgmt/**` | build pi-mgmt image → deploy pi-mgmt |
+| `src/pi/**` | nothing (handled by `package-pi.yml`) |
+| `terraform/okta/**` | nothing (handled by `deploy-okta.yml`) |
 
 **Required GitHub secrets:**
-- `AWS_ROLE_ARN` — OIDC role ARN for GitHub Actions
-- `WEB_BUCKET_NAME` — S3 bucket for frontend assets
-- `CLOUDFRONT_DISTRIBUTION_ID` — for cache invalidation after web deploy
 
-**Docker images:** All Lambdas use Docker-based deployment via ECR. Images are tagged with the git SHA.
+| Secret | Description |
+|--------|-------------|
+| `AWS_ROLE_ARN` | OIDC role ARN (CiCdStack output) |
+| `WEB_BUCKET_NAME` | S3 bucket for frontend assets |
+| `CLOUDFRONT_DISTRIBUTION_ID` | For cache invalidation |
+| `API_URL` | Main API Gateway URL |
+| `DATA_BUCKET_NAME` | Data S3 bucket name |
+| `OKTA_API_TOKEN` | Okta API token for Terraform |
+
+**Required GitHub vars (non-secret):**
+
+| Var | Description |
+|-----|-------------|
+| `OKTA_ISSUER` | `https://{org}.okta.com/oauth2/default` |
+| `SNOUTSPOTTER_OKTA_CLIENT_ID` | Okta app client ID |
 
 ---
 
@@ -334,27 +382,33 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 - **.NET 8** with top-level statements in `Program.cs`
 - **Lambdas** use Docker images — ASP.NET Core ones use Lambda Web Adapter (`AWS_LWA_PORT=8080`)
 - **CDK stacks** pass dependencies via typed `*Props` record classes
-- **No authentication** on APIs currently (single-user system)
-- **CORS** is open (`AllowAnyOrigin`) on both API and Pi Management Lambda
-- **Naming:** IoT things are prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
-- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `models/`, `releases/pi/`
+- **Pi Management API has no auth** — Pi devices connect directly, cannot use Okta
+- **CORS** is locked to `allowedOrigin` on main API; open on Pi Management
+- **Naming:** IoT things prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
+- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `models/`, `releases/pi/`, `terraform/`
 
 ---
 
 ## Known Gotchas
 
-1. **`AmazonIotDataClient` cannot use `RegionEndpoint`** — it requires a `ServiceURL` obtained via `iot:DescribeEndpoint` (Data-ATS endpoint type). This is called once at DI registration time in the API Lambda.
+1. **`AmazonIotDataClient` requires `ServiceURL`**, not `RegionEndpoint` — obtained via `iot:DescribeEndpoint` at startup.
 
-2. **`iot:DescribeEndpoint` needs `Resource: "*"`** — it's a global IAM action and cannot be scoped to a specific resource ARN.
+2. **`iot:DescribeEndpoint` needs `Resource: "*"`** — global IAM action, cannot be scoped.
 
-3. **DynamoDB `Scan` with `Limit`** limits items *evaluated*, not items *returned*. Always use cursor-based pagination with `nextPageKey` / `ExclusiveStartKey`.
+3. **All IoT IAM actions use `iot:` prefix** — not `iot-data:` or `iotdata:`. This applies to data plane actions like `GetThingShadow` too.
 
-4. **CloudFront caches aggressively** — always invalidate `/*` after deploying new web assets.
+4. **OTA delta notifications are not replayed** — the agent must call `shadow/get` on startup to catch any delta that arrived while it was offline.
 
-5. **Pi setup script requires Pi Management API to be deployed first** — the script calls the registration endpoint during setup.
+5. **Only one MQTT connection per client ID** — the old separate `health.py` + `ota_agent.py` conflicted. The merged `agent.py` uses a single connection.
 
-6. **Lambda Web Adapter** requires `AWS_LWA_PORT` environment variable set to the port the ASP.NET Core app listens on (8080).
+6. **`config.yaml` must not be in OTA packages** — it contains device-specific settings (bucket, certs, IoT endpoint) that differ per device. Excluded via `--exclude='config.yaml'` in `package-pi.yml` and filtered in `apply_update()`.
 
-7. **IoT Policy uses `${iot:Connection.Thing.ThingName}` variable** — this scopes MQTT permissions to the connecting device's own thing name. Don't hardcode thing names in the policy.
+7. **Okta Terraform state is in S3** — without remote state, each pipeline run creates duplicate apps. State lives at `s3://snout-spotter-{account}/terraform/okta/terraform.tfstate`.
 
-8. **ECR repos are created in CoreStack** — they must exist before any image build or stack deployment that references them. Always deploy CoreStack first.
+8. **DynamoDB `Scan` with `Limit`** limits items *evaluated*, not items *returned*. Use cursor pagination with `nextPageKey`.
+
+9. **CloudFront caches aggressively** — always invalidate `/*` after deploying new web assets.
+
+10. **Lambda Web Adapter** requires `AWS_LWA_PORT=8080` environment variable.
+
+11. **ECR repos are created in CoreStack** — must exist before any image build. Deploy CoreStack first.
