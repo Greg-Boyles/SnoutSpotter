@@ -73,6 +73,9 @@ export const api = {
   triggerPiUpdateAll: (version?: string) =>
     postJson<{ message: string; deviceCount: number; version: string }>("/pi/update-all", version ? { version } : {}),
 
+  getPiConfig: (thingName: string) =>
+    fetchJson<{ config: Record<string, number | boolean> | null; configErrors: Record<string, string> | null }>(`/pi/${thingName}/config`),
+
   updatePiConfig: (thingName: string, changes: Record<string, number | boolean>) =>
     postJson<{ message: string; errors: Record<string, string> }>(`/pi/${thingName}/config`, changes),
 

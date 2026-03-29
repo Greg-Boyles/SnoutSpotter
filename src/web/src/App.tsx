@@ -7,6 +7,7 @@ import ClipsBrowser from "./pages/ClipsBrowser";
 import ClipDetail from "./pages/ClipDetail";
 import Detections from "./pages/Detections";
 import SystemHealthPage from "./pages/SystemHealth";
+import DeviceConfig from "./pages/DeviceConfig";
 import { setAuthGetter } from "./api";
 
 const navItems = [
@@ -94,6 +95,7 @@ export default function App() {
                   <Route path="/clips/:id" element={<ClipDetail />} />
                   <Route path="/detections" element={<Detections />} />
                   <Route path="/health" element={<SystemHealthPage />} />
+                  <Route path="/device/:thingName/config" element={<DeviceConfig />} />
                 </Routes>
               </main>
             </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import {
   Wifi,
@@ -17,8 +18,6 @@ import {
   Cpu,
   Thermometer,
   Settings,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
@@ -55,17 +54,6 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-const CONFIG_KEYS: Record<string, { label: string; type: "int" | "bool"; min?: number; max?: number; unit?: string }> = {
-  "motion.threshold":             { label: "Motion threshold",    type: "int",  min: 500,  max: 50000, unit: "px" },
-  "motion.blur_kernel":           { label: "Blur kernel",         type: "int",  min: 3,    max: 51 },
-  "camera.detection_fps":         { label: "Detection FPS",       type: "int",  min: 1,    max: 15,    unit: "fps" },
-  "recording.max_clip_length":    { label: "Max clip length",     type: "int",  min: 10,   max: 300,   unit: "s" },
-  "recording.post_motion_buffer": { label: "Post-motion buffer",  type: "int",  min: 3,    max: 60,    unit: "s" },
-  "upload.max_retries":           { label: "Upload retries",      type: "int",  min: 1,    max: 20 },
-  "upload.delete_after_upload":   { label: "Delete after upload", type: "bool" },
-  "health.interval_seconds":      { label: "Heartbeat interval",  type: "int",  min: 60,   max: 3600,  unit: "s" },
-};
-
 export default function SystemHealthPage() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,10 +65,6 @@ export default function SystemHealthPage() {
   const [registering, setRegistering] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState<Record<string, boolean>>({});
-  const [configDraft, setConfigDraft] = useState<Record<string, Record<string, number | boolean>>>({});
-  const [savingConfig, setSavingConfig] = useState<Record<string, boolean>>({});
-  const [configSaveMsg, setConfigSaveMsg] = useState<Record<string, string>>({});
 
   const refreshHealth = () =>
     api.getHealth().then(setHealth).catch(console.error);
@@ -156,54 +140,6 @@ export default function SystemHealthPage() {
       setUpdateMessage(`Failed to remove device: ${(e as Error).message}`);
     } finally {
       setRemoving(null);
-    }
-  };
-
-  const toggleSettings = (device: { thingName: string; config?: Record<string, number | boolean> }) => {
-    const open = !settingsOpen[device.thingName];
-    setSettingsOpen((prev) => ({ ...prev, [device.thingName]: open }));
-    if (open) {
-      setConfigDraft((prev) => ({ ...prev, [device.thingName]: { ...(device.config || {}) } }));
-      setConfigSaveMsg((prev) => ({ ...prev, [device.thingName]: "" }));
-    }
-  };
-
-  const updateDraft = (thingName: string, key: string, value: number | boolean) => {
-    setConfigDraft((prev) => ({
-      ...prev,
-      [thingName]: { ...prev[thingName], [key]: value },
-    }));
-  };
-
-  const saveConfig = async (device: { thingName: string; config?: Record<string, number | boolean> }) => {
-    const draft = configDraft[device.thingName] || {};
-    const current = device.config || {};
-    const changes: Record<string, number | boolean> = {};
-    for (const key of Object.keys(CONFIG_KEYS)) {
-      if (draft[key] !== undefined && draft[key] !== current[key]) {
-        changes[key] = draft[key];
-      }
-    }
-    if (Object.keys(changes).length === 0) return;
-
-    setSavingConfig((prev) => ({ ...prev, [device.thingName]: true }));
-    setConfigSaveMsg((prev) => ({ ...prev, [device.thingName]: "" }));
-    try {
-      const result = await api.updatePiConfig(device.thingName, changes);
-      const errCount = Object.keys(result.errors || {}).length;
-      setConfigSaveMsg((prev) => ({
-        ...prev,
-        [device.thingName]: errCount > 0 ? `Saved with ${errCount} error(s)` : "Applying changes...",
-      }));
-      setTimeout(refreshHealth, 8000);
-      setTimeout(refreshHealth, 20000);
-    } catch (e) {
-      setConfigSaveMsg((prev) => ({
-        ...prev,
-        [device.thingName]: `Save failed: ${(e as Error).message}`,
-      }));
-    } finally {
-      setSavingConfig((prev) => ({ ...prev, [device.thingName]: false }));
     }
   };
 
@@ -581,79 +517,16 @@ export default function SystemHealthPage() {
               </div>
             )}
 
-            {/* Device Settings */}
-            {device.config && Object.keys(device.config).length > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <button
-                  onClick={() => toggleSettings(device)}
-                  className="flex items-center justify-between w-full text-left"
-                >
-                  <div className="flex items-center gap-2">
-                    <Settings className="w-3.5 h-3.5 text-gray-400" />
-                    <span className="text-xs font-medium text-gray-700">Device Settings</span>
-                  </div>
-                  {settingsOpen[device.thingName]
-                    ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
-                    : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
-                </button>
-
-                {settingsOpen[device.thingName] && (
-                  <div className="mt-3 space-y-2">
-                    {Object.entries(CONFIG_KEYS).map(([key, spec]) => {
-                      const draft = configDraft[device.thingName] || {};
-                      const currentVal = device.config?.[key];
-                      const draftVal = draft[key] ?? currentVal;
-                      const hasError = device.configErrors?.[key];
-                      return (
-                        <div key={key}>
-                          <div className="flex items-center justify-between gap-3">
-                            <label className="text-xs text-gray-500 flex-1">
-                              {spec.label}
-                              {spec.unit && <span className="text-gray-400"> ({spec.unit})</span>}
-                            </label>
-                            {spec.type === "bool" ? (
-                              <input
-                                type="checkbox"
-                                checked={Boolean(draftVal)}
-                                onChange={(e) => updateDraft(device.thingName, key, e.target.checked)}
-                                className="rounded border-gray-300"
-                              />
-                            ) : (
-                              <input
-                                type="number"
-                                min={spec.min}
-                                max={spec.max}
-                                value={draftVal as number ?? ""}
-                                onChange={(e) => updateDraft(device.thingName, key, Number(e.target.value))}
-                                className="w-24 px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
-                            )}
-                          </div>
-                          {hasError && (
-                            <p className="text-xs text-red-600 mt-0.5">{hasError}</p>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    <div className="flex items-center justify-between pt-1">
-                      {configSaveMsg[device.thingName] && (
-                        <span className={`text-xs ${configSaveMsg[device.thingName].startsWith("Save failed") ? "text-red-600" : "text-blue-600"}`}>
-                          {configSaveMsg[device.thingName]}
-                        </span>
-                      )}
-                      <button
-                        onClick={() => saveConfig(device)}
-                        disabled={savingConfig[device.thingName]}
-                        className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {savingConfig[device.thingName] ? "Saving..." : "Save"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Device Settings Link */}
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <Link
+                to={`/device/${device.thingName}/config`}
+                className="flex items-center gap-2 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                Device Settings
+              </Link>
+            </div>
 
             {device.updateAvailable && (
               <div className="mt-4 pt-4 border-t border-gray-100">
