@@ -90,7 +90,11 @@ SnoutSpotter/
 │       ├── agent.py                   # Merged agent: heartbeat + IoT shadow + OTA (single MQTT connection)
 │       ├── motion_detector.py         # Frame-differencing motion detection + recording + status file
 │       ├── uploader.py                # S3 multipart upload with retry + status file
-│       ├── config.yaml                # Device-specific config (NOT included in OTA packages)
+│       ├── config_loader.py           # Shared config loading: deep-merges defaults.yaml + config.yaml
+│       ├── config_schema.py           # Allow-list and validation for remotely configurable settings
+│       ├── defaults.yaml              # Default config values (shipped via OTA)
+│       ├── config.yaml                # Device-specific overrides (NOT included in OTA packages)
+│       ├── system-deps.txt            # System apt packages (shipped via OTA, installed during updates)
 │       ├── setup-pi.sh                # Full automated setup: deps, registration, certs, services
 │       ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
 │       └── version.json               # Current Pi software version (written by OTA agent)
@@ -274,7 +278,8 @@ All main API endpoints require a valid Okta JWT Bearer token.
 ## Pi Software
 
 **Language:** Python 3 with `picamera2`, `opencv`, `boto3`, `awsiotsdk`
-**Config:** `src/pi/config.yaml` (device-specific, excluded from OTA packages)
+**Config:** Two-layer system — `defaults.yaml` (shipped via OTA, all default values) merged with `config.yaml` (device-specific overrides, excluded from OTA). `config_loader.py` deep-merges them at load time.
+**System deps:** `system-deps.txt` lists apt packages; OTA installs new/changed packages automatically.
 
 **Services (systemd):**
 
@@ -332,9 +337,11 @@ All main API endpoints require a valid Okta JWT Bearer token.
 2. Agent receives delta (or detects it on startup via `shadow/get`)
 3. Downloads `releases/pi/v{version}.tar.gz` from S3
 4. Backs up current version to `~/.snoutspotter/backups/{version}/`
-5. Extracts package (skipping `config.yaml`)
-6. Restarts services, waits 30s, checks health
-7. Reports `updateStatus: success` or rolls back on failure
+5. Extracts package (skipping `config.yaml` to preserve device-specific overrides; `defaults.yaml` is updated)
+6. Installs system apt packages if `system-deps.txt` has changed (compares against backup)
+7. Installs Python dependencies from `requirements.txt`
+8. Restarts services, waits 30s, checks health
+9. Reports `updateStatus: success` or rolls back on failure
 
 **Pi version bumping:** `package-pi.yml` reads the current version from the S3 manifest and increments the patch number — guarantees a unique version every run.
 
@@ -401,7 +408,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 
 5. **Only one MQTT connection per client ID** — the old separate `health.py` + `ota_agent.py` conflicted. The merged `agent.py` uses a single connection.
 
-6. **`config.yaml` must not be in OTA packages** — it contains device-specific settings (bucket, certs, IoT endpoint) that differ per device. Excluded via `--exclude='config.yaml'` in `package-pi.yml` and filtered in `apply_update()`.
+6. **`config.yaml` must not be in OTA packages** — it contains device-specific overrides (bucket, certs, IoT endpoint) that differ per device. Excluded via `--exclude='config.yaml'` in `package-pi.yml` and filtered in `apply_update()`. Default values live in `defaults.yaml` (shipped via OTA); `config_loader.py` deep-merges defaults + overrides at load time.
 
 7. **Okta Terraform state is in S3** — without remote state, each pipeline run creates duplicate apps. State lives at `s3://snout-spotter-{account}/terraform/okta/terraform.tfstate`.
 

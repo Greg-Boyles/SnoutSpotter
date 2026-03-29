@@ -23,12 +23,11 @@ STATUS_DIR = Path.home() / ".snoutspotter"
 STATUS_FILE = STATUS_DIR / "uploader-status.json"
 SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
 CONFIG_RELOAD_FLAG = STATUS_DIR / "config-reload-uploader"
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
+import config_loader
 
 
-def load_config(path: str = "config.yaml") -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+def load_config(path: str | None = None) -> dict:
+    return config_loader.load_config()
 
 
 class UploadLedger:
@@ -195,7 +194,7 @@ class Uploader:
             if CONFIG_RELOAD_FLAG.exists():
                 try:
                     CONFIG_RELOAD_FLAG.unlink(missing_ok=True)
-                    new_config = load_config(str(CONFIG_PATH))
+                    new_config = load_config()
                     self.config = new_config["upload"]
                     logger.info("Config reloaded (uploader)")
                 except Exception as e:
