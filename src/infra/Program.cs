@@ -46,7 +46,12 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     AllowedOrigin = allowedOrigin
 });
 
-var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new StackProps { Env = env });
+var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new IoTStackProps
+{
+    Env = env,
+    LogIngestionEcrRepo = coreStack.LogIngestionEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
+});
 
 var piMgmtStack = new PiMgmtStack(app, "SnoutSpotter-PiMgmt", new PiMgmtStackProps
 {

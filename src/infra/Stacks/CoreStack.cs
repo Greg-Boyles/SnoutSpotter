@@ -15,6 +15,7 @@ public class CoreStack : Stack
     public Repository IngestEcrRepo { get; }
     public Repository InferenceEcrRepo { get; }
     public Repository PiMgmtEcrRepo { get; }
+    public Repository LogIngestionEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -169,6 +170,21 @@ public class CoreStack : Stack
         PiMgmtEcrRepo = new Repository(this, "PiMgmtEcrRepo", new RepositoryProps
         {
             RepositoryName = "snout-spotter-pi-mgmt",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        // ECR repository for Log Ingestion Lambda Docker image
+        LogIngestionEcrRepo = new Repository(this, "LogIngestionEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-log-ingestion",
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {
