@@ -93,12 +93,12 @@ export default function LiveView() {
   };
 
   const connectWebRTC = async (info: StreamStartResult) => {
-    if (!info.wssEndpoint || !info.iceServers) {
-      throw new Error("Missing WebRTC endpoint or ICE servers");
+    if (!info.presignedWssUrl || !info.iceServers) {
+      throw new Error("Missing presigned WebSocket URL or ICE servers");
     }
 
     const iceServers: RTCIceServer[] = [
-      { urls: "stun:stun.kinesisvideo.eu-west-1.amazonaws.com:443" },
+      { urls: `stun:stun.kinesisvideo.${info.region}.amazonaws.com:443` },
       ...info.iceServers.map((s) => ({
         urls: s.urls,
         username: s.username,
@@ -115,12 +115,8 @@ export default function LiveView() {
       }
     };
 
-    // Connect to signaling channel as viewer
-    const clientId = `viewer-${Date.now()}`;
-    const wsUrl = `${info.wssEndpoint}?X-Amz-ChannelARN=${encodeURIComponent(info.channelArn)}&X-Amz-ClientId=${encodeURIComponent(clientId)}`;
-
     return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(info.presignedWssUrl!);
       wsRef.current = ws;
 
       const timeout = setTimeout(() => {
@@ -129,7 +125,6 @@ export default function LiveView() {
       }, 15000);
 
       ws.onopen = () => {
-        // Send SDP offer to master
         pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false })
           .then((offer) => pc.setLocalDescription(offer))
           .then(() => {
