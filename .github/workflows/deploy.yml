@@ -27,6 +27,7 @@ jobs:
       ingest: ${{ steps.filter.outputs.ingest }}
       inference: ${{ steps.filter.outputs.inference }}
       pi-mgmt: ${{ steps.filter.outputs.pi-mgmt }}
+      log-ingestion: ${{ steps.filter.outputs.log-ingestion }}
       web: ${{ steps.filter.outputs.web }}
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +48,9 @@ jobs:
               - 'src/infra/**'
             pi-mgmt:
               - 'src/lambdas/SnoutSpotter.Lambda.PiMgmt/**'
+              - 'src/infra/**'
+            log-ingestion:
+              - 'src/lambdas/SnoutSpotter.Lambda.LogIngestion/**'
               - 'src/infra/**'
             web:
               - 'src/web/**'
@@ -100,6 +104,16 @@ jobs:
     uses: ./.github/workflows/build-pi-mgmt-image.yml
     secrets: inherit
 
+  build-log-ingestion-image:
+    name: Build log ingestion image
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.log-ingestion == 'true' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-log-ingestion-image.yml
+    secrets: inherit
+
   # Stage 3: Deploy application stacks
   deploy-api:
     name: Deploy API
@@ -139,6 +153,16 @@ jobs:
       !failure() && !cancelled() &&
       needs.build-pi-mgmt-image.result == 'success'
     uses: ./.github/workflows/deploy-pi-mgmt.yml
+    secrets: inherit
+
+  deploy-log-ingestion:
+    name: Deploy log ingestion
+    needs: build-log-ingestion-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-log-ingestion-image.result == 'success'
+    uses: ./.github/workflows/deploy-log-ingestion.yml
     secrets: inherit
 
   deploy-web:
