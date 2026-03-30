@@ -1,7 +1,6 @@
 using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
-using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.S3;
 using Constructs;
 
@@ -97,29 +96,6 @@ public class CoreStack : Stack
             SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
             ProjectionType = ProjectionType.ALL
         });
-
-        // IAM user for Pi Zero to upload clips
-        var piUser = new User(this, "PiUser", new UserProps
-        {
-            UserName = "snout-spotter-pi"
-        });
-
-        DataBucket.GrantPut(piUser, "raw-clips/*");
-
-        // Also allow the Pi to put CloudWatch metrics
-        piUser.AddToPolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "cloudwatch:PutMetricData" },
-            Resources = new[] { "*" },
-            Conditions = new Dictionary<string, object>
-            {
-                ["StringEquals"] = new Dictionary<string, string>
-                {
-                    ["cloudwatch:namespace"] = "SnoutSpotter"
-                }
-            }
-        }));
 
         // ECR repository for the API Docker image (created here so it exists before ApiStack needs it)
         ApiEcrRepo = new Repository(this, "ApiEcrRepo", new RepositoryProps
