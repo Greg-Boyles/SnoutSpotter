@@ -42,6 +42,22 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": int, "min": 60, "max": 3600,
         "affects": "agent",
     },
+    "log_shipping.enabled": {
+        "type": bool,
+        "affects": "agent",
+    },
+    "log_shipping.batch_interval_seconds": {
+        "type": int, "min": 30, "max": 600,
+        "affects": "agent",
+    },
+    "log_shipping.max_lines_per_batch": {
+        "type": int, "min": 10, "max": 200,
+        "affects": "agent",
+    },
+    "log_shipping.min_level": {
+        "type": str, "choices": ["DEBUG", "INFO", "WARNING", "ERROR"],
+        "affects": "agent",
+    },
 }
 
 
@@ -56,6 +72,12 @@ def validate_config_value(key: str, value: Any) -> tuple[bool, str]:
     if expected_type is bool:
         if not isinstance(value, bool):
             return False, f"{key} must be a boolean"
+    elif expected_type is str:
+        if not isinstance(value, str):
+            return False, f"{key} must be a string"
+        choices = spec.get("choices")
+        if choices and value not in choices:
+            return False, f"{key} must be one of: {', '.join(choices)}"
     elif expected_type is int:
         if not isinstance(value, int) or isinstance(value, bool):
             return False, f"{key} must be an integer"
