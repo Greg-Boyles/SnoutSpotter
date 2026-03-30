@@ -51,7 +51,7 @@ MAX_RESTARTS = 5
 
 
 def _launch(cmd: str, env: dict) -> subprocess.Popen:
-    return subprocess.Popen(cmd, shell=True, env=env, stderr=subprocess.PIPE)
+    return subprocess.Popen(cmd, shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
 def main():
@@ -101,10 +101,11 @@ def main():
 
             ret = proc.poll()
             if ret is not None:
-                stderr_output = ""
                 if proc.stderr:
-                    stderr_output = proc.stderr.read().decode(errors="replace")[-500:]
-                logger.warning(f"GStreamer exited with code {ret}: {stderr_output}")
+                    stderr_output = proc.stderr.read().decode(errors="replace").strip()
+                    for line in stderr_output.splitlines()[-10:]:
+                        logger.error(f"GStreamer: {line}")
+                logger.warning(f"GStreamer exited with code {ret}")
                 if shutdown:
                     break
                 restart_count += 1
