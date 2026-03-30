@@ -127,6 +127,12 @@ public class PiUpdateService
             if (reported.TryGetProperty("logShippingError", out var lse))
                 state.LogShippingError = lse.GetString();
 
+            if (reported.TryGetProperty("streaming", out var st))
+                state.Streaming = st.GetBoolean();
+
+            if (reported.TryGetProperty("streamError", out var se))
+                state.StreamError = se.GetString();
+
             return state;
         }
         catch (Amazon.IotData.Model.ResourceNotFoundException)
@@ -308,6 +314,8 @@ public class PiShadowState
     public Dictionary<string, string>? ConfigErrors { get; set; }
     public bool? LogShipping { get; set; }
     public string? LogShippingError { get; set; }
+    public bool? Streaming { get; set; }
+    public string? StreamError { get; set; }
 }
 
 public record CameraStatus(

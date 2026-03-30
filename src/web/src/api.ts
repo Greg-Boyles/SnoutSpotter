@@ -1,4 +1,4 @@
-import type { Clip, Detection, LogEntry, StatsOverview, SystemHealth } from "./types";
+import type { Clip, Detection, LogEntry, StatsOverview, StreamStartResult, SystemHealth } from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
@@ -89,6 +89,16 @@ export const api = {
       `/pi/${thingName}/logs?${params}`,
     );
   },
+
+  // Streaming
+  startStream: (thingName: string) =>
+    postJson<StreamStartResult>(`/stream/${thingName}/start`),
+
+  stopStream: (thingName: string) =>
+    postJson<{ message: string }>(`/stream/${thingName}/stop`),
+
+  getStreamStatus: (thingName: string) =>
+    fetchJson<{ thingName: string; streaming: boolean; streamError?: string }>(`/stream/${thingName}/status`),
 
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>

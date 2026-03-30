@@ -59,6 +59,20 @@ public class IoTStack : Stack
             }
         }));
 
+        // KVS permissions for live streaming via WebRTC
+        piCredentialsRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Actions = new[]
+            {
+                "kinesisvideo:ConnectAsMaster",
+                "kinesisvideo:GetSignalingChannelEndpoint",
+                "kinesisvideo:CreateSignalingChannel",
+                "kinesisvideo:DescribeSignalingChannel",
+                "kinesisvideo:GetIceServerConfig",
+            },
+            Resources = new[] { $"arn:aws:kinesisvideo:{Region}:{Account}:channel/snoutspotter-*" }
+        }));
+
         // IoT Role Alias — bridge between IoT X.509 certs and IAM temporary credentials
         var roleAlias = new IoT.CfnRoleAlias(this, "PiRoleAlias", new IoT.CfnRoleAliasProps
         {

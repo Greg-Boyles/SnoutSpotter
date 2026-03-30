@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Routes, Route, NavLink } from "react-router-dom";
-import { Dog, Video, Search, Activity, LayoutDashboard, LogOut } from "lucide-react";
+import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio } from "lucide-react";
 import { useOktaAuth, LoginCallback } from "@okta/okta-react";
 import Dashboard from "./pages/Dashboard";
 import ClipsBrowser from "./pages/ClipsBrowser";
@@ -9,12 +9,14 @@ import Detections from "./pages/Detections";
 import SystemHealthPage from "./pages/SystemHealth";
 import DeviceConfig from "./pages/DeviceConfig";
 import DeviceLogs from "./pages/DeviceLogs";
+import LiveView from "./pages/LiveView";
 import { setAuthGetter } from "./api";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/clips", icon: Video, label: "Clips" },
   { to: "/detections", icon: Search, label: "Detections" },
+  { to: "/live", icon: Radio, label: "Live" },
   { to: "/health", icon: Activity, label: "System" },
 ];
 
@@ -95,6 +97,7 @@ export default function App() {
                   <Route path="/clips" element={<ClipsBrowser />} />
                   <Route path="/clips/:id" element={<ClipDetail />} />
                   <Route path="/detections" element={<Detections />} />
+                  <Route path="/live" element={<LiveView />} />
                   <Route path="/health" element={<SystemHealthPage />} />
                   <Route path="/device/:thingName/config" element={<DeviceConfig />} />
                   <Route path="/device/:thingName/logs" element={<DeviceLogs />} />

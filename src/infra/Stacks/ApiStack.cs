@@ -94,6 +94,22 @@ public class ApiStack : Stack
             Resources = new[] { "*" }
         }));
 
+        // KVS permissions for live streaming (manage signaling channels, connect as viewer)
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[]
+            {
+                "kinesisvideo:CreateSignalingChannel",
+                "kinesisvideo:DeleteSignalingChannel",
+                "kinesisvideo:DescribeSignalingChannel",
+                "kinesisvideo:GetSignalingChannelEndpoint",
+                "kinesisvideo:ConnectAsViewer",
+                "kinesisvideo:GetIceServerConfig",
+            },
+            Resources = new[] { $"arn:aws:kinesisvideo:{Region}:{Account}:channel/snoutspotter-*" }
+        }));
+
         // HTTP API Gateway
         var httpApi = new CfnApi(this, "ApiGateway", new CfnApiProps
         {

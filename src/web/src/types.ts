@@ -89,6 +89,20 @@ export interface LogEntry {
   message: string;
 }
 
+export interface StreamStartResult {
+  channelName: string;
+  channelArn: string;
+  region: string;
+  wssEndpoint?: string;
+  httpsEndpoint?: string;
+  iceServers?: {
+    urls: string[];
+    username: string;
+    credential: string;
+    ttl: number;
+  }[];
+}
+
 export interface SystemHealth {
   checkedAt: string;
   latestVersion?: string;
