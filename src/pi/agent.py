@@ -500,8 +500,25 @@ def parse_custom_debs(path: Path) -> list[str]:
     return entries
 
 
+def _deb_package_name(deb_path: str) -> str:
+    """Extract package name from a .deb filename (e.g. 'kvssink_1.0.0_arm64.deb' -> 'kvssink')."""
+    return Path(deb_path).name.split("_")[0]
+
+
+def _is_deb_installed(package_name: str) -> bool:
+    """Check if a .deb package is installed via dpkg."""
+    try:
+        result = subprocess.run(
+            ["dpkg", "-s", package_name],
+            capture_output=True, text=True, timeout=5,
+        )
+        return "Status: install ok installed" in result.stdout
+    except Exception:
+        return False
+
+
 def install_custom_debs(old_version: str | None, bucket: str, region: str, session: boto3.Session = None):
-    """Download and install custom .deb packages from S3 if custom-debs.txt has changed."""
+    """Download and install custom .deb packages from S3 if custom-debs.txt has changed or packages are missing."""
     new_debs_path = INSTALL_DIR / "custom-debs.txt"
     new_debs = parse_custom_debs(new_debs_path)
     if not new_debs:
@@ -512,12 +529,18 @@ def install_custom_debs(old_version: str | None, bucket: str, region: str, sessi
         old_debs_path = BACKUP_DIR / old_version / "custom-debs.txt"
         old_debs = parse_custom_debs(old_debs_path)
 
-    if new_debs == old_debs:
-        logger.info("Custom debs unchanged — skipping")
+    # Check if any listed packages are not actually installed
+    missing = [p for p in new_debs if not _is_deb_installed(_deb_package_name(p))]
+
+    if new_debs == old_debs and not missing:
+        logger.info("Custom debs unchanged and all installed — skipping")
         return
 
+    if missing:
+        logger.info(f"Missing packages detected: {[_deb_package_name(p) for p in missing]}")
+
     s3 = (session or boto3).client("s3", region_name=region)
-    for s3_path in new_debs:
+    for s3_path in (missing if new_debs == old_debs else new_debs):
         deb_name = Path(s3_path).name
         local_path = Path(f"/tmp/{deb_name}")
         try:

@@ -93,8 +93,7 @@ export interface StreamStartResult {
   channelName: string;
   channelArn: string;
   region: string;
-  wssEndpoint?: string;
-  httpsEndpoint?: string;
+  presignedWssUrl?: string;
   iceServers?: {
     urls: string[];
     username: string;
