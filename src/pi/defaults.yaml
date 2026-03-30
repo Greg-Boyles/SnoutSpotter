@@ -36,6 +36,10 @@ log_shipping:
   max_lines_per_batch: 50
   min_level: INFO
 
+credentials_provider:
+  role_alias: snoutspotter-pi-role-alias
+  endpoint: ""
+
 iot:
   endpoint: ""
   thing_name: ""
