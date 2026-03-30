@@ -58,6 +58,10 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": str, "choices": ["DEBUG", "INFO", "WARNING", "ERROR"],
         "affects": "agent",
     },
+    "credentials_provider.endpoint": {
+        "type": str,
+        "affects": "agent",
+    },
 }
 
 
