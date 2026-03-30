@@ -24,6 +24,7 @@ STATUS_FILE = STATUS_DIR / "uploader-status.json"
 SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
 CONFIG_RELOAD_FLAG = STATUS_DIR / "config-reload-uploader"
 import config_loader
+import iot_credential_provider
 
 
 def load_config(path: str | None = None) -> dict:
@@ -81,7 +82,8 @@ class Uploader:
     def __init__(self, config: dict):
         self.config = config["upload"]
         self.clips_dir = Path(config["recording"]["output_dir"])
-        self.s3 = boto3.client("s3", region_name=self.config["region"])
+        session = iot_credential_provider.create_session(config)
+        self.s3 = session.client("s3", region_name=self.config["region"])
         self.bucket = self.config["bucket_name"]
         self.prefix = self.config["prefix"]
         self.ledger = UploadLedger()

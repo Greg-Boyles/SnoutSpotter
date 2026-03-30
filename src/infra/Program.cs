@@ -46,7 +46,11 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     AllowedOrigin = allowedOrigin
 });
 
-var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new StackProps { Env = env });
+var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new IoTStackProps
+{
+    Env = env,
+    DataBucket = coreStack.DataBucket
+});
 
 var logIngestionStack = new LogIngestionStack(app, "SnoutSpotter-LogIngestion", new LogIngestionStackProps
 {

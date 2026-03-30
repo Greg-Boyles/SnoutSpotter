@@ -24,6 +24,7 @@ from awscrt import mqtt
 
 import config_schema
 import config_loader
+import iot_credential_provider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("snout-spotter-agent")
@@ -498,7 +499,7 @@ def parse_custom_debs(path: Path) -> list[str]:
     return entries
 
 
-def install_custom_debs(old_version: str | None, bucket: str, region: str):
+def install_custom_debs(old_version: str | None, bucket: str, region: str, session: boto3.Session = None):
     """Download and install custom .deb packages from S3 if custom-debs.txt has changed."""
     new_debs_path = INSTALL_DIR / "custom-debs.txt"
     new_debs = parse_custom_debs(new_debs_path)
@@ -514,7 +515,7 @@ def install_custom_debs(old_version: str | None, bucket: str, region: str):
         logger.info("Custom debs unchanged — skipping")
         return
 
-    s3 = boto3.client("s3", region_name=region)
+    s3 = (session or boto3).client("s3", region_name=region)
     for s3_path in new_debs:
         deb_name = Path(s3_path).name
         local_path = Path(f"/tmp/{deb_name}")
@@ -549,7 +550,7 @@ def restart_services():
             logger.error(f"Failed to restart {svc}: {e}")
 
 
-def apply_update(version: str, bucket: str, region: str, connection, thing_name: str):
+def apply_update(version: str, bucket: str, region: str, connection, thing_name: str, session: boto3.Session = None):
     old_version = load_version()
     s3_key = f"releases/pi/v{version}.tar.gz"
     local_path = Path(f"/tmp/pi-v{version}.tar.gz")
@@ -559,7 +560,7 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
 
     try:
         logger.info(f"Downloading s3://{bucket}/{s3_key}")
-        s3 = boto3.client("s3", region_name=region)
+        s3 = (session or boto3).client("s3", region_name=region)
         s3.download_file(bucket, s3_key, str(local_path))
 
         backup_current(old_version)
@@ -571,7 +572,7 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
             tar.extractall(path=INSTALL_DIR, members=members)
 
         install_system_deps(old_version)
-        install_custom_debs(old_version, bucket, region)
+        install_custom_debs(old_version, bucket, region, session)
 
         logger.info("Installing Python dependencies")
         subprocess.run(
@@ -772,6 +773,7 @@ def main():
         return
 
     thing_name = iot_cfg["thing_name"]
+    os.environ["IOT_THING_NAME"] = thing_name
     cert_path = os.path.expanduser(iot_cfg["cert_path"])
     key_path = os.path.expanduser(iot_cfg["key_path"])
     root_ca_path = os.path.expanduser(iot_cfg["root_ca_path"])
@@ -780,8 +782,11 @@ def main():
         logger.error("IoT certificates not found. Run setup-pi.sh first.")
         return
 
+    # boto3 session backed by IoT Credentials Provider (auto-refreshing)
+    iot_session = iot_credential_provider.create_session(config)
+
     # CloudWatch client for heartbeats
-    cloudwatch = boto3.client("cloudwatch", region_name=upload_cfg["region"])
+    cloudwatch = iot_session.client("cloudwatch", region_name=upload_cfg["region"])
     heartbeat_ref = [health_cfg["interval_seconds"]]  # list so apply_remote_config can update it
 
     # Single MQTT connection for shadow + OTA
@@ -880,6 +885,7 @@ def main():
                             region=upload_cfg["region"],
                             connection=connection,
                             thing_name=thing_name,
+                            session=iot_session,
                         )
                     finally:
                         on_shadow_delta.updating = False
