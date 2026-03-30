@@ -984,7 +984,14 @@ def main():
                     subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
                 except Exception as e:
                     logger.warning(f"Failed to start motion service: {e}")
-                update_shadow(connection, thing_name, {"streaming": False})
+                # Clear both desired and reported to prevent shadow delta loop
+                payload = json.dumps({"state": {
+                    "desired": {"streaming": False},
+                    "reported": {"streaming": False}
+                }})
+                topic = f"$aws/things/{thing_name}/shadow/update"
+                connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
+                logger.info("Streaming stopped — cleared desired and reported shadow state")
 
             # Ship logs on interval
             if now - last_log_ship >= log_ship_interval_ref[0]:
