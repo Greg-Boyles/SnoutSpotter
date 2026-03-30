@@ -897,10 +897,15 @@ def main():
                 if on_shadow_delta.updating:
                     logger.info("Config change received during OTA — will re-apply on next startup via shadow/get")
                 else:
+                    was_shipping = config.get("log_shipping", {}).get("enabled", True)
                     apply_remote_config(pending, config, connection, thing_name, heartbeat_ref)
                     # Pick up log shipping config changes in-process
                     new_log_cfg = config.get("log_shipping", {})
                     log_ship_interval_ref[0] = new_log_cfg.get("batch_interval_seconds", 60)
+                    # Reset log cursor when shipping is enabled so we start from now
+                    if not was_shipping and new_log_cfg.get("enabled", True):
+                        last_log_timestamp[0] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                        logger.info("Log shipping enabled — shipping logs from now")
 
             # Ship logs on interval
             if now - last_log_ship >= log_ship_interval_ref[0]:
