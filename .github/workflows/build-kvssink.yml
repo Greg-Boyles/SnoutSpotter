@@ -69,15 +69,14 @@ jobs:
               make -j$(nproc)
 
               PLUGIN_PATH=$(find . -name "libgstkvssink.so" | head -1)
-              PRODUCER_LIB=$(find . -name "libKinesisVideoProducer.so" | head -1)
-              CPRODUCER_LIB=$(find . -name "libcproducer.so" | head -1)
               if [ -z "$PLUGIN_PATH" ]; then
                 echo "ERROR: libgstkvssink.so not found after build"
                 exit 1
               fi
               echo "==> Built: $PLUGIN_PATH"
-              echo "==> Producer lib: ${PRODUCER_LIB:-not found}"
-              echo "==> C producer lib: ${CPRODUCER_LIB:-not found}"
+
+              echo "==> All built shared libraries:"
+              find . -name "*.so" -o -name "*.so.*" | sort
 
               echo "==> Packaging as .deb"
               ARCH=$(dpkg-architecture -qDEB_HOST_ARCH)
@@ -88,8 +87,14 @@ jobs:
               mkdir -p "${PKG_DIR}/usr/lib/${MULTIARCH}"
 
               cp "$PLUGIN_PATH" "${PKG_DIR}/usr/lib/${MULTIARCH}/gstreamer-1.0/libgstkvssink.so"
-              [ -n "$PRODUCER_LIB" ] && cp "$PRODUCER_LIB" "${PKG_DIR}/usr/lib/${MULTIARCH}/"
-              [ -n "$CPRODUCER_LIB" ] && cp "$CPRODUCER_LIB" "${PKG_DIR}/usr/lib/${MULTIARCH}/"
+
+              # Bundle all KVS shared libraries the plugin depends on
+              for lib in libKinesisVideoProducer libcproducer libkvsCommonCurl; do
+                for f in $(find . -name "${lib}.so*"); do
+                  cp "$f" "${PKG_DIR}/usr/lib/${MULTIARCH}/"
+                  echo "==> Bundled: $(basename $f)"
+                done
+              done
 
               cat > "${PKG_DIR}/DEBIAN/control" <<CTRL
           Package: gstreamer1.0-kvssink
