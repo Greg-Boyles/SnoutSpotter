@@ -90,16 +90,8 @@ export interface LogEntry {
 }
 
 export interface StreamStartResult {
-  channelName: string;
-  channelArn: string;
+  streamName: string;
   region: string;
-  presignedWssUrl?: string;
-  iceServers?: {
-    urls: string[];
-    username: string;
-    credential: string;
-    ttl: number;
-  }[];
 }
 
 export interface SystemHealth {

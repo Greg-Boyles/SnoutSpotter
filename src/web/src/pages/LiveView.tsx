@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import Hls from "hls.js";
 import { VideoOff, Play, Square, AlertCircle } from "lucide-react";
 import { api } from "../api";
-import type { PiDevice, StreamStartResult } from "../types";
+import type { PiDevice } from "../types";
 
-type StreamState = "idle" | "connecting" | "live" | "stopping" | "error";
+type StreamState = "idle" | "starting" | "connecting" | "live" | "stopping" | "error";
 
 export default function LiveView() {
   const [devices, setDevices] = useState<PiDevice[]>([]);
@@ -13,16 +14,13 @@ export default function LiveView() {
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const streamInfoRef = useRef<StreamStartResult | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
   useEffect(() => {
     api.getDevices().then((h) => {
-      setDevices(h.devices.filter((d) => d.online));
-      if (h.devices.filter((d) => d.online).length === 1) {
-        setSelectedDevice(h.devices.filter((d) => d.online)[0].thingName);
-      }
+      const online = h.devices.filter((d) => d.online);
+      setDevices(online);
+      if (online.length === 1) setSelectedDevice(online[0].thingName);
     });
   }, []);
 
@@ -44,32 +42,70 @@ export default function LiveView() {
   }, []);
 
   const cleanup = () => {
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
     }
     if (videoRef.current) {
-      videoRef.current.srcObject = null;
+      videoRef.current.src = "";
     }
   };
 
   const handleStart = async () => {
     if (!selectedDevice) return;
-    setStreamState("connecting");
+    setStreamState("starting");
     setError(null);
 
     try {
-      const result = await api.startStream(selectedDevice);
-      streamInfoRef.current = result;
+      await api.startStream(selectedDevice);
 
-      // Wait for Pi to start streaming
-      await new Promise((r) => setTimeout(r, 3000));
+      // Poll for HLS URL — Pi needs time to start kvssink and push first fragments
+      setStreamState("connecting");
+      let hlsUrl: string | null = null;
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const result = await api.getStreamHlsUrl(selectedDevice);
+          hlsUrl = result.hlsUrl;
+          break;
+        } catch {
+          // Stream not ready yet
+        }
+      }
 
-      await connectWebRTC(result);
+      if (!hlsUrl) {
+        throw new Error("Stream did not become available — check device logs");
+      }
+
+      // Start HLS playback
+      if (videoRef.current) {
+        if (Hls.isSupported()) {
+          const hls = new Hls({
+            liveSyncDurationCount: 1,
+            liveMaxLatencyDurationCount: 3,
+            enableWorker: true,
+          });
+          hlsRef.current = hls;
+          hls.loadSource(hlsUrl);
+          hls.attachMedia(videoRef.current);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            videoRef.current?.play().catch(() => {});
+          });
+          hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal) {
+              setError(`HLS error: ${data.type}`);
+              setStreamState("error");
+            }
+          });
+        } else if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
+          // Safari native HLS
+          videoRef.current.src = hlsUrl;
+          videoRef.current.play().catch(() => {});
+        } else {
+          throw new Error("HLS playback not supported in this browser");
+        }
+      }
+
       setStreamState("live");
       setStartTime(Date.now());
     } catch (e) {
@@ -92,85 +128,6 @@ export default function LiveView() {
     setElapsed(0);
   };
 
-  const connectWebRTC = async (info: StreamStartResult) => {
-    if (!info.presignedWssUrl || !info.iceServers) {
-      throw new Error("Missing presigned WebSocket URL or ICE servers");
-    }
-
-    const iceServers: RTCIceServer[] = [
-      { urls: `stun:stun.kinesisvideo.${info.region}.amazonaws.com:443` },
-      ...info.iceServers.map((s) => ({
-        urls: s.urls,
-        username: s.username,
-        credential: s.credential,
-      })),
-    ];
-
-    const pc = new RTCPeerConnection({ iceServers });
-    pcRef.current = pc;
-
-    pc.ontrack = (event) => {
-      if (videoRef.current && event.streams[0]) {
-        videoRef.current.srcObject = event.streams[0];
-      }
-    };
-
-    return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(info.presignedWssUrl!);
-      wsRef.current = ws;
-
-      const timeout = setTimeout(() => {
-        reject(new Error("WebRTC connection timeout"));
-        ws.close();
-      }, 15000);
-
-      ws.onopen = () => {
-        pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false })
-          .then((offer) => pc.setLocalDescription(offer))
-          .then(() => {
-            ws.send(
-              JSON.stringify({
-                action: "SDP_OFFER",
-                messagePayload: btoa(JSON.stringify(pc.localDescription)),
-                recipientClientId: "master",
-              })
-            );
-          })
-          .catch(reject);
-      };
-
-      ws.onmessage = async (event) => {
-        const msg = JSON.parse(event.data);
-        const payload = JSON.parse(atob(msg.messagePayload));
-
-        if (msg.messageType === "SDP_ANSWER") {
-          await pc.setRemoteDescription(new RTCSessionDescription(payload));
-          clearTimeout(timeout);
-          resolve();
-        } else if (msg.messageType === "ICE_CANDIDATE") {
-          await pc.addIceCandidate(new RTCIceCandidate(payload));
-        }
-      };
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate && ws.readyState === WebSocket.OPEN) {
-          ws.send(
-            JSON.stringify({
-              action: "ICE_CANDIDATE",
-              messagePayload: btoa(JSON.stringify(event.candidate)),
-              recipientClientId: "master",
-            })
-          );
-        }
-      };
-
-      ws.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error("WebSocket connection failed"));
-      };
-    });
-  };
-
   const formatElapsed = (s: number) => {
     const m = Math.floor(s / 60);
     const sec = s % 60;
@@ -187,7 +144,7 @@ export default function LiveView() {
           <select
             value={selectedDevice}
             onChange={(e) => setSelectedDevice(e.target.value)}
-            disabled={streamState !== "idle"}
+            disabled={streamState !== "idle" && streamState !== "error"}
             className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           >
             <option value="">Select a device...</option>
@@ -207,10 +164,10 @@ export default function LiveView() {
               <Play className="w-4 h-4" />
               Start Stream
             </button>
-          ) : streamState === "connecting" ? (
+          ) : streamState === "starting" || streamState === "connecting" ? (
             <button disabled className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg opacity-75">
               <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Connecting...
+              {streamState === "starting" ? "Starting..." : "Waiting for stream..."}
             </button>
           ) : (
             <button
@@ -252,11 +209,13 @@ export default function LiveView() {
           </div>
         )}
 
-        {streamState === "connecting" && (
+        {(streamState === "starting" || streamState === "connecting") && (
           <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
             <div className="text-center text-white">
               <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              <p className="text-sm">Connecting to camera...</p>
+              <p className="text-sm">
+                {streamState === "starting" ? "Starting camera..." : "Waiting for video stream..."}
+              </p>
             </div>
           </div>
         )}
@@ -273,6 +232,12 @@ export default function LiveView() {
           </div>
         )}
       </div>
+
+      {streamState === "live" && (
+        <p className="text-xs text-gray-400 mt-2 text-center">
+          HLS playback — expect 5-10 second latency
+        </p>
+      )}
     </div>
   );
 }

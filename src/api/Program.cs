@@ -4,7 +4,6 @@ using Amazon.DynamoDBv2;
 using Amazon.IoT;
 using Amazon.IotData;
 using Amazon.KinesisVideo;
-using Amazon.KinesisVideoSignalingChannels;
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using SnoutSpotter.Api.Services;
@@ -32,7 +31,6 @@ builder.Services.AddSingleton<IAmazonIotData>(sp =>
 });
 
 builder.Services.AddSingleton<IAmazonKinesisVideo, AmazonKinesisVideoClient>();
-builder.Services.AddSingleton<IAmazonKinesisVideoSignalingChannels, AmazonKinesisVideoSignalingChannelsClient>();
 
 // Application services
 builder.Services.AddSingleton<StreamService>();
