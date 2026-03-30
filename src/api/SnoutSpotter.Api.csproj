@@ -8,6 +8,8 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="3.7.400" />
+    <PackageReference Include="AWSSDK.KinesisVideo" Version="3.7.400" />
+    <PackageReference Include="AWSSDK.KinesisVideoSignalingChannels" Version="3.7.400" />
     <PackageReference Include="AWSSDK.S3" Version="3.7.400" />
     <PackageReference Include="AWSSDK.CloudWatch" Version="3.7.400" />
     <PackageReference Include="AWSSDK.CloudWatchLogs" Version="3.7.400" />
