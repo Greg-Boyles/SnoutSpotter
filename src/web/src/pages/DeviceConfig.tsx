@@ -5,7 +5,7 @@ import { api } from "../api";
 
 const CONFIG_SECTIONS: {
   title: string;
-  keys: { key: string; label: string; type: "int" | "bool"; min?: number; max?: number; unit?: string; description: string }[];
+  keys: { key: string; label: string; type: "int" | "bool" | "str"; min?: number; max?: number; unit?: string; choices?: string[]; description: string }[];
 }[] = [
   {
     title: "Motion Detection",
@@ -40,13 +40,22 @@ const CONFIG_SECTIONS: {
       { key: "health.interval_seconds", label: "Heartbeat interval", type: "int", min: 60, max: 3600, unit: "s", description: "How often the agent reports health to the cloud" },
     ],
   },
+  {
+    title: "Log Shipping",
+    keys: [
+      { key: "log_shipping.enabled", label: "Enabled", type: "bool", description: "Ship device logs to the cloud for viewing in the dashboard" },
+      { key: "log_shipping.batch_interval_seconds", label: "Batch interval", type: "int", min: 30, max: 600, unit: "s", description: "How often logs are batched and sent" },
+      { key: "log_shipping.max_lines_per_batch", label: "Max lines per batch", type: "int", min: 10, max: 200, description: "Maximum number of log lines sent per batch" },
+      { key: "log_shipping.min_level", label: "Minimum level", type: "str", choices: ["DEBUG", "INFO", "WARNING", "ERROR"], description: "Only ship logs at or above this severity" },
+    ],
+  },
 ];
 
 export default function DeviceConfig() {
   const { thingName } = useParams<{ thingName: string }>();
-  const [config, setConfig] = useState<Record<string, number | boolean> | null>(null);
+  const [config, setConfig] = useState<Record<string, number | boolean | string> | null>(null);
   const [configErrors, setConfigErrors] = useState<Record<string, string> | null>(null);
-  const [draft, setDraft] = useState<Record<string, number | boolean>>({});
+  const [draft, setDraft] = useState<Record<string, number | boolean | string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ text: string; error: boolean } | null>(null);
@@ -71,7 +80,7 @@ export default function DeviceConfig() {
     loadConfig();
   }, [thingName]);
 
-  const updateDraft = (key: string, value: number | boolean) => {
+  const updateDraft = (key: string, value: number | boolean | string) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -82,7 +91,7 @@ export default function DeviceConfig() {
 
   const handleSave = async () => {
     if (!thingName || !config) return;
-    const changes: Record<string, number | boolean> = {};
+    const changes: Record<string, number | boolean | string> = {};
     for (const [key, value] of Object.entries(draft)) {
       if (value !== config[key]) {
         changes[key] = value;
@@ -162,7 +171,7 @@ export default function DeviceConfig() {
           <div key={section.title} className="bg-white rounded-xl border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-900 mb-4">{section.title}</h2>
             <div className="space-y-4">
-              {section.keys.map(({ key, label, type, min, max, unit, description }) => {
+              {section.keys.map(({ key, label, type, min, max, unit, choices, description }) => {
                 const fieldError = configErrors?.[key];
                 const value = draft[key];
                 const changed = config && value !== config[key];
@@ -189,6 +198,18 @@ export default function DeviceConfig() {
                               }`}
                             />
                           </button>
+                        ) : type === "str" && choices ? (
+                          <select
+                            value={value as string ?? ""}
+                            onChange={(e) => updateDraft(key, e.target.value)}
+                            className={`px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                              changed ? "border-blue-400 bg-blue-50" : "border-gray-300"
+                            }`}
+                          >
+                            {choices.map((c) => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
                         ) : (
                           <div className="flex items-center gap-1">
                             <input
