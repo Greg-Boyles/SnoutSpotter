@@ -47,8 +47,11 @@ def _get_aws_env(config: dict) -> dict:
     return env
 
 
+MAX_RESTARTS = 5
+
+
 def _launch(cmd: str, env: dict) -> subprocess.Popen:
-    return subprocess.Popen(cmd, shell=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return subprocess.Popen(cmd, shell=True, env=env, stderr=subprocess.PIPE)
 
 
 def main():
@@ -79,6 +82,7 @@ def main():
     env = _get_aws_env(config)
     proc = _launch(cmd, env)
     logger.info(f"GStreamer started (pid={proc.pid}), timeout={timeout}s")
+    restart_count = 0
 
     try:
         while not shutdown:
@@ -97,10 +101,17 @@ def main():
 
             ret = proc.poll()
             if ret is not None:
-                logger.warning(f"GStreamer exited with code {ret}")
+                stderr_output = ""
+                if proc.stderr:
+                    stderr_output = proc.stderr.read().decode(errors="replace")[-500:]
+                logger.warning(f"GStreamer exited with code {ret}: {stderr_output}")
                 if shutdown:
                     break
-                logger.info("Restarting GStreamer pipeline...")
+                restart_count += 1
+                if restart_count > MAX_RESTARTS:
+                    logger.error(f"GStreamer failed {restart_count} times, giving up")
+                    break
+                logger.info(f"Restarting GStreamer pipeline (attempt {restart_count}/{MAX_RESTARTS})...")
                 time.sleep(2)
                 env = _get_aws_env(config)
                 cred_refresh_time = time.time()
