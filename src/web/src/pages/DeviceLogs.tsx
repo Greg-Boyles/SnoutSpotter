@@ -28,6 +28,13 @@ function levelColor(level: string): string {
   }
 }
 
+function formatLogTimestamp(ts: string): string {
+  const d = new Date(ts);
+  if (isNaN(d.getTime()) || d.getFullYear() < 2020) return "Invalid";
+  const isToday = d.toDateString() === new Date().toDateString();
+  return isToday ? d.toLocaleTimeString() : d.toLocaleString();
+}
+
 function levelBg(level: string): string {
   switch (level.toUpperCase()) {
     case "ERROR":
@@ -181,8 +188,8 @@ export default function DeviceLogs() {
                     key={i}
                     className={`border-b border-gray-800 hover:bg-gray-800/50 ${levelBg(entry.level)}`}
                   >
-                    <td className="px-3 py-1 text-gray-500 whitespace-nowrap align-top">
-                      {new Date(entry.timestamp).toLocaleTimeString()}
+                    <td className="px-3 py-1 text-gray-500 whitespace-nowrap align-top" title={entry.timestamp}>
+                      {formatLogTimestamp(entry.timestamp)}
                     </td>
                     <td className={`px-2 py-1 whitespace-nowrap align-top font-medium ${levelColor(entry.level)}`}>
                       {entry.level.padEnd(7)}
