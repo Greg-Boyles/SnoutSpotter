@@ -484,6 +484,60 @@ def install_system_deps(old_version: str | None):
     logger.info("System packages installed successfully")
 
 
+def parse_custom_debs(path: Path) -> list[str]:
+    """Parse custom-debs.txt into a list of S3 paths, ignoring comments and blanks."""
+    if not path.exists():
+        return []
+    entries = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            entries.append(line)
+    return entries
+
+
+def install_custom_debs(old_version: str | None, bucket: str, region: str):
+    """Download and install custom .deb packages from S3 if custom-debs.txt has changed."""
+    new_debs_path = INSTALL_DIR / "custom-debs.txt"
+    new_debs = parse_custom_debs(new_debs_path)
+    if not new_debs:
+        return
+
+    old_debs = []
+    if old_version:
+        old_debs_path = BACKUP_DIR / old_version / "custom-debs.txt"
+        old_debs = parse_custom_debs(old_debs_path)
+
+    if new_debs == old_debs:
+        logger.info("Custom debs unchanged — skipping")
+        return
+
+    s3 = boto3.client("s3", region_name=region)
+    for s3_path in new_debs:
+        deb_name = Path(s3_path).name
+        local_path = Path(f"/tmp/{deb_name}")
+        try:
+            logger.info(f"Downloading s3://{bucket}/{s3_path}")
+            s3.download_file(bucket, s3_path, str(local_path))
+            logger.info(f"Installing {deb_name}")
+            subprocess.run(
+                ["sudo", "dpkg", "-i", str(local_path)],
+                timeout=120, check=True,
+            )
+            logger.info(f"Installed {deb_name} successfully")
+        except subprocess.CalledProcessError:
+            logger.warning(f"dpkg failed for {deb_name} — attempting to fix dependencies")
+            subprocess.run(
+                ["sudo", "apt-get", "install", "-f", "-y", "-qq"],
+                timeout=300, check=True,
+            )
+        except Exception as e:
+            logger.error(f"Failed to install {deb_name}: {e}")
+        finally:
+            if local_path.exists():
+                local_path.unlink()
+
+
 def restart_services():
     for svc in SERVICES:
         try:
@@ -515,6 +569,7 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
             tar.extractall(path=INSTALL_DIR, members=members)
 
         install_system_deps(old_version)
+        install_custom_debs(old_version, bucket, region)
 
         logger.info("Installing Python dependencies")
         subprocess.run(

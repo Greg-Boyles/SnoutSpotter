@@ -5,3 +5,10 @@ python3-opencv
 python3-picamera2
 ffmpeg
 git
+# GStreamer runtime deps for KVS live streaming
+gstreamer1.0-plugins-good
+gstreamer1.0-plugins-bad
+gstreamer1.0-tools
+libssl3
+libcurl4
+liblog4cplus-dev

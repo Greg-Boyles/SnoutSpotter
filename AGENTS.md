@@ -95,6 +95,7 @@ SnoutSpotter/
 │       ├── defaults.yaml              # Default config values (shipped via OTA)
 │       ├── config.yaml                # Device-specific overrides (NOT included in OTA packages)
 │       ├── system-deps.txt            # System apt packages (shipped via OTA, installed during updates)
+│       ├── custom-debs.txt            # Custom .deb packages from S3 (installed during OTA)
 │       ├── setup-pi.sh                # Full automated setup: deps, registration, certs, services
 │       ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
 │       └── version.json               # Current Pi software version (written by OTA agent)
@@ -113,6 +114,7 @@ SnoutSpotter/
     ├── deploy-web.yml                 # npm build → S3 sync → CloudFront invalidation
     ├── deploy-ml.yml                  # Package models → S3
     ├── deploy-okta.yml                # Terraform apply for Okta resources (S3 remote state)
+    ├── build-kvssink.yml              # Build kvssink GStreamer plugin .deb for ARM64 → S3
     └── package-pi.yml                 # Package Pi release → S3, auto-bumps version from manifest
 ```
 
@@ -280,6 +282,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 **Language:** Python 3 with `picamera2`, `opencv`, `boto3`, `awsiotsdk`
 **Config:** Two-layer system — `defaults.yaml` (shipped via OTA, all default values) merged with `config.yaml` (device-specific overrides, excluded from OTA). `config_loader.py` deep-merges them at load time.
 **System deps:** `system-deps.txt` lists apt packages; OTA installs new/changed packages automatically.
+**Custom debs:** `custom-debs.txt` lists S3 paths to `.deb` packages (e.g., the kvssink GStreamer plugin). OTA downloads and installs them via `dpkg -i` when the list changes.
 
 **Services (systemd):**
 
@@ -339,9 +342,10 @@ All main API endpoints require a valid Okta JWT Bearer token.
 4. Backs up current version to `~/.snoutspotter/backups/{version}/`
 5. Extracts package (skipping `config.yaml` to preserve device-specific overrides; `defaults.yaml` is updated)
 6. Installs system apt packages if `system-deps.txt` has changed (compares against backup)
-7. Installs Python dependencies from `requirements.txt`
-8. Restarts services, waits 30s, checks health
-9. Reports `updateStatus: success` or rolls back on failure
+7. Downloads and installs custom `.deb` packages from S3 if `custom-debs.txt` has changed
+8. Installs Python dependencies from `requirements.txt`
+9. Restarts services, waits 30s, checks health
+10. Reports `updateStatus: success` or rolls back on failure
 
 **Pi version bumping:** `package-pi.yml` reads the current version from the S3 manifest and increments the patch number — guarantees a unique version every run.
 
