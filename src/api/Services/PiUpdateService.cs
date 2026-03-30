@@ -178,6 +178,7 @@ public class PiUpdateService
         ["log_shipping.batch_interval_seconds"] = new("int", Min: 30,   Max: 600),
         ["log_shipping.max_lines_per_batch"]    = new("int", Min: 10,   Max: 200),
         ["log_shipping.min_level"]              = new("str", Choices: ["DEBUG", "INFO", "WARNING", "ERROR"]),
+        ["credentials_provider.endpoint"]       = new("str"),
     };
 
     public async Task<Dictionary<string, string>> UpdateConfigAsync(
