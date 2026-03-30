@@ -1,0 +1,121 @@
+name: Build kvssink GStreamer plugin (.deb)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kvs_sdk_version:
+        description: "KVS Producer SDK version tag (e.g., v3.4.1)"
+        required: false
+        default: ""
+      deb_version:
+        description: "Debian package version (e.g., 1.0.0)"
+        required: false
+        default: "1.0.0"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: "eu-west-1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build kvssink in ARM64 container
+        run: |
+          DEB_VERSION="${{ github.event.inputs.deb_version || '1.0.0' }}"
+          KVS_TAG="${{ github.event.inputs.kvs_sdk_version }}"
+
+          docker run --rm --platform linux/arm64 \
+            -v "${{ github.workspace }}/build-output:/output" \
+            -e DEB_VERSION="$DEB_VERSION" \
+            -e KVS_TAG="$KVS_TAG" \
+            arm64v8/debian:bookworm bash -c '
+              set -euo pipefail
+
+              echo "==> Installing build dependencies"
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                build-essential cmake git pkg-config \
+                libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+                gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-tools \
+                libssl-dev libcurl4-openssl-dev liblog4cplus-dev \
+                ca-certificates dpkg-dev
+
+              echo "==> Cloning KVS Producer SDK"
+              cd /tmp
+              git clone https://github.com/awslabs/amazon-kinesis-video-streams-producer-sdk-cpp.git kvs-sdk
+              cd kvs-sdk
+              if [ -n "$KVS_TAG" ]; then
+                git checkout "$KVS_TAG"
+              fi
+
+              echo "==> Building kvssink GStreamer plugin"
+              mkdir build && cd build
+              cmake .. \
+                -DBUILD_GSTREAMER_PLUGIN=ON \
+                -DBUILD_DEPENDENCIES=OFF \
+                -DALIGNED_MEMORY_MODEL=ON \
+                -DCMAKE_BUILD_TYPE=Release
+              make -j$(nproc)
+
+              PLUGIN_PATH=$(find . -name "libgstkvssink.so" | head -1)
+              if [ -z "$PLUGIN_PATH" ]; then
+                echo "ERROR: libgstkvssink.so not found after build"
+                exit 1
+              fi
+              echo "==> Built: $PLUGIN_PATH"
+
+              echo "==> Packaging as .deb"
+              ARCH=$(dpkg-architecture -qDEB_HOST_ARCH)
+              MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
+              PKG_DIR="/tmp/kvssink_${DEB_VERSION}_${ARCH}"
+              mkdir -p "${PKG_DIR}/DEBIAN"
+              mkdir -p "${PKG_DIR}/usr/lib/${MULTIARCH}/gstreamer-1.0"
+
+              cp "$PLUGIN_PATH" "${PKG_DIR}/usr/lib/${MULTIARCH}/gstreamer-1.0/libgstkvssink.so"
+
+              cat > "${PKG_DIR}/DEBIAN/control" <<CTRL
+          Package: gstreamer1.0-kvssink
+          Version: ${DEB_VERSION}
+          Architecture: ${ARCH}
+          Maintainer: SnoutSpotter <noreply@snoutspotter.dev>
+          Description: Amazon Kinesis Video Streams GStreamer plugin (kvssink)
+           GStreamer sink element for streaming video to AWS Kinesis Video Streams.
+           Built from the KVS C++ Producer SDK.
+          Depends: gstreamer1.0-plugins-base, libssl3, libcurl4, liblog4cplus-dev
+          Section: libs
+          Priority: optional
+          CTRL
+
+              dpkg-deb --build "$PKG_DIR"
+
+              cp "${PKG_DIR}.deb" /output/
+              echo "==> Package created: kvssink_${DEB_VERSION}_${ARCH}.deb"
+            '
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload .deb to S3
+        run: |
+          DEB_FILE=$(ls build-output/*.deb | head -1)
+          DEB_NAME=$(basename "$DEB_FILE")
+          BUCKET=${{ secrets.DATA_BUCKET_NAME }}
+
+          echo "Uploading $DEB_NAME to s3://${BUCKET}/releases/pi/debs/"
+          aws s3 cp "$DEB_FILE" "s3://${BUCKET}/releases/pi/debs/${DEB_NAME}"
+
+          echo "==> Uploaded: s3://${BUCKET}/releases/pi/debs/${DEB_NAME}"
