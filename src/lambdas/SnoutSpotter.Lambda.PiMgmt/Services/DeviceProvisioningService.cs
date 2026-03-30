@@ -63,11 +63,17 @@ public class DeviceProvisioningService
                     ThingName = thingName
                 });
 
-                // Get IoT endpoint
-                var endpointResponse = await _iot.DescribeEndpointAsync(new DescribeEndpointRequest
+                // Get IoT endpoints
+                var dataEndpointTask = _iot.DescribeEndpointAsync(new DescribeEndpointRequest
                 {
                     EndpointType = "iot:Data-ATS"
                 });
+                var credEndpointTask = _iot.DescribeEndpointAsync(new DescribeEndpointRequest
+                {
+                    EndpointType = "iot:CredentialProvider"
+                });
+
+                await Task.WhenAll(dataEndpointTask, credEndpointTask);
 
                 return new DeviceRegistrationResult
                 {
@@ -75,7 +81,8 @@ public class DeviceProvisioningService
                     CertificatePem = certificatePem,
                     PrivateKey = privateKey,
                     CertificateArn = certificateArn,
-                    IoTEndpoint = endpointResponse.EndpointAddress,
+                    IoTEndpoint = dataEndpointTask.Result.EndpointAddress,
+                    CredentialProviderEndpoint = credEndpointTask.Result.EndpointAddress,
                     RootCaUrl = "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
                 };
             }
@@ -188,5 +195,6 @@ public class DeviceRegistrationResult
     public required string PrivateKey { get; init; }
     public required string CertificateArn { get; init; }
     public required string IoTEndpoint { get; init; }
+    public required string CredentialProviderEndpoint { get; init; }
     public required string RootCaUrl { get; init; }
 }
