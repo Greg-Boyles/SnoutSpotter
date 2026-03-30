@@ -121,6 +121,12 @@ public class PiUpdateService
             if (reported.TryGetProperty("configErrors", out var ce))
                 state.ConfigErrors = JsonSerializer.Deserialize<Dictionary<string, string>>(ce.GetRawText());
 
+            if (reported.TryGetProperty("logShipping", out var ls))
+                state.LogShipping = ls.GetBoolean();
+
+            if (reported.TryGetProperty("logShippingError", out var lse))
+                state.LogShippingError = lse.GetString();
+
             return state;
         }
         catch (Amazon.IotData.Model.ResourceNotFoundException)
@@ -156,18 +162,22 @@ public class PiUpdateService
         }
     }
 
-    private record ConfigKeySpec(string Type, int? Min = null, int? Max = null, bool Odd = false);
+    private record ConfigKeySpec(string Type, int? Min = null, int? Max = null, bool Odd = false, string[]? Choices = null);
 
     private static readonly Dictionary<string, ConfigKeySpec> ConfigurableKeys = new()
     {
-        ["motion.threshold"]            = new("int", Min: 500,  Max: 50000),
-        ["motion.blur_kernel"]          = new("int", Min: 3,    Max: 51,   Odd: true),
-        ["camera.detection_fps"]        = new("int", Min: 1,    Max: 15),
-        ["recording.max_clip_length"]   = new("int", Min: 10,   Max: 300),
-        ["recording.post_motion_buffer"]= new("int", Min: 3,    Max: 60),
-        ["upload.max_retries"]          = new("int", Min: 1,    Max: 20),
-        ["upload.delete_after_upload"]  = new("bool"),
-        ["health.interval_seconds"]     = new("int", Min: 60,   Max: 3600),
+        ["motion.threshold"]                    = new("int", Min: 500,  Max: 50000),
+        ["motion.blur_kernel"]                  = new("int", Min: 3,    Max: 51,   Odd: true),
+        ["camera.detection_fps"]                = new("int", Min: 1,    Max: 15),
+        ["recording.max_clip_length"]           = new("int", Min: 10,   Max: 300),
+        ["recording.post_motion_buffer"]        = new("int", Min: 3,    Max: 60),
+        ["upload.max_retries"]                  = new("int", Min: 1,    Max: 20),
+        ["upload.delete_after_upload"]          = new("bool"),
+        ["health.interval_seconds"]             = new("int", Min: 60,   Max: 3600),
+        ["log_shipping.enabled"]                = new("bool"),
+        ["log_shipping.batch_interval_seconds"] = new("int", Min: 30,   Max: 600),
+        ["log_shipping.max_lines_per_batch"]    = new("int", Min: 10,   Max: 200),
+        ["log_shipping.min_level"]              = new("str", Choices: ["DEBUG", "INFO", "WARNING", "ERROR"]),
     };
 
     public async Task<Dictionary<string, string>> UpdateConfigAsync(
@@ -190,6 +200,21 @@ public class PiUpdateService
                     errors[key] = $"{key} must be a boolean";
                 else
                     valid[key] = value;
+            }
+            else if (spec.Type == "str")
+            {
+                if (value.ValueKind != JsonValueKind.String)
+                {
+                    errors[key] = $"{key} must be a string";
+                }
+                else if (spec.Choices != null && !spec.Choices.Contains(value.GetString()))
+                {
+                    errors[key] = $"{key} must be one of: {string.Join(", ", spec.Choices)}";
+                }
+                else
+                {
+                    valid[key] = value;
+                }
             }
             else // int
             {
@@ -280,6 +305,8 @@ public class PiShadowState
     public SystemInfo? System { get; set; }
     public Dictionary<string, JsonElement>? Config { get; set; }
     public Dictionary<string, string>? ConfigErrors { get; set; }
+    public bool? LogShipping { get; set; }
+    public string? LogShippingError { get; set; }
 }
 
 public record CameraStatus(
