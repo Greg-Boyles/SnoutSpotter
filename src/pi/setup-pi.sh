@@ -19,13 +19,10 @@ echo ""
 read -rp "S3 Bucket Name (e.g. snout-spotter-490204853569): " BUCKET_NAME
 read -rp "AWS Region [eu-west-1]: " AWS_REGION
 AWS_REGION="${AWS_REGION:-eu-west-1}"
-read -rp "AWS Access Key ID: " AWS_ACCESS_KEY
-read -rsp "AWS Secret Access Key: " AWS_SECRET_KEY
-echo ""
 read -rp "Pi Management API URL (e.g. https://xxx.execute-api.eu-west-1.amazonaws.com): " PI_MGMT_URL
 read -rp "Device Name (e.g. front-door, garage): " DEVICE_NAME
 
-if [[ -z "$BUCKET_NAME" || -z "$AWS_ACCESS_KEY" || -z "$AWS_SECRET_KEY" || -z "$PI_MGMT_URL" || -z "$DEVICE_NAME" ]]; then
+if [[ -z "$BUCKET_NAME" || -z "$PI_MGMT_URL" || -z "$DEVICE_NAME" ]]; then
     echo "ERROR: All fields are required."
     exit 1
 fi
@@ -59,11 +56,12 @@ fi
 # Extract values from JSON response
 THING_NAME=$(echo "$REGISTRATION_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['thingName'])" 2>/dev/null || true)
 IOT_ENDPOINT=$(echo "$REGISTRATION_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['ioTEndpoint'])" 2>/dev/null || true)
+CREDENTIAL_ENDPOINT=$(echo "$REGISTRATION_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['credentialProviderEndpoint'])" 2>/dev/null || true)
 CERTIFICATE_PEM=$(echo "$REGISTRATION_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['certificatePem'])" 2>/dev/null || true)
 PRIVATE_KEY=$(echo "$REGISTRATION_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['privateKey'])" 2>/dev/null || true)
 ROOT_CA_URL=$(echo "$REGISTRATION_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['rootCaUrl'])" 2>/dev/null || true)
 
-if [[ -z "$THING_NAME" || -z "$IOT_ENDPOINT" || -z "$CERTIFICATE_PEM" || -z "$PRIVATE_KEY" ]]; then
+if [[ -z "$THING_NAME" || -z "$IOT_ENDPOINT" || -z "$CREDENTIAL_ENDPOINT" || -z "$CERTIFICATE_PEM" || -z "$PRIVATE_KEY" ]]; then
     echo "ERROR: Device registration failed or returned incomplete data."
     echo "Response: $REGISTRATION_RESPONSE"
     exit 1
@@ -81,24 +79,7 @@ chmod 600 "$HOME/.snoutspotter/certs/certificate.pem.crt" "$HOME/.snoutspotter/c
 # Download Amazon Root CA
 curl -s -o "$HOME/.snoutspotter/certs/AmazonRootCA1.pem" "$ROOT_CA_URL"
 
-echo "[6/7] Configuring AWS credentials..."
-mkdir -p ~/.aws
-
-cat > ~/.aws/credentials << EOF
-[default]
-aws_access_key_id = $AWS_ACCESS_KEY
-aws_secret_access_key = $AWS_SECRET_KEY
-EOF
-
-cat > ~/.aws/config << EOF
-[default]
-region = $AWS_REGION
-output = json
-EOF
-
-chmod 600 ~/.aws/credentials ~/.aws/config
-
-echo "[7/7] Writing config.yaml (device-specific overrides)..."
+echo "[6/7] Writing config.yaml (device-specific overrides)..."
 cat > "$SCRIPT_DIR/config.yaml" << EOF
 # Device-specific overrides (not shipped via OTA).
 # All other settings come from defaults.yaml.
@@ -109,6 +90,9 @@ recording:
 upload:
   bucket_name: "$BUCKET_NAME"
   region: $AWS_REGION
+
+credentials_provider:
+  endpoint: "$CREDENTIAL_ENDPOINT"
 
 iot:
   endpoint: "$IOT_ENDPOINT"
@@ -125,7 +109,7 @@ sed -i "s|/home/pi/snout-spotter/uploads.db|$HOME/.snoutspotter/uploads.db|" "$S
 mkdir -p "$HOME/clips"
 mkdir -p "$HOME/.snoutspotter"
 
-echo "[8/8] Installing systemd services..."
+echo "[7/7] Installing systemd services..."
 
 for SERVICE_NAME in motion uploader agent; do
     case "$SERVICE_NAME" in
@@ -192,6 +176,7 @@ echo "  Bucket:       $BUCKET_NAME"
 echo "  Region:       $AWS_REGION"
 echo "  Thing Name:   $THING_NAME"
 echo "  IoT Endpoint: $IOT_ENDPOINT"
+echo "  Cred Endpoint:$CREDENTIAL_ENDPOINT"
 echo "  Clips:        $HOME/clips"
 echo "  Certs:        $HOME/.snoutspotter/certs"
 echo ""
