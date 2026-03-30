@@ -36,19 +36,28 @@ def _fetch_credentials(endpoint: str, role_alias: str, cert_path: str, key_path:
     }
 
 
+def _derive_credential_endpoint(iot_data_endpoint: str) -> str:
+    """Derive the credential provider endpoint from the IoT data endpoint.
+
+    Data:       xxxxx-ats.iot.eu-west-1.amazonaws.com
+    Credential: xxxxx.credentials.iot.eu-west-1.amazonaws.com
+    """
+    return iot_data_endpoint.replace("-ats.iot.", ".credentials.iot.")
+
+
 def create_session(config: dict) -> boto3.Session:
     """Create a boto3 Session backed by auto-refreshing IoT credentials."""
     iot_cfg = config["iot"]
     cred_cfg = config.get("credentials_provider", {})
 
-    endpoint = cred_cfg.get("endpoint", "")
+    endpoint = cred_cfg.get("endpoint", "") or _derive_credential_endpoint(iot_cfg.get("endpoint", ""))
     role_alias = cred_cfg.get("role_alias", "snoutspotter-pi-role-alias")
     cert_path = os.path.expanduser(iot_cfg["cert_path"])
     key_path = os.path.expanduser(iot_cfg["key_path"])
     ca_path = os.path.expanduser(iot_cfg["root_ca_path"])
 
     if not endpoint:
-        raise ValueError("credentials_provider.endpoint not configured in config.yaml")
+        raise ValueError("Cannot determine credentials provider endpoint — set credentials_provider.endpoint or iot.endpoint")
 
     def refresh():
         with _lock:
