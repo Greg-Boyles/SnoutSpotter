@@ -24,33 +24,39 @@ public class LogService
     {
         var query = BuildQuery(thingName, levelFilter, serviceFilter, limit);
 
-        var startResponse = await _logsClient.StartQueryAsync(new StartQueryRequest
+        try
         {
-            LogGroupName = _logGroupName,
-            StartTime = DateTimeOffset.UtcNow.AddMinutes(-minutes).ToUnixTimeSeconds(),
-            EndTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            QueryString = query,
-            Limit = limit
-        });
-
-        // Poll for results with timeout
-        var queryId = startResponse.QueryId;
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-
-        while (DateTime.UtcNow < deadline)
-        {
-            var results = await _logsClient.GetQueryResultsAsync(new GetQueryResultsRequest
+            var startResponse = await _logsClient.StartQueryAsync(new StartQueryRequest
             {
-                QueryId = queryId
+                LogGroupName = _logGroupName,
+                StartTime = DateTimeOffset.UtcNow.AddMinutes(-minutes).ToUnixTimeSeconds(),
+                EndTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                QueryString = query,
+                Limit = limit
             });
 
-            if (results.Status == QueryStatus.Complete)
-                return ParseResults(results.Results, thingName, levelFilter, serviceFilter, limit);
+            var queryId = startResponse.QueryId;
+            var deadline = DateTime.UtcNow.AddSeconds(10);
 
-            if (results.Status == QueryStatus.Failed || results.Status == QueryStatus.Cancelled)
-                break;
+            while (DateTime.UtcNow < deadline)
+            {
+                var results = await _logsClient.GetQueryResultsAsync(new GetQueryResultsRequest
+                {
+                    QueryId = queryId
+                });
 
-            await Task.Delay(500);
+                if (results.Status == QueryStatus.Complete)
+                    return ParseResults(results.Results, limit);
+
+                if (results.Status == QueryStatus.Failed || results.Status == QueryStatus.Cancelled)
+                    break;
+
+                await Task.Delay(500);
+            }
+        }
+        catch (ResourceNotFoundException)
+        {
+            // Log stream doesn't exist yet (new device, no logs shipped yet)
         }
 
         return new List<LogEntry>();
@@ -58,19 +64,22 @@ public class LogService
 
     private static string BuildQuery(string thingName, string? levelFilter, string? serviceFilter, int limit)
     {
-        // IoT Rule writes the full MQTT JSON payload as @message
-        // We filter by thingName in the JSON and sort by ingestion time
-        return $@"fields @timestamp, @message
-            | sort @timestamp desc
-            | limit {limit}";
+        // Lambda writes individual JSON log events to per-device streams:
+        // {"ts": "...", "level": "INFO", "service": "motion", "msg": "..."}
+        var query = $"fields @timestamp, @message | filter @logStream = '{thingName}'";
+
+        if (levelFilter != null)
+            query += $" | filter @message like /\"level\":\"{levelFilter}\"/";
+
+        if (serviceFilter != null)
+            query += $" | filter @message like /\"service\":\"[^\"]*{serviceFilter}/";
+
+        query += $" | sort @timestamp desc | limit {limit}";
+
+        return query;
     }
 
-    private static List<LogEntry> ParseResults(
-        List<List<ResultField>> results,
-        string thingName,
-        string? levelFilter,
-        string? serviceFilter,
-        int limit)
+    private static List<LogEntry> ParseResults(List<List<ResultField>> results, int limit)
     {
         var entries = new List<LogEntry>();
 
@@ -85,31 +94,15 @@ public class LogService
                 var doc = JsonDocument.Parse(message);
                 var root = doc.RootElement;
 
-                // Filter by thingName
-                if (root.TryGetProperty("thingName", out var tn) && tn.GetString() != thingName)
-                    continue;
+                var ts = root.TryGetProperty("ts", out var t) ? t.GetString() ?? "" : "";
+                var level = root.TryGetProperty("level", out var l) ? l.GetString() ?? "" : "";
+                var service = root.TryGetProperty("service", out var s) ? s.GetString() ?? "" : "";
+                var msg = root.TryGetProperty("msg", out var m) ? m.GetString() ?? "" : "";
 
-                if (!root.TryGetProperty("logs", out var logsArray))
-                    continue;
+                entries.Add(new LogEntry(ts, level, service, msg));
 
-                foreach (var logEntry in logsArray.EnumerateArray())
-                {
-                    var level = logEntry.TryGetProperty("level", out var l) ? l.GetString() ?? "" : "";
-                    var service = logEntry.TryGetProperty("service", out var s) ? s.GetString() ?? "" : "";
-                    var ts = logEntry.TryGetProperty("ts", out var t) ? t.GetString() ?? "" : "";
-                    var msg = logEntry.TryGetProperty("msg", out var m) ? m.GetString() ?? "" : "";
-
-                    if (levelFilter != null && !string.Equals(level, levelFilter, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (serviceFilter != null && !service.Contains(serviceFilter, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    entries.Add(new LogEntry(ts, level, service, msg));
-
-                    if (entries.Count >= limit)
-                        return entries;
-                }
+                if (entries.Count >= limit)
+                    return entries;
             }
             catch (JsonException)
             {
