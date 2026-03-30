@@ -51,7 +51,29 @@ MAX_RESTARTS = 5
 
 
 def _launch(cmd: str, env: dict) -> subprocess.Popen:
-    return subprocess.Popen(cmd, shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    # Use preexec_fn to create a new process group so we can kill the
+    # entire group (shell + gst-launch child) on shutdown
+    return subprocess.Popen(
+        cmd, shell=True, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        preexec_fn=os.setsid,
+    )
+
+
+def _kill_proc(proc: subprocess.Popen):
+    """Kill the process and its entire process group."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+        proc.wait()
 
 
 def main():
@@ -123,12 +145,7 @@ def main():
     finally:
         if proc.poll() is None:
             logger.info("Stopping GStreamer pipeline...")
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+            _kill_proc(proc)
         logger.info("Stream manager exiting")
 
 
