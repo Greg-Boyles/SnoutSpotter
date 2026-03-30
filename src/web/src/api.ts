@@ -74,9 +74,9 @@ export const api = {
     postJson<{ message: string; deviceCount: number; version: string }>("/pi/update-all", version ? { version } : {}),
 
   getPiConfig: (thingName: string) =>
-    fetchJson<{ config: Record<string, number | boolean> | null; configErrors: Record<string, string> | null }>(`/pi/${thingName}/config`),
+    fetchJson<{ config: Record<string, number | boolean | string> | null; configErrors: Record<string, string> | null }>(`/pi/${thingName}/config`),
 
-  updatePiConfig: (thingName: string, changes: Record<string, number | boolean>) =>
+  updatePiConfig: (thingName: string, changes: Record<string, number | boolean | string>) =>
     postJson<{ message: string; errors: Record<string, string> }>(`/pi/${thingName}/config`, changes),
 
   getDeviceLogs: (thingName: string, minutes = 60, level?: string, service?: string) => {
