@@ -32,6 +32,22 @@ public class StreamController : ControllerBase
         }
     }
 
+    [HttpGet("{thingName}/hls")]
+    public async Task<ActionResult> GetHlsUrl(string thingName)
+    {
+        try
+        {
+            var url = await _streamService.GetHlsUrlAsync(thingName);
+            if (url == null)
+                return NotFound(new { error = "Stream not available yet — Pi may still be starting" });
+            return Ok(new { hlsUrl = url });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
     [HttpPost("{thingName}/stop")]
     public async Task<ActionResult> StopStream(string thingName)
     {

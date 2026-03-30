@@ -94,6 +94,9 @@ export const api = {
   startStream: (thingName: string) =>
     postJson<StreamStartResult>(`/stream/${thingName}/start`),
 
+  getStreamHlsUrl: (thingName: string) =>
+    fetchJson<{ hlsUrl: string }>(`/stream/${thingName}/hls`),
+
   stopStream: (thingName: string) =>
     postJson<{ message: string }>(`/stream/${thingName}/stop`),
 

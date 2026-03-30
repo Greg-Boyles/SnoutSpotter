@@ -21,8 +21,8 @@
   "dependencies": {
     "@okta/okta-auth-js": "^8.0.0",
     "@okta/okta-react": "^6.11.0",
-    "amazon-kinesis-video-streams-webrtc": "^2.6.1",
     "date-fns": "^4.1.0",
+    "hls.js": "^1.6.15",
     "lucide-react": "^0.575.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

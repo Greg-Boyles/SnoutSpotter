@@ -94,20 +94,17 @@ public class ApiStack : Stack
             Resources = new[] { "*" }
         }));
 
-        // KVS permissions for live streaming (manage signaling channels, connect as viewer)
+        // KVS permissions for live streaming (HLS playback from kvssink streams)
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
             Actions = new[]
             {
-                "kinesisvideo:CreateSignalingChannel",
-                "kinesisvideo:DeleteSignalingChannel",
-                "kinesisvideo:DescribeSignalingChannel",
-                "kinesisvideo:GetSignalingChannelEndpoint",
-                "kinesisvideo:ConnectAsViewer",
-                "kinesisvideo:GetIceServerConfig",
+                "kinesisvideo:DescribeStream",
+                "kinesisvideo:GetDataEndpoint",
+                "kinesisvideo:GetHLSStreamingSessionURL",
             },
-            Resources = new[] { $"arn:aws:kinesisvideo:{Region}:{Account}:channel/snoutspotter-*" }
+            Resources = new[] { $"arn:aws:kinesisvideo:{Region}:{Account}:stream/snoutspotter-*" }
         }));
 
         // HTTP API Gateway

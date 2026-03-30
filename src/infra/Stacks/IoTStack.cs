@@ -59,29 +59,18 @@ public class IoTStack : Stack
             }
         }));
 
-        // KVS permissions for live streaming
+        // KVS permissions for live streaming (kvssink pushes media to a KVS stream)
         piCredentialsRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
         {
             Actions = new[]
             {
-                // Stream permissions (kvssink pushes media to a KVS stream)
                 "kinesisvideo:CreateStream",
                 "kinesisvideo:DescribeStream",
                 "kinesisvideo:PutMedia",
                 "kinesisvideo:GetDataEndpoint",
                 "kinesisvideo:TagStream",
-                // Signaling channel permissions (WebRTC)
-                "kinesisvideo:ConnectAsMaster",
-                "kinesisvideo:GetSignalingChannelEndpoint",
-                "kinesisvideo:CreateSignalingChannel",
-                "kinesisvideo:DescribeSignalingChannel",
-                "kinesisvideo:GetIceServerConfig",
             },
-            Resources = new[]
-            {
-                $"arn:aws:kinesisvideo:{Region}:{Account}:stream/snoutspotter-*",
-                $"arn:aws:kinesisvideo:{Region}:{Account}:channel/snoutspotter-*"
-            }
+            Resources = new[] { $"arn:aws:kinesisvideo:{Region}:{Account}:stream/snoutspotter-*" }
         }));
 
         // IoT Role Alias — bridge between IoT X.509 certs and IAM temporary credentials
