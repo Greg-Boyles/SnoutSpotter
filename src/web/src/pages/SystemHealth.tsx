@@ -68,12 +68,35 @@ export default function SystemHealthPage() {
   const [copied, setCopied] = useState<string | null>(null);
 
   const refreshHealth = () =>
-    api.getHealth().then(setHealth).catch(console.error);
+    Promise.all([api.getHealth(), api.getDevices()])
+      .then(([health, devices]) => {
+        const deviceMap = new Map(
+          devices.devices.map((d) => [d.thingName, d])
+        );
+        setHealth({
+          ...health,
+          devices: health.devices.map((d) => ({
+            ...d,
+            ...deviceMap.get(d.thingName),
+          })),
+        });
+      })
+      .catch(console.error);
 
   useEffect(() => {
-    api
-      .getHealth()
-      .then(setHealth)
+    Promise.all([api.getHealth(), api.getDevices()])
+      .then(([health, devices]) => {
+        const deviceMap = new Map(
+          devices.devices.map((d) => [d.thingName, d])
+        );
+        setHealth({
+          ...health,
+          devices: health.devices.map((d) => ({
+            ...d,
+            ...deviceMap.get(d.thingName),
+          })),
+        });
+      })
       .catch((e: Error) => setError(e.message));
 
     const interval = setInterval(refreshHealth, 30_000);
