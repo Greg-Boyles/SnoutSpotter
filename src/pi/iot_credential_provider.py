@@ -36,6 +36,27 @@ def _fetch_credentials(endpoint: str, role_alias: str, cert_path: str, key_path:
     }
 
 
+def get_raw_credentials(config: dict) -> dict | None:
+    """Fetch raw credentials dict with accessKeyId, secretAccessKey, sessionToken, expiration.
+
+    Returns None if the credential provider endpoint is not configured.
+    """
+    iot_cfg = config["iot"]
+    cred_cfg = config.get("credentials_provider", {})
+
+    endpoint = cred_cfg.get("endpoint", "")
+    role_alias = cred_cfg.get("role_alias", "snoutspotter-pi-role-alias")
+
+    if not endpoint:
+        return None
+
+    cert_path = os.path.expanduser(iot_cfg["cert_path"])
+    key_path = os.path.expanduser(iot_cfg["key_path"])
+    ca_path = os.path.expanduser(iot_cfg["root_ca_path"])
+
+    return _fetch_credentials(endpoint, role_alias, cert_path, key_path, ca_path)
+
+
 def create_session(config: dict) -> boto3.Session:
     """Create a boto3 Session backed by auto-refreshing IoT credentials.
 
