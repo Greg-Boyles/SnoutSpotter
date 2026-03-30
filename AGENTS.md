@@ -45,8 +45,8 @@ SnoutSpotter/
 │   │   ├── Program.cs                 # Stack instantiation and wiring
 │   │   ├── cdk.json                   # CDK context (oktaIssuer, allowedOrigin)
 │   │   └── Stacks/
-│   │       ├── CoreStack.cs           # S3, DynamoDB, ECR repos, IAM
-│   │       ├── IoTStack.cs            # IoT Thing Group, IoT Policy
+│   │       ├── CoreStack.cs           # S3, DynamoDB, ECR repos
+│   │       ├── IoTStack.cs            # IoT Thing Group, IoT Policy, Credentials Provider Role Alias
 │   │       ├── IngestStack.cs         # IngestClip Lambda + S3 event trigger
 │   │       ├── InferenceStack.cs      # RunInference Lambda + S3 event trigger
 │   │       ├── ApiStack.cs            # API Lambda + HTTP API Gateway + Okta JWT env vars
@@ -88,6 +88,7 @@ SnoutSpotter/
 │   │
 │   └── pi/                            # Raspberry Pi Python scripts
 │       ├── agent.py                   # Merged agent: heartbeat + IoT shadow + OTA (single MQTT connection)
+│       ├── iot_credential_provider.py # IoT Credentials Provider: temp STS creds via X.509 certs
 │       ├── motion_detector.py         # Frame-differencing motion detection + recording + status file
 │       ├── uploader.py                # S3 multipart upload with retry + status file
 │       ├── config_loader.py           # Shared config loading: deep-merges defaults.yaml + config.yaml
@@ -96,7 +97,7 @@ SnoutSpotter/
 │       ├── config.yaml                # Device-specific overrides (NOT included in OTA packages)
 │       ├── system-deps.txt            # System apt packages (shipped via OTA, installed during updates)
 │       ├── custom-debs.txt            # Custom .deb packages from S3 (installed during OTA)
-│       ├── setup-pi.sh                # Full automated setup: deps, registration, certs, services
+│       ├── setup-pi.sh                # Full automated setup: deps, registration, certs, credential provider, services
 │       ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
 │       └── version.json               # Current Pi software version (written by OTA agent)
 │
@@ -165,7 +166,7 @@ SnoutSpotter/
 ### Multi-Pi Device Management
 
 - Devices are registered as IoT Things in the `snoutspotter-pis` thing group
-- Each device gets unique X.509 certificates for MQTT connectivity
+- Each device gets unique X.509 certificates for MQTT connectivity and AWS credential exchange via IoT Credentials Provider
 - Device shadows track: version, hostname, heartbeat, update status, service states, camera health, system metrics, upload stats, log shipping status
 - OTA updates triggered by writing `desired.version` to the device shadow
 - Pi agent requests current shadow on startup to catch any pending delta (not just push notifications)
@@ -186,6 +187,14 @@ SnoutSpotter/
 - `Program.cs` configures `AddAuthentication().AddJwtBearer()` with Okta issuer/audience
 - **Pi Management API has no auth** — Pi devices cannot authenticate to Okta
 
+### Pi Devices (IoT Credentials Provider)
+- Pi devices use X.509 certificates to obtain temporary STS credentials via the IoT Credentials Provider
+- `iot_credential_provider.py` calls the credential provider HTTPS endpoint with the device cert, returns a `boto3.Session` with auto-refreshing `RefreshableCredentials`
+- Used by `uploader.py` (S3 PutObject) and `agent.py` (CloudWatch PutMetricData, S3 GetObject for OTA)
+- Falls back to default boto3 credentials if `credentials_provider.endpoint` is not configured
+- The credential provider endpoint is returned during device registration and stored in `config.yaml`
+- Can also be pushed to existing devices via the shadow config system (`credentials_provider.endpoint` key)
+
 ### Okta Terraform resources
 - `okta_app_oauth` — SPA app (PKCE, `authorization_code`)
 - `okta_group` — `SnoutSpotter Users` (add users here to grant access)
@@ -202,7 +211,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 **Stack dependency order:**
 1. **CoreStack** — foundational resources (no dependencies)
-2. **IoTStack** — IoT resources (no dependencies)
+2. **IoTStack** — IoT resources (depends on CoreStack for DataBucket)
 3. **IngestStack** — depends on CoreStack
 4. **InferenceStack** — depends on CoreStack
 5. **ApiStack** — depends on CoreStack, reads CDK context for `oktaIssuer`/`allowedOrigin`
@@ -215,8 +224,8 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips`, 4 ECR repos |
-| IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips`, 5 ECR repos |
+| IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
@@ -253,7 +262,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 ### Pi Management API (`snout-spotter-pi-mgmt` Lambda — no auth)
 
 - `GET /api/devices` — list registered device thing names
-- `POST /api/devices/register` — register new device (`{"name": "garden"}`) → returns certs
+- `POST /api/devices/register` — register new device (`{"name": "garden"}`) → returns certs, IoT endpoint, credential provider endpoint
 - `DELETE /api/devices/{thingName}` — deregister device
 
 ---
@@ -430,3 +439,5 @@ All main API endpoints require a valid Okta JWT Bearer token.
 10. **Lambda Web Adapter** requires `AWS_LWA_PORT=8080` environment variable.
 
 11. **ECR repos are created in CoreStack** — must exist before any image build. Deploy CoreStack first.
+
+12. **IoT Credentials Provider endpoint cannot be derived from the data endpoint** — they have different prefixes. The credential provider endpoint must be obtained via `aws iot describe-endpoint --endpoint-type iot:CredentialProvider` or from the PiMgmt registration response. It is stored in `config.yaml` under `credentials_provider.endpoint`.
