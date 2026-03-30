@@ -154,14 +154,19 @@ SnoutSpotter/
 [Pi snoutspotter-agent] ◄──MQTT──► [IoT Core]
     │ Single connection handles:
     ├── Shadow reporting (heartbeat, camera, system health)
-    └── OTA updates (watches shadow delta, self-updates)
+    ├── OTA updates (watches shadow delta, self-updates)
+    └── Log shipping (batches journald logs → snoutspotter/{thingName}/logs topic)
+                                            ↓ (IoT Rule)
+                                   CloudWatch Logs (/snoutspotter/pi-logs)
+                                            ↓
+                                   [API Lambda] ──► [React Dashboard: Device Logs page]
 ```
 
 ### Multi-Pi Device Management
 
 - Devices are registered as IoT Things in the `snoutspotter-pis` thing group
 - Each device gets unique X.509 certificates for MQTT connectivity
-- Device shadows track: version, hostname, heartbeat, update status, service states, camera health, system metrics, upload stats
+- Device shadows track: version, hostname, heartbeat, update status, service states, camera health, system metrics, upload stats, log shipping status
 - OTA updates triggered by writing `desired.version` to the device shadow
 - Pi agent requests current shadow on startup to catch any pending delta (not just push notifications)
 - `config.yaml` is excluded from OTA packages — device-specific settings are preserved across updates
@@ -211,7 +216,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 | Stack | Resources |
 |-------|-----------|
 | CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips`, 4 ECR repos |
-| IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy` |
+| IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
@@ -243,6 +248,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/pi/{thingName}/status` — single device status
 - `POST /api/pi/{thingName}/update` — trigger OTA update for one device
 - `POST /api/pi/update-all` — trigger OTA update for all devices
+- `GET /api/pi/{thingName}/logs?minutes=60&level=INFO&service=motion&limit=200` — query device logs from CloudWatch
 
 ### Pi Management API (`snout-spotter-pi-mgmt` Lambda — no auth)
 
@@ -317,6 +323,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
       "lastUploadAt": "2026-03-29T09:46:00Z",
       "uploadStats": {"uploadsToday": 5, "failedToday": 0, "totalUploaded": 120},
       "clipsPending": 0,
+      "logShipping": true,
       "system": {
         "cpuTempC": 52.3,
         "memUsedPercent": 45.2,

@@ -30,6 +30,12 @@ health:
   metric_name: PiHeartbeat
   interval_seconds: 300
 
+log_shipping:
+  enabled: true
+  batch_interval_seconds: 60
+  max_lines_per_batch: 50
+  min_level: INFO
+
 iot:
   endpoint: ""
   thing_name: ""

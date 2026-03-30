@@ -1,4 +1,4 @@
-import type { Clip, Detection, StatsOverview, SystemHealth } from "./types";
+import type { Clip, Detection, LogEntry, StatsOverview, SystemHealth } from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
@@ -78,6 +78,15 @@ export const api = {
 
   updatePiConfig: (thingName: string, changes: Record<string, number | boolean>) =>
     postJson<{ message: string; errors: Record<string, string> }>(`/pi/${thingName}/config`, changes),
+
+  getDeviceLogs: (thingName: string, minutes = 60, level?: string, service?: string) => {
+    const params = new URLSearchParams({ minutes: String(minutes) });
+    if (level) params.set("level", level);
+    if (service) params.set("service", service);
+    return fetchJson<{ logs: LogEntry[]; thingName: string; queryMinutes: number }>(
+      `/pi/${thingName}/logs?${params}`,
+    );
+  },
 
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>

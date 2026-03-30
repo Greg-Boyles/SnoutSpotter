@@ -1,4 +1,5 @@
 using Amazon.CloudWatch;
+using Amazon.CloudWatchLogs;
 using Amazon.DynamoDBv2;
 using Amazon.IoT;
 using Amazon.IotData;
@@ -12,6 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IAmazonDynamoDB, AmazonDynamoDBClient>();
 builder.Services.AddSingleton<IAmazonS3, AmazonS3Client>();
 builder.Services.AddSingleton<IAmazonCloudWatch, AmazonCloudWatchClient>();
+builder.Services.AddSingleton<IAmazonCloudWatchLogs, AmazonCloudWatchLogsClient>();
 builder.Services.AddSingleton<IAmazonIoT>(_ =>
     new AmazonIoTClient(Amazon.RegionEndpoint.EUWest1));
 builder.Services.AddSingleton<IAmazonIotData>(sp =>
@@ -33,6 +35,7 @@ builder.Services.AddSingleton<ClipService>();
 builder.Services.AddSingleton<S3PresignService>();
 builder.Services.AddSingleton<HealthService>();
 builder.Services.AddSingleton<PiUpdateService>();
+builder.Services.AddSingleton<LogService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

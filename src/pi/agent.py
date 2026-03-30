@@ -322,6 +322,7 @@ def get_system_health() -> dict:
 
 def build_shadow_state(version: str, config: dict) -> dict:
     services = {svc.replace("snoutspotter-", ""): get_service_status(svc) for svc in SERVICES}
+    log_cfg = config.get("log_shipping", {})
     return {
         "state": {
             "reported": {
@@ -337,6 +338,7 @@ def build_shadow_state(version: str, config: dict) -> dict:
                 "clipsPending": get_clips_pending(config),
                 "system": get_system_health(),
                 "config": config_schema.get_configurable_values(config),
+                "logShipping": log_cfg.get("enabled", True),
             }
         }
     }
@@ -612,6 +614,74 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
             local_path.unlink()
 
 
+# ── Log shipping ─────────────────────────────────────────────────────
+
+# Map Python log level names to journalctl priority values
+_LEVEL_TO_PRIORITY = {"DEBUG": "7", "INFO": "6", "WARNING": "4", "ERROR": "3"}
+
+# Map journalctl numeric priority back to level name
+_PRIORITY_TO_LEVEL = {"7": "DEBUG", "6": "INFO", "5": "NOTICE", "4": "WARNING", "3": "ERROR", "2": "CRITICAL"}
+
+
+def collect_and_ship_logs(connection, thing_name: str, config: dict, last_log_timestamp: list):
+    """Read recent journald logs and publish them via MQTT."""
+    log_cfg = config.get("log_shipping", {})
+    if not log_cfg.get("enabled", True):
+        return
+
+    min_level = log_cfg.get("min_level", "INFO")
+    max_lines = log_cfg.get("max_lines_per_batch", 50)
+    priority = _LEVEL_TO_PRIORITY.get(min_level, "6")
+
+    since = last_log_timestamp[0]
+    now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        cmd = [
+            "journalctl", "--since", since, "--no-pager", "-o", "json",
+            "-u", "snoutspotter-motion",
+            "-u", "snoutspotter-uploader",
+            "-u", "snoutspotter-agent",
+            "-p", priority,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+
+        log_entries = []
+        for line in lines[-max_lines:]:
+            try:
+                entry = json.loads(line)
+                prio = entry.get("PRIORITY", "6")
+                level = _PRIORITY_TO_LEVEL.get(prio, "INFO")
+                unit = entry.get("_SYSTEMD_UNIT", "")
+                # Strip .service suffix for cleaner display
+                service = unit.replace("snoutspotter-", "").replace(".service", "")
+                msg = entry.get("MESSAGE", "")
+                # Convert microseconds to ISO timestamp
+                usec = entry.get("__REALTIME_USEC", "0")
+                ts = datetime.fromtimestamp(int(usec) / 1_000_000, tz=timezone.utc).isoformat()
+                log_entries.append({"ts": ts, "level": level, "service": service, "msg": msg})
+            except (json.JSONDecodeError, ValueError, KeyError):
+                continue
+
+        if log_entries:
+            payload = json.dumps({
+                "thingName": thing_name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "logs": log_entries,
+            })
+            topic = f"snoutspotter/{thing_name}/logs"
+            connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
+            logger.info(f"Shipped {len(log_entries)} log entries to {topic}")
+
+        last_log_timestamp[0] = now_ts
+
+    except subprocess.TimeoutExpired:
+        logger.warning("journalctl timed out during log collection")
+    except Exception as e:
+        logger.error(f"Log shipping failed: {e}")
+
+
 # ── Shadow delta handler ──────────────────────────────────────────────
 
 def on_shadow_delta(topic, payload, **kwargs):
@@ -742,9 +812,15 @@ def main():
     version = load_version()
     report_full_shadow(connection, thing_name, version, config)
 
+    # Log shipping state
+    log_ship_cfg = config.get("log_shipping", {})
+    log_ship_interval_ref = [log_ship_cfg.get("batch_interval_seconds", 60)]
+    last_log_timestamp = [datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")]
+
     logger.info(f"Agent started (version={version}). Heartbeat every {heartbeat_ref[0]}s, watching for OTA/config updates.")
 
     last_heartbeat = 0
+    last_log_ship = 0
 
     try:
         while True:
@@ -802,6 +878,17 @@ def main():
                     logger.info("Config change received during OTA — will re-apply on next startup via shadow/get")
                 else:
                     apply_remote_config(pending, config, connection, thing_name, heartbeat_ref)
+                    # Pick up log shipping config changes in-process
+                    new_log_cfg = config.get("log_shipping", {})
+                    log_ship_interval_ref[0] = new_log_cfg.get("batch_interval_seconds", 60)
+
+            # Ship logs on interval
+            if now - last_log_ship >= log_ship_interval_ref[0]:
+                try:
+                    collect_and_ship_logs(connection, thing_name, config, last_log_timestamp)
+                except Exception as e:
+                    logger.error(f"Log shipping error: {e}")
+                last_log_ship = now
 
             time.sleep(5)
 

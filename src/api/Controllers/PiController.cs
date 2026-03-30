@@ -11,11 +11,13 @@ public class PiController : ControllerBase
 {
     private readonly PiUpdateService _piUpdateService;
     private readonly HealthService _healthService;
+    private readonly LogService _logService;
 
-    public PiController(PiUpdateService piUpdateService, HealthService healthService)
+    public PiController(PiUpdateService piUpdateService, HealthService healthService, LogService logService)
     {
         _piUpdateService = piUpdateService;
         _healthService = healthService;
+        _logService = logService;
     }
 
     [HttpGet("devices")]
@@ -49,6 +51,8 @@ public class PiController : ControllerBase
                 system = shadow?.System,
                 config = shadow?.Config,
                 configErrors = shadow?.ConfigErrors,
+                logShipping = shadow?.LogShipping,
+                logShippingError = shadow?.LogShippingError,
                 latestVersion,
                 updateAvailable = latestVersion != null && shadow?.Version != null && latestVersion != shadow.Version
             });
@@ -138,6 +142,17 @@ public class PiController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+    }
+    [HttpGet("{thingName}/logs")]
+    public async Task<ActionResult> GetLogs(
+        string thingName,
+        [FromQuery] int minutes = 60,
+        [FromQuery] string? level = null,
+        [FromQuery] string? service = null,
+        [FromQuery] int limit = 200)
+    {
+        var logs = await _logService.GetLogsAsync(thingName, minutes, level, service, limit);
+        return Ok(new { logs, thingName, queryMinutes = minutes });
     }
 }
 
