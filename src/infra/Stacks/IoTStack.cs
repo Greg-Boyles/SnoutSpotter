@@ -1,6 +1,8 @@
 using Amazon.CDK;
-using Amazon.CDK.AWS.IoT;
+using Amazon.CDK.AWS.IAM;
+using Amazon.CDK.AWS.Logs;
 using Constructs;
+using IoT = Amazon.CDK.AWS.IoT;
 
 namespace SnoutSpotter.Infra.Stacks;
 
@@ -8,26 +10,28 @@ public class IoTStack : Stack
 {
     public string ThingGroupName { get; }
     public string PolicyName { get; }
+    public string PiLogGroupName { get; }
 
     public IoTStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
         ThingGroupName = "snoutspotter-pis";
         PolicyName = "snoutspotter-pi-policy";
+        PiLogGroupName = "/snoutspotter/pi-logs";
 
         // Thing Group for all SnoutSpotter Pi devices
         // Individual things will be registered dynamically via Pi Management API
-        var thingGroup = new CfnThingGroup(this, "PiThingGroup", new CfnThingGroupProps
+        var thingGroup = new IoT.CfnThingGroup(this, "PiThingGroup", new IoT.CfnThingGroupProps
         {
             ThingGroupName = ThingGroupName,
-            ThingGroupProperties = new CfnThingGroup.ThingGroupPropertiesProperty
+            ThingGroupProperties = new IoT.CfnThingGroup.ThingGroupPropertiesProperty
             {
                 ThingGroupDescription = "SnoutSpotter Raspberry Pi devices"
             }
         });
 
         // IoT Policy: uses ${iot:Connection.Thing.ThingName} variable so any
-        // registered thing can connect and manage its own shadow
-        var iotPolicy = new CfnPolicy(this, "PiPolicy", new CfnPolicyProps
+        // registered thing can connect and manage its own shadow and publish logs
+        var iotPolicy = new IoT.CfnPolicy(this, "PiPolicy", new IoT.CfnPolicyProps
         {
             PolicyName = PolicyName,
             PolicyDocument = new Dictionary<string, object>
@@ -55,9 +59,52 @@ public class IoTStack : Stack
                     {
                         ["Effect"] = "Allow",
                         ["Action"] = "iot:Publish",
-                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*"
+                        ["Resource"] = new[]
+                        {
+                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
+                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/${{iot:Connection.Thing.ThingName}}/logs"
+                        }
                     }
                 }
+            }
+        });
+
+        // CloudWatch Log Group for Pi device logs (shipped via MQTT → IoT Rule)
+        var piLogGroup = new LogGroup(this, "PiLogsGroup", new LogGroupProps
+        {
+            LogGroupName = PiLogGroupName,
+            Retention = RetentionDays.ONE_WEEK,
+            RemovalPolicy = RemovalPolicy.DESTROY
+        });
+
+        // IAM Role for IoT Rule to write to CloudWatch Logs
+        var iotLogRuleRole = new Role(this, "IoTLogRuleRole", new RoleProps
+        {
+            AssumedBy = new ServicePrincipal("iot.amazonaws.com"),
+            Description = "Allows IoT Rules to write Pi device logs to CloudWatch Logs"
+        });
+        piLogGroup.GrantWrite(iotLogRuleRole);
+
+        // IoT Topic Rule: routes MQTT log messages to CloudWatch Logs
+        var logRule = new IoT.CfnTopicRule(this, "PiLogRule", new IoT.CfnTopicRuleProps
+        {
+            RuleName = "snoutspotter_pi_logs",
+            TopicRulePayload = new IoT.CfnTopicRule.TopicRulePayloadProperty
+            {
+                Sql = "SELECT * FROM 'snoutspotter/+/logs'",
+                Actions = new[]
+                {
+                    new IoT.CfnTopicRule.ActionProperty
+                    {
+                        CloudwatchLogs = new IoT.CfnTopicRule.CloudwatchLogsActionProperty
+                        {
+                            LogGroupName = piLogGroup.LogGroupName,
+                            RoleArn = iotLogRuleRole.RoleArn,
+                            BatchMode = false
+                        }
+                    }
+                },
+                RuleDisabled = false
             }
         });
 
@@ -72,6 +119,12 @@ public class IoTStack : Stack
         {
             Value = iotPolicy.PolicyName!,
             Description = "IoT Policy name for Pi devices"
+        });
+
+        _ = new CfnOutput(this, "PiLogGroupNameOutput", new CfnOutputProps
+        {
+            Value = PiLogGroupName,
+            Description = "CloudWatch Log Group for Pi device logs"
         });
     }
 }

@@ -44,7 +44,8 @@ public class ApiStack : Stack
                 ["AWS_LWA_PORT"] = "8080",
                 ["IOT_THING_GROUP"] = props.IoTThingGroupName,
                 ["OKTA_ISSUER"] = props.OktaIssuer,
-                ["ALLOWED_ORIGIN"] = props.AllowedOrigin
+                ["ALLOWED_ORIGIN"] = props.AllowedOrigin,
+                ["PI_LOG_GROUP"] = "/snoutspotter/pi-logs"
             }
         });
 
@@ -59,6 +60,14 @@ public class ApiStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[] { "cloudwatch:GetMetricData", "cloudwatch:ListMetrics" },
             Resources = new[] { "*" }
+        }));
+
+        // CloudWatch Logs permissions for querying Pi device logs
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "logs:StartQuery", "logs:GetQueryResults", "logs:StopQuery" },
+            Resources = new[] { $"arn:aws:logs:{Region}:{Account}:log-group:/snoutspotter/pi-logs:*" }
         }));
 
         // IoT Device Shadow permissions (all snoutspotter things)
