@@ -8,6 +8,7 @@ import ClipDetail from "./pages/ClipDetail";
 import Detections from "./pages/Detections";
 import SystemHealthPage from "./pages/SystemHealth";
 import DeviceConfig from "./pages/DeviceConfig";
+import DeviceLogs from "./pages/DeviceLogs";
 import { setAuthGetter } from "./api";
 
 const navItems = [
@@ -96,6 +97,7 @@ export default function App() {
                   <Route path="/detections" element={<Detections />} />
                   <Route path="/health" element={<SystemHealthPage />} />
                   <Route path="/device/:thingName/config" element={<DeviceConfig />} />
+                  <Route path="/device/:thingName/logs" element={<DeviceLogs />} />
                 </Routes>
               </main>
             </div>

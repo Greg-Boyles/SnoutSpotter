@@ -77,7 +77,16 @@ export interface PiDevice {
   system?: SystemInfo;
   config?: Record<string, number | boolean>;
   configErrors?: Record<string, string>;
+  logShipping?: boolean;
+  logShippingError?: string;
   updateAvailable?: boolean;
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  service: string;
+  message: string;
 }
 
 export interface SystemHealth {

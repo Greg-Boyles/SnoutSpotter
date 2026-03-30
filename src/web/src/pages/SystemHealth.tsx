@@ -18,6 +18,7 @@ import {
   Cpu,
   Thermometer,
   Settings,
+  FileText,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
@@ -568,14 +569,37 @@ export default function SystemHealthPage() {
               </div>
             )}
 
-            {/* Device Settings Link */}
-            <div className="mt-3 pt-3 border-t border-gray-100">
+            {/* Log Shipping Status */}
+            {device.logShipping != null && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="text-xs font-medium text-gray-700">Log Shipping</span>
+                  </div>
+                  <StatusBadge ok={device.logShipping} label={device.logShipping ? "Active" : "Disabled"} />
+                </div>
+                {device.logShippingError && (
+                  <p className="text-xs text-red-600 mt-1">{device.logShippingError}</p>
+                )}
+              </div>
+            )}
+
+            {/* Device Settings & Logs Links */}
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4">
               <Link
                 to={`/device/${device.thingName}/config`}
                 className="flex items-center gap-2 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
               >
                 <Settings className="w-3.5 h-3.5" />
                 Device Settings
+              </Link>
+              <Link
+                to={`/device/${device.thingName}/logs`}
+                className="flex items-center gap-2 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Device Logs
               </Link>
             </div>
 
