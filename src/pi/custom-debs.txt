@@ -1,4 +1,4 @@
 # Custom .deb packages installed from S3 during OTA updates.
 # Format: s3-path  (relative to the data bucket)
 # Lines starting with # are ignored.
-releases/pi/debs/kvssink_1.0.0_arm64.deb
+releases/pi/debs/kvssink_1.0.2_arm64.deb
