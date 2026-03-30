@@ -67,6 +67,8 @@ export const api = {
 
   getHealth: () => fetchJson<SystemHealth>("/stats/health"),
 
+  getDevices: () => fetchJson<SystemHealth>("/pi/devices"),
+
   triggerPiUpdate: (thingName: string, version?: string) =>
     postJson<{ message: string; version: string }>(`/pi/${thingName}/update`, version ? { version } : {}),
 
