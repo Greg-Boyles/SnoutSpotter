@@ -568,6 +568,22 @@ _LEVEL_TO_PRIORITY = {"DEBUG": "7", "INFO": "6", "WARNING": "4", "ERROR": "3"}
 _PRIORITY_TO_LEVEL = {"7": "DEBUG", "6": "INFO", "5": "NOTICE", "4": "WARNING", "3": "ERROR", "2": "CRITICAL"}
 
 
+def _extract_log_timestamp(entry: dict) -> str:
+    """Extract a valid ISO timestamp from a journalctl JSON entry with fallbacks."""
+    for field in ("__REALTIME_USEC", "_SOURCE_REALTIME_USEC"):
+        usec_str = entry.get(field, "")
+        if usec_str and usec_str != "0":
+            try:
+                ts = datetime.fromtimestamp(int(usec_str) / 1_000_000, tz=timezone.utc)
+                if ts.year >= 2020:
+                    return ts.isoformat()
+            except (ValueError, OSError):
+                continue
+    # Last resort: use current time
+    logger.warning("No valid timestamp in journalctl entry, using current time")
+    return datetime.now(timezone.utc).isoformat()
+
+
 def collect_and_ship_logs(connection, thing_name: str, config: dict, last_log_timestamp: list):
     """Read recent journald logs and publish them via MQTT."""
     log_cfg = config.get("log_shipping", {})
@@ -602,9 +618,7 @@ def collect_and_ship_logs(connection, thing_name: str, config: dict, last_log_ti
                 # Strip .service suffix for cleaner display
                 service = unit.replace("snoutspotter-", "").replace(".service", "")
                 msg = entry.get("MESSAGE", "")
-                # Convert microseconds to ISO timestamp
-                usec = entry.get("__REALTIME_USEC", "0")
-                ts = datetime.fromtimestamp(int(usec) / 1_000_000, tz=timezone.utc).isoformat()
+                ts = _extract_log_timestamp(entry)
                 log_entries.append({"ts": ts, "level": level, "service": service, "msg": msg})
             except (json.JSONDecodeError, ValueError, KeyError):
                 continue
