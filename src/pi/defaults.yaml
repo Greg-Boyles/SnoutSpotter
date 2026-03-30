@@ -36,6 +36,13 @@ log_shipping:
   max_lines_per_batch: 50
   min_level: INFO
 
+streaming:
+  timeout_seconds: 600
+  resolution: [640, 480]
+  framerate: 15
+  bitrate: 800
+  kvs_region: eu-west-1
+
 credentials_provider:
   role_alias: snoutspotter-pi-role-alias
   endpoint: ""
