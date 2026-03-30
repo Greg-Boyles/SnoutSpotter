@@ -321,7 +321,7 @@ def get_system_health() -> dict:
 
 # ── IoT Shadow ────────────────────────────────────────────────────────
 
-def build_shadow_state(version: str, config: dict) -> dict:
+def build_shadow_state(version: str, config: dict, streaming: bool = False) -> dict:
     services = {svc.replace("snoutspotter-", ""): get_service_status(svc) for svc in SERVICES}
     log_cfg = config.get("log_shipping", {})
     return {
@@ -340,6 +340,7 @@ def build_shadow_state(version: str, config: dict) -> dict:
                 "system": get_system_health(),
                 "config": config_schema.get_configurable_values(config),
                 "logShipping": log_cfg.get("enabled", True),
+                "streaming": streaming,
             }
         }
     }
@@ -352,8 +353,8 @@ def update_shadow(connection, thing_name: str, reported: dict):
     logger.info(f"Shadow updated: {reported}")
 
 
-def report_full_shadow(connection, thing_name: str, version: str, config: dict):
-    shadow_state = build_shadow_state(version, config)
+def report_full_shadow(connection, thing_name: str, version: str, config: dict, streaming: bool = False):
+    shadow_state = build_shadow_state(version, config, streaming=streaming)
     topic = f"$aws/things/{thing_name}/shadow/update"
     payload = json.dumps(shadow_state)
     connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
@@ -722,6 +723,10 @@ def on_shadow_delta(topic, payload, **kwargs):
             logger.info(f"Shadow delta: config change requested for {list(desired_config.keys())}")
             on_shadow_delta.pending_config = desired_config
 
+        if "streaming" in state:
+            on_shadow_delta.pending_streaming = state["streaming"]
+            logger.info(f"Shadow delta: streaming={'start' if state['streaming'] else 'stop'}")
+
     except Exception as e:
         logger.error(f"Error processing shadow delta: {e}")
 
@@ -747,7 +752,11 @@ def on_shadow_get_accepted(topic, payload, **kwargs):
             logger.info(f"Pending config delta on startup: {list(desired_config.keys())}")
             on_shadow_delta.pending_config = desired_config
 
-        if not desired_version and not desired_config:
+        if "streaming" in delta:
+            on_shadow_delta.pending_streaming = delta["streaming"]
+            logger.info(f"Pending streaming delta on startup: {delta['streaming']}")
+
+        if not desired_version and not desired_config and "streaming" not in delta:
             logger.info("No pending shadow delta")
 
     except Exception as e:
@@ -756,6 +765,7 @@ def on_shadow_get_accepted(topic, payload, **kwargs):
 
 on_shadow_delta.pending_version = None
 on_shadow_delta.pending_config = None
+on_shadow_delta.pending_streaming = None
 on_shadow_delta.updating = False
 
 
@@ -840,6 +850,7 @@ def main():
 
     last_heartbeat = 0
     last_log_ship = 0
+    stream_proc = None  # subprocess.Popen for stream_manager.py
 
     try:
         while True:
@@ -854,7 +865,8 @@ def main():
 
                 try:
                     version = load_version()
-                    report_full_shadow(connection, thing_name, version, config)
+                    is_streaming = stream_proc is not None and stream_proc.poll() is None
+                    report_full_shadow(connection, thing_name, version, config, streaming=is_streaming)
                 except Exception as e:
                     logger.error(f"Failed to update shadow: {e}")
 
@@ -865,7 +877,8 @@ def main():
                 try:
                     SHADOW_DIRTY_FLAG.unlink(missing_ok=True)
                     version = load_version()
-                    report_full_shadow(connection, thing_name, version, config)
+                    is_streaming = stream_proc is not None and stream_proc.poll() is None
+                    report_full_shadow(connection, thing_name, version, config, streaming=is_streaming)
                     last_heartbeat = now  # reset so heartbeat doesn't fire redundantly right after
                 except Exception as e:
                     logger.error(f"Failed to process shadow dirty flag: {e}")
@@ -907,6 +920,49 @@ def main():
                         last_log_timestamp[0] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                         logger.info("Log shipping enabled — shipping logs from now")
 
+            # Check for pending streaming requests
+            if on_shadow_delta.pending_streaming is not None:
+                want_stream = on_shadow_delta.pending_streaming
+                on_shadow_delta.pending_streaming = None
+                if want_stream and stream_proc is None:
+                    logger.info("Starting live stream — stopping motion detection")
+                    try:
+                        subprocess.run(["sudo", "systemctl", "stop", "snoutspotter-motion"], timeout=10)
+                    except Exception as e:
+                        logger.warning(f"Failed to stop motion service: {e}")
+                    stream_proc = subprocess.Popen(
+                        [sys.executable, str(INSTALL_DIR / "stream_manager.py")],
+                        cwd=str(INSTALL_DIR),
+                    )
+                    logger.info(f"stream_manager.py started (pid={stream_proc.pid})")
+                    update_shadow(connection, thing_name, {"streaming": True})
+                elif not want_stream and stream_proc is not None:
+                    logger.info("Stopping live stream")
+                    stream_proc.terminate()
+                    try:
+                        stream_proc.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        stream_proc.kill()
+                        stream_proc.wait()
+                    stream_proc = None
+                    logger.info("Restarting motion detection")
+                    try:
+                        subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
+                    except Exception as e:
+                        logger.warning(f"Failed to start motion service: {e}")
+                    update_shadow(connection, thing_name, {"streaming": False})
+
+            # Check if stream_manager exited on its own (timeout or crash)
+            if stream_proc is not None and stream_proc.poll() is not None:
+                logger.info(f"stream_manager.py exited (code={stream_proc.returncode})")
+                stream_proc = None
+                logger.info("Restarting motion detection")
+                try:
+                    subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
+                except Exception as e:
+                    logger.warning(f"Failed to start motion service: {e}")
+                update_shadow(connection, thing_name, {"streaming": False})
+
             # Ship logs on interval
             if now - last_log_ship >= log_ship_interval_ref[0]:
                 try:
@@ -919,6 +975,13 @@ def main():
 
     except KeyboardInterrupt:
         logger.info("Shutting down agent...")
+        if stream_proc is not None and stream_proc.poll() is None:
+            stream_proc.terminate()
+            stream_proc.wait(timeout=10)
+            try:
+                subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
+            except Exception:
+                pass
         connection.disconnect().result(timeout=5)
 
 
