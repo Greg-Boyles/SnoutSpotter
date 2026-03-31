@@ -41,6 +41,10 @@ async function getSignatureKey(
   return k;
 }
 
+function rfc3986Encode(str: string): string {
+  return encodeURIComponent(str).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 async function createPresignedUrl(creds: IotCredentials): Promise<string> {
   const host = creds.iotEndpoint;
   const region = creds.region;
@@ -49,18 +53,23 @@ async function createPresignedUrl(creds: IotCredentials): Promise<string> {
   const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
   const credentialScope = `${datestamp}/${region}/iotdevicegateway/aws4_request`;
 
-  const params = new URLSearchParams();
-  params.set("X-Amz-Algorithm", "AWS4-HMAC-SHA256");
-  params.set("X-Amz-Credential", `${creds.accessKeyId}/${credentialScope}`);
-  params.set("X-Amz-Date", amzDate);
-  params.set("X-Amz-Expires", "86400");
-  params.set("X-Amz-SignedHeaders", "host");
+  // Build sorted query parameters with RFC 3986 encoding (required by SigV4)
+  const queryParams: Record<string, string> = {
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${creds.accessKeyId}/${credentialScope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": "86400",
+    "X-Amz-SignedHeaders": "host",
+  };
   if (creds.sessionToken) {
-    params.set("X-Amz-Security-Token", creds.sessionToken);
+    queryParams["X-Amz-Security-Token"] = creds.sessionToken;
   }
-  params.sort();
 
-  const canonicalQueryString = params.toString();
+  const sortedKeys = Object.keys(queryParams).sort();
+  const canonicalQueryString = sortedKeys
+    .map((k) => `${rfc3986Encode(k)}=${rfc3986Encode(queryParams[k])}`)
+    .join("&");
+
   const canonicalRequest = `GET\n/mqtt\n${canonicalQueryString}\nhost:${host}\n\nhost\n${await sha256("")}`;
   const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credentialScope}\n${await sha256(canonicalRequest)}`;
 
