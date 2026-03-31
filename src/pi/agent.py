@@ -19,6 +19,7 @@ from ota import load_version, apply_update
 from shadow import update_shadow, report_full_shadow
 from remote_config import apply_remote_config
 from log_shipping import collect_and_ship_logs
+from commands import execute_command
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("snout-spotter-agent")
@@ -74,6 +75,11 @@ def on_shadow_delta(topic, payload, **kwargs):
             on_shadow_delta.pending_streaming = state["streaming"]
             logger.info(f"Shadow delta: streaming={'start' if state['streaming'] else 'stop'}")
 
+        desired_command = state.get("command")
+        if desired_command:
+            logger.info(f"Shadow delta: command received: {desired_command.get('action')}")
+            on_shadow_delta.pending_command = desired_command
+
     except Exception as e:
         logger.error(f"Error processing shadow delta: {e}")
 
@@ -103,7 +109,12 @@ def on_shadow_get_accepted(topic, payload, **kwargs):
             on_shadow_delta.pending_streaming = delta["streaming"]
             logger.info(f"Pending streaming delta on startup: {delta['streaming']}")
 
-        if not desired_version and not desired_config and "streaming" not in delta:
+        desired_command = delta.get("command")
+        if desired_command:
+            logger.info(f"Pending command delta on startup: {desired_command.get('action')}")
+            on_shadow_delta.pending_command = desired_command
+
+        if not desired_version and not desired_config and "streaming" not in delta and not desired_command:
             logger.info("No pending shadow delta")
 
     except Exception as e:
@@ -113,6 +124,7 @@ def on_shadow_get_accepted(topic, payload, **kwargs):
 on_shadow_delta.pending_version = None
 on_shadow_delta.pending_config = None
 on_shadow_delta.pending_streaming = None
+on_shadow_delta.pending_command = None
 on_shadow_delta.updating = False
 
 
@@ -192,6 +204,7 @@ def main():
     last_heartbeat = 0
     last_log_ship = 0
     stream_proc = None
+    last_command_id = [None]  # list so commands.py can update it
 
     try:
         while True:
@@ -305,6 +318,18 @@ def main():
                 topic = f"$aws/things/{thing_name}/shadow/update"
                 connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
                 logger.info("Streaming stopped — cleared desired and reported shadow state")
+
+            # ── Commands ──
+            if on_shadow_delta.pending_command:
+                cmd = on_shadow_delta.pending_command
+                on_shadow_delta.pending_command = None
+                if on_shadow_delta.updating:
+                    logger.info("Command received during OTA — rejecting")
+                    update_shadow(connection, thing_name, {
+                        "commandResult": {"id": cmd.get("id"), "status": "failed", "error": "OTA in progress"}
+                    })
+                else:
+                    execute_command(cmd, config, connection, thing_name, last_command_id)
 
             # ── Log shipping ──
             if now - last_log_ship >= log_ship_interval_ref[0]:
