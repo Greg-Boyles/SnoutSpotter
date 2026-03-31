@@ -152,18 +152,18 @@ public class IoTStack : Stack
             RuleName = "snoutspotter_command_ack",
             TopicRulePayload = new IoT.CfnTopicRule.TopicRulePayloadProperty
             {
-                Sql = "SELECT * FROM 'snoutspotter/+/commands/ack'",
+                Sql = "SELECT command_id, status, message, error, completed_at FROM 'snoutspotter/+/commands/ack'",
                 AwsIotSqlVersion = "2016-03-23",
                 Actions = new[]
                 {
                     new IoT.CfnTopicRule.ActionProperty
                     {
-                        DynamoDBv2 = new IoT.CfnTopicRule.DynamoDBv2ActionProperty
+                        DynamoDb = new IoT.CfnTopicRule.DynamoDBActionProperty
                         {
-                            PutItem = new IoT.CfnTopicRule.PutItemInputProperty
-                            {
-                                TableName = props.CommandsTable.TableName
-                            },
+                            TableName = props.CommandsTable.TableName,
+                            HashKeyField = "command_id",
+                            HashKeyValue = "${command_id}",
+                            HashKeyType = "STRING",
                             RoleArn = commandAckRole.RoleArn
                         }
                     }
