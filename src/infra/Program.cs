@@ -42,6 +42,7 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     ClipsTable = coreStack.ClipsTable,
     CommandsTable = coreStack.CommandsTable,
     LabelsTable = coreStack.LabelsTable,
+    ExportsTable = coreStack.ExportsTable,
     ApiEcrRepo = coreStack.ApiEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     OktaIssuer = oktaIssuer,
@@ -86,6 +87,16 @@ var autoLabelStack = new AutoLabelStack(app, "SnoutSpotter-AutoLabel", new AutoL
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     DataBucket = coreStack.DataBucket,
     LabelsTable = coreStack.LabelsTable
+});
+
+var exportDatasetStack = new ExportDatasetStack(app, "SnoutSpotter-ExportDataset", new ExportDatasetStackProps
+{
+    Env = env,
+    ExportDatasetEcrRepo = coreStack.ExportDatasetEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    DataBucket = coreStack.DataBucket,
+    LabelsTable = coreStack.LabelsTable,
+    ExportsTable = coreStack.ExportsTable
 });
 
 var webStack = new WebStack(app, "SnoutSpotter-Web", new StackProps { Env = env });

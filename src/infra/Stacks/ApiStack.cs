@@ -15,8 +15,10 @@ public class ApiStackProps : StackProps
     public required Table ClipsTable { get; init; }
     public required Table CommandsTable { get; init; }
     public required Table LabelsTable { get; init; }
+    public required Table ExportsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
+    public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
     public required string ImageTag { get; init; }
     public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
     public required string OktaIssuer { get; init; }
@@ -51,13 +53,16 @@ public class ApiStack : Stack
                 ["PI_LOG_GROUP"] = "/snoutspotter/pi-logs",
                 ["COMMANDS_TABLE"] = props.CommandsTable.TableName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
-                ["AUTO_LABEL_FUNCTION"] = props.AutoLabelFunctionName
+                ["AUTO_LABEL_FUNCTION"] = props.AutoLabelFunctionName,
+                ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
+                ["EXPORT_DATASET_FUNCTION"] = props.ExportDatasetFunctionName
             }
         });
 
         // Grant permissions
         props.CommandsTable.GrantReadWriteData(apiFunction);
         props.LabelsTable.GrantReadWriteData(apiFunction);
+        props.ExportsTable.GrantReadWriteData(apiFunction);
         props.DataBucket.GrantRead(apiFunction);
         props.DataBucket.GrantPut(apiFunction, "training-uploads/*");
         props.ClipsTable.GrantReadData(apiFunction);
@@ -100,7 +105,11 @@ public class ApiStack : Stack
         {
             Effect = Effect.ALLOW,
             Actions = new[] { "lambda:InvokeFunction" },
-            Resources = new[] { $"arn:aws:lambda:{Region}:{Account}:function:{props.AutoLabelFunctionName}" }
+            Resources = new[]
+            {
+                $"arn:aws:lambda:{Region}:{Account}:function:{props.AutoLabelFunctionName}",
+                $"arn:aws:lambda:{Region}:{Account}:function:{props.ExportDatasetFunctionName}"
+            }
         }));
 
         // IoT Publish for device commands
