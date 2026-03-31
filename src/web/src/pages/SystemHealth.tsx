@@ -22,6 +22,7 @@ import {
   RotateCw,
   Power,
   FolderX,
+  Terminal,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
@@ -685,6 +686,13 @@ export default function SystemHealthPage() {
                 >
                   <FileText className="w-3.5 h-3.5" />
                   Logs
+                </Link>
+                <Link
+                  to={`/device/${device.thingName}/commands`}
+                  className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  Commands
                 </Link>
                 {[
                   { action: "reboot", icon: Power, label: "Reboot", color: "hover:text-red-600" },

@@ -10,6 +10,7 @@ import SystemHealthPage from "./pages/SystemHealth";
 import DeviceConfig from "./pages/DeviceConfig";
 import DeviceLogs from "./pages/DeviceLogs";
 import LiveView from "./pages/LiveView";
+import CommandHistory from "./pages/CommandHistory";
 import { setAuthGetter } from "./api";
 
 const navItems = [
@@ -101,6 +102,7 @@ export default function App() {
                   <Route path="/health" element={<SystemHealthPage />} />
                   <Route path="/device/:thingName/config" element={<DeviceConfig />} />
                   <Route path="/device/:thingName/logs" element={<DeviceLogs />} />
+                  <Route path="/device/:thingName/commands" element={<CommandHistory />} />
                 </Routes>
               </main>
             </div>

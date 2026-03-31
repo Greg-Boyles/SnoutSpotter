@@ -95,7 +95,10 @@ export const api = {
     postJson<{ commandId: string; message: string }>(`/pi/${thingName}/command`, { action }),
 
   getCommandResult: (thingName: string, commandId: string) =>
-    fetchJson<{ commandId: string; status: string; message?: string; error?: string }>(`/pi/${thingName}/command/${commandId}`),
+    fetchJson<{ commandId: string; status: string; action?: string; message?: string; error?: string; requestedAt?: string; completedAt?: string }>(`/pi/${thingName}/command/${commandId}`),
+
+  getCommandHistory: (thingName: string, limit = 50) =>
+    fetchJson<{ commands: Record<string, string>[]; thingName: string }>(`/pi/${thingName}/commands?limit=${limit}`),
 
   // Streaming
   startStream: (thingName: string) =>
