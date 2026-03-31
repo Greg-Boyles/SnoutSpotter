@@ -53,6 +53,7 @@ class MotionDetector:
         self.picam2 = None
         self.encoder = None
         self.circular_output = None
+        self._ffmpeg_output = None
 
         # Status tracking
         self._camera_ok = False
@@ -156,8 +157,10 @@ class MotionDetector:
         filepath = self.output_dir / filename
 
         if self.circular_output is not None:
-            # Flush the ring buffer (pre-roll) and start writing to file
-            self.circular_output.fileoutput = str(filepath)
+            # Flush the ring buffer (pre-roll) through FfmpegOutput for proper MP4 container
+            self._ffmpeg_output = FfmpegOutput(str(filepath))
+            self._ffmpeg_output.start()
+            self.circular_output.fileoutput = self._ffmpeg_output
             self.circular_output.start()
         else:
             # No pre-buffer — start encoder on demand
@@ -185,6 +188,9 @@ class MotionDetector:
             # Stop file output but keep encoder running for the ring buffer
             self.circular_output.stop()
             self.circular_output.fileoutput = None
+            if self._ffmpeg_output:
+                self._ffmpeg_output.stop()
+                self._ffmpeg_output = None
         else:
             # No pre-buffer — stop the encoder entirely
             if self.encoder:
