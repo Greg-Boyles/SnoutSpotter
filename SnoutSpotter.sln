@@ -23,6 +23,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SnoutSpotter.Lambda.Command
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SnoutSpotter.Lambda.AutoLabel", "src\lambdas\SnoutSpotter.Lambda.AutoLabel\SnoutSpotter.Lambda.AutoLabel.csproj", "{0C9F0886-FA0B-4634-BEC3-3B19DD487937}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SnoutSpotter.Lambda.ExportDataset", "src\lambdas\SnoutSpotter.Lambda.ExportDataset\SnoutSpotter.Lambda.ExportDataset.csproj", "{80B99DDE-FC06-4691-913C-7F72C1404495}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -64,6 +66,10 @@ Global
 		{0C9F0886-FA0B-4634-BEC3-3B19DD487937}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0C9F0886-FA0B-4634-BEC3-3B19DD487937}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0C9F0886-FA0B-4634-BEC3-3B19DD487937}.Release|Any CPU.Build.0 = Release|Any CPU
+		{80B99DDE-FC06-4691-913C-7F72C1404495}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{80B99DDE-FC06-4691-913C-7F72C1404495}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{80B99DDE-FC06-4691-913C-7F72C1404495}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{80B99DDE-FC06-4691-913C-7F72C1404495}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B7A97D22-ECFA-407A-80C9-964908C5A861} = {09EF550C-6043-4983-B0BD-1882FD6B1A28}
@@ -75,5 +81,6 @@ Global
 		{7D5251D1-8DB1-49AC-A190-85CE4204BBE9} = {41384DDF-9701-4878-B525-A688F41F585E}
 		{D5ED7BB3-0FC8-4447-9E79-C910CD5FE8A0} = {41384DDF-9701-4878-B525-A688F41F585E}
 		{0C9F0886-FA0B-4634-BEC3-3B19DD487937} = {41384DDF-9701-4878-B525-A688F41F585E}
+		{80B99DDE-FC06-4691-913C-7F72C1404495} = {41384DDF-9701-4878-B525-A688F41F585E}
 	EndGlobalSection
 EndGlobal
