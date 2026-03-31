@@ -1,4 +1,4 @@
-"""Device command execution — commands arrive via MQTT, results reported via shadow."""
+"""Device command execution — commands arrive via MQTT, results acked via MQTT topic."""
 
 import json
 import logging
@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from awscrt import mqtt
-from shadow import update_shadow
 
 logger = logging.getLogger("snout-spotter-agent")
 
@@ -26,34 +25,34 @@ ALLOWED_ACTIONS = {
 
 
 def execute_command(cmd: dict, config: dict, connection, thing_name: str, updating: bool = False) -> None:
-    """Execute a device command and report the result via shadow reported state."""
-    cmd_id = cmd.get("id")
+    """Execute a device command and publish result to ack topic."""
+    cmd_id = cmd.get("command_id")
     action = cmd.get("action")
 
     if not cmd_id or not action:
-        logger.warning(f"Invalid command: missing id or action: {cmd}")
+        logger.warning(f"Invalid command: missing command_id or action: {cmd}")
         return
 
     if updating:
         logger.info(f"Command {action} rejected — OTA in progress")
-        _report_result(connection, thing_name, cmd_id, "failed", error="OTA in progress")
+        _publish_ack(connection, thing_name, cmd_id, action, "failed", error="OTA in progress")
         return
 
     if action not in ALLOWED_ACTIONS:
         logger.warning(f"Unknown command action: {action}")
-        _report_result(connection, thing_name, cmd_id, "failed", error=f"Unknown action: {action}")
+        _publish_ack(connection, thing_name, cmd_id, action, "failed", error=f"Unknown action: {action}")
         return
 
     logger.info(f"Executing command {cmd_id}: {action}")
 
     try:
         if action == "reboot":
-            _report_result(connection, thing_name, cmd_id, "success", message="Rebooting")
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message="Rebooting")
             time.sleep(2)
             subprocess.run(["sudo", "reboot"], timeout=5)
 
         elif action == "restart-agent":
-            _report_result(connection, thing_name, cmd_id, "success", message="snoutspotter-agent restarting")
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message="snoutspotter-agent restarting")
             time.sleep(2)
             subprocess.run(["sudo", "systemctl", "restart", "snoutspotter-agent"], timeout=30)
 
@@ -61,7 +60,7 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, updati
             svc_name = action.replace("restart-", "")
             svc = f"snoutspotter-{svc_name}"
             subprocess.run(["sudo", "systemctl", "restart", svc], timeout=30, check=True)
-            _report_result(connection, thing_name, cmd_id, "success", message=f"{svc} restarted")
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message=f"{svc} restarted")
 
         elif action == "clear-clips":
             clips_dir = Path(config.get("recording", {}).get("output_dir", "/home/admin/clips"))
@@ -70,7 +69,7 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, updati
                 for f in clips_dir.glob("*.mp4"):
                     f.unlink()
                     count += 1
-            _report_result(connection, thing_name, cmd_id, "success", message=f"Deleted {count} clips")
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message=f"Deleted {count} clips")
 
         elif action == "clear-backups":
             freed = 0
@@ -83,23 +82,28 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, updati
                 freed_mb = round(freed / (1024 * 1024), 1)
             else:
                 freed_mb = 0
-            _report_result(connection, thing_name, cmd_id, "success", message=f"Freed {freed_mb} MB")
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message=f"Freed {freed_mb} MB")
 
     except Exception as e:
         logger.error(f"Command {action} failed: {e}")
-        _report_result(connection, thing_name, cmd_id, "failed", error=str(e))
+        _publish_ack(connection, thing_name, cmd_id, action, "failed", error=str(e))
 
 
-def _report_result(connection, thing_name: str, cmd_id: str, status: str,
-                   message: str = "", error: str = ""):
-    """Report command result via shadow reported state only — no desired state touched."""
-    result: dict = {
-        "id": cmd_id,
+def _publish_ack(connection, thing_name: str, cmd_id: str, action: str,
+                 status: str, message: str = "", error: str = ""):
+    """Publish command result to ack topic — IoT Rule writes to DynamoDB."""
+    payload: dict = {
+        "command_id": cmd_id,
+        "thing_name": thing_name,
+        "action": action,
         "status": status,
-        "completedAt": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
     }
     if message:
-        result["message"] = message
+        payload["message"] = message
     if error:
-        result["error"] = error
-    update_shadow(connection, thing_name, {"commandResult": result})
+        payload["error"] = error
+
+    topic = f"snoutspotter/{thing_name}/commands/ack"
+    connection.publish(topic=topic, payload=json.dumps(payload), qos=mqtt.QoS.AT_LEAST_ONCE)
+    logger.info(f"Command ack published: {cmd_id} {status}")
