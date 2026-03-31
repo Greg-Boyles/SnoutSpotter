@@ -176,6 +176,7 @@ public class PiUpdateService
         ["motion.blur_kernel"]                  = new("int", Min: 3,    Max: 51,   Odd: true),
         ["camera.detection_fps"]                = new("int", Min: 1,    Max: 15),
         ["recording.max_clip_length"]           = new("int", Min: 10,   Max: 300),
+        ["recording.pre_buffer"]                = new("int", Min: 1,    Max: 10),
         ["recording.post_motion_buffer"]        = new("int", Min: 3,    Max: 60),
         ["upload.max_retries"]                  = new("int", Min: 1,    Max: 20),
         ["upload.delete_after_upload"]          = new("bool"),

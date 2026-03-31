@@ -26,6 +26,10 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": int, "min": 10, "max": 300,
         "affects": "motion",
     },
+    "recording.pre_buffer": {
+        "type": int, "min": 1, "max": 10,
+        "affects": "motion",
+    },
     "recording.post_motion_buffer": {
         "type": int, "min": 3, "max": 60,
         "affects": "motion",
