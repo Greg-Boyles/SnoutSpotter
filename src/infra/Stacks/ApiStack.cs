@@ -94,46 +94,6 @@ public class ApiStack : Stack
             Resources = new[] { "*" }
         }));
 
-        // IAM role for browser IoT WebSocket connections (read-only shadow subscriptions)
-        var browserIotRole = new Role(this, "BrowserIotRole", new RoleProps
-        {
-            RoleName = "snoutspotter-browser-iot",
-            AssumedBy = new ArnPrincipal(apiFunction.Role!.RoleArn),
-            MaxSessionDuration = Duration.Hours(1),
-        });
-
-        browserIotRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "iot:Connect" },
-            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:client/browser-*" }
-        }));
-
-        browserIotRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "iot:Subscribe" },
-            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:topicfilter/$aws/things/snoutspotter-*/shadow/update/documents" }
-        }));
-
-        browserIotRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "iot:Receive" },
-            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/snoutspotter-*/shadow/update/documents" }
-        }));
-
-        // Allow API Lambda to assume the browser IoT role via STS
-        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "sts:AssumeRole" },
-            Resources = new[] { browserIotRole.RoleArn }
-        }));
-
-        // Pass the role ARN and IoT endpoint to the Lambda
-        apiFunction.AddEnvironment("BROWSER_IOT_ROLE_ARN", browserIotRole.RoleArn);
-
         // KVS permissions for live streaming (HLS playback from kvssink streams)
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
