@@ -40,6 +40,7 @@ builder.Services.AddSingleton<S3PresignService>();
 builder.Services.AddSingleton<HealthService>();
 builder.Services.AddSingleton<PiUpdateService>();
 builder.Services.AddSingleton<LogService>();
+builder.Services.AddSingleton<LabelService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

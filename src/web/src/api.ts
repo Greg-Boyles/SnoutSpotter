@@ -41,6 +41,16 @@ async function postJson<T>(path: string, body?: unknown, baseUrl = BASE): Promis
   return res.json() as Promise<T>;
 }
 
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
 async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "DELETE",
@@ -99,6 +109,28 @@ export const api = {
 
   getCommandHistory: (thingName: string, limit = 50) =>
     fetchJson<{ commands: Record<string, string>[]; thingName: string }>(`/pi/${thingName}/commands?limit=${limit}`),
+
+  // ML Labels
+  triggerAutoLabel: (date?: string) =>
+    postJson<{ message: string }>(`/ml/auto-label${date ? `?date=${date}` : ""}`),
+
+  getLabelStats: () =>
+    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number }>("/ml/labels/stats"),
+
+  getLabels: (params: { reviewed?: string; label?: string; limit?: number; nextPageKey?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.reviewed) qs.set("reviewed", params.reviewed);
+    if (params.label) qs.set("label", params.label);
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.nextPageKey) qs.set("nextPageKey", params.nextPageKey);
+    return fetchJson<{ labels: Record<string, string | null>[]; nextPageKey: string | null }>(`/ml/labels?${qs}`);
+  },
+
+  updateLabel: (keyframeKey: string, confirmedLabel: string) =>
+    putJson<{ message: string }>(`/ml/labels/${keyframeKey}`, { confirmedLabel }),
+
+  bulkConfirmLabels: (keyframeKeys: string[], confirmedLabel: string) =>
+    postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel }),
 
   // Streaming
   startStream: (thingName: string) =>

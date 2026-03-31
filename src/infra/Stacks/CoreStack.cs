@@ -17,6 +17,8 @@ public class CoreStack : Stack
     public Repository PiMgmtEcrRepo { get; }
     public Repository LogIngestionEcrRepo { get; }
     public Repository CommandAckEcrRepo { get; }
+    public Table LabelsTable { get; }
+    public Repository AutoLabelEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -196,6 +198,46 @@ public class CoreStack : Stack
         CommandAckEcrRepo = new Repository(this, "CommandAckEcrRepo", new RepositoryProps
         {
             RepositoryName = "snout-spotter-command-ack",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        // DynamoDB table for keyframe labels (ML training data)
+        LabelsTable = new Table(this, "LabelsTable", new TableProps
+        {
+            TableName = "snout-spotter-labels",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "keyframe_key", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.DESTROY,
+        });
+
+        LabelsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "by-review",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "reviewed", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "labelled_at", Type = AttributeType.STRING },
+            ProjectionType = ProjectionType.ALL
+        });
+
+        LabelsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "by-label",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "auto_label", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "labelled_at", Type = AttributeType.STRING },
+            ProjectionType = ProjectionType.ALL
+        });
+
+        // ECR repository for AutoLabel Lambda Docker image
+        AutoLabelEcrRepo = new Repository(this, "AutoLabelEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-auto-label",
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {
