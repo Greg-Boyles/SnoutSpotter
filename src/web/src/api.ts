@@ -90,6 +90,17 @@ export const api = {
     );
   },
 
+  // IoT real-time
+  getIotCredentials: () =>
+    fetchJson<{
+      accessKeyId: string;
+      secretAccessKey: string;
+      sessionToken: string;
+      expiration: string;
+      iotEndpoint: string;
+      region: string;
+    }>("/iot/credentials"),
+
   // Streaming
   startStream: (thingName: string) =>
     postJson<StreamStartResult>(`/stream/${thingName}/start`),
