@@ -14,6 +14,7 @@ camera:
 
 recording:
   pre_buffer: 3
+  pre_buffer_enabled: true
   post_motion_buffer: 10
   max_clip_length: 60
   output_dir: /home/pi/clips
