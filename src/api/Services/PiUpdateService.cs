@@ -133,6 +133,9 @@ public class PiUpdateService
             if (reported.TryGetProperty("streamError", out var se))
                 state.StreamError = se.GetString();
 
+            if (reported.TryGetProperty("commandResult", out var cmdResult))
+                state.CommandResult = JsonSerializer.Deserialize<Dictionary<string, string>>(cmdResult.GetRawText());
+
             return state;
         }
         catch (Amazon.IotData.Model.ResourceNotFoundException)
@@ -296,6 +299,43 @@ public class PiUpdateService
         var tasks = things.Select(thing => TriggerUpdateAsync(thing, version));
         await Task.WhenAll(tasks);
     }
+
+    private static readonly HashSet<string> AllowedCommands = new()
+    {
+        "restart-motion", "restart-uploader", "restart-agent",
+        "reboot", "clear-clips", "clear-backups"
+    };
+
+    public async Task<string> SendCommandAsync(string thingName, string action)
+    {
+        if (!AllowedCommands.Contains(action))
+            throw new ArgumentException($"Unknown command: {action}");
+
+        var commandId = Guid.NewGuid().ToString("N");
+        var payload = JsonSerializer.Serialize(new
+        {
+            state = new
+            {
+                desired = new
+                {
+                    command = new
+                    {
+                        id = commandId,
+                        action,
+                        requestedAt = DateTime.UtcNow.ToString("O")
+                    }
+                }
+            }
+        });
+
+        await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
+        {
+            ThingName = thingName,
+            Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
+        });
+
+        return commandId;
+    }
 }
 
 public class PiShadowState
@@ -318,6 +358,7 @@ public class PiShadowState
     public string? LogShippingError { get; set; }
     public bool? Streaming { get; set; }
     public string? StreamError { get; set; }
+    public Dictionary<string, string>? CommandResult { get; set; }
 }
 
 public record CameraStatus(

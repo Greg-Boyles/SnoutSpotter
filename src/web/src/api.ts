@@ -90,6 +90,13 @@ export const api = {
     );
   },
 
+  // Commands
+  sendCommand: (thingName: string, action: string) =>
+    postJson<{ commandId: string; message: string }>(`/pi/${thingName}/command`, { action }),
+
+  getCommandResult: (thingName: string, commandId: string) =>
+    fetchJson<{ commandId: string; status: string; message?: string; error?: string }>(`/pi/${thingName}/command/${commandId}`),
+
   // Streaming
   startStream: (thingName: string) =>
     postJson<StreamStartResult>(`/stream/${thingName}/start`),
