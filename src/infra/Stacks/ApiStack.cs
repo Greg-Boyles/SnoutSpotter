@@ -59,6 +59,7 @@ public class ApiStack : Stack
         props.CommandsTable.GrantReadWriteData(apiFunction);
         props.LabelsTable.GrantReadWriteData(apiFunction);
         props.DataBucket.GrantRead(apiFunction);
+        props.DataBucket.GrantPut(apiFunction, "training-uploads/*");
         props.ClipsTable.GrantReadData(apiFunction);
         props.DataBucket.GrantRead(apiFunction, "raw-clips/*");
         props.DataBucket.GrantRead(apiFunction, "keyframes/*");
