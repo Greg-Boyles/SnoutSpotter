@@ -53,7 +53,7 @@ class MotionDetector:
         self.picam2 = None
         self.encoder = None
         self.circular_output = None
-        self._ffmpeg_output = None
+        self._raw_h264_path = None
 
         # Status tracking
         self._camera_ok = False
@@ -157,13 +157,12 @@ class MotionDetector:
         filepath = self.output_dir / filename
 
         if self.circular_output is not None:
-            # Flush the ring buffer (pre-roll) through FfmpegOutput for proper MP4 container
-            self._ffmpeg_output = FfmpegOutput(str(filepath))
-            self._ffmpeg_output.start()
-            self.circular_output.fileoutput = self._ffmpeg_output
+            # CircularOutput only accepts file paths — write raw H.264, remux to MP4 in stop_recording
+            self._raw_h264_path = str(filepath.with_suffix(".h264"))
+            self.circular_output.fileoutput = self._raw_h264_path
             self.circular_output.start()
         else:
-            # No pre-buffer — start encoder on demand
+            # No pre-buffer — start encoder on demand with FfmpegOutput for proper MP4
             self.encoder = H264Encoder(bitrate=5_000_000)
             output = FfmpegOutput(str(filepath))
             self.picam2.start_encoder(self.encoder, output)
@@ -188,9 +187,22 @@ class MotionDetector:
             # Stop file output but keep encoder running for the ring buffer
             self.circular_output.stop()
             self.circular_output.fileoutput = None
-            if self._ffmpeg_output:
-                self._ffmpeg_output.stop()
-                self._ffmpeg_output = None
+
+            # Remux raw H.264 to MP4 container
+            if self._raw_h264_path and Path(self._raw_h264_path).exists():
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", self._raw_h264_path, "-c", "copy", filepath],
+                        capture_output=True, timeout=30, check=True
+                    )
+                    Path(self._raw_h264_path).unlink(missing_ok=True)
+                    logger.info(f"Remuxed H.264 to MP4: {filepath}")
+                except Exception as e:
+                    logger.warning(f"FFmpeg remux failed: {e}, keeping raw H.264")
+                    # Fall back to renaming raw file as .mp4
+                    Path(self._raw_h264_path).rename(filepath)
+                self._raw_h264_path = None
         else:
             # No pre-buffer — stop the encoder entirely
             if self.encoder:
