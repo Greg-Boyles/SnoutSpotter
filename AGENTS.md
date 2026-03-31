@@ -87,7 +87,12 @@ SnoutSpotter/
 │   │   └── package.json
 │   │
 │   └── pi/                            # Raspberry Pi Python scripts
-│       ├── agent.py                   # Merged agent: heartbeat + IoT shadow + OTA (single MQTT connection)
+│       ├── agent.py                   # Thin orchestrator: MQTT connection, shadow delta dispatch, main loop
+│       ├── health.py                  # System health gathering: CPU, memory, disk, camera, upload stats
+│       ├── shadow.py                  # IoT shadow building and reporting
+│       ├── ota.py                     # OTA update: download, extract, deps, rollback, service restart
+│       ├── remote_config.py           # Remote config validation and application from shadow delta
+│       ├── log_shipping.py            # Journald log collection and MQTT publish
 │       ├── iot_credential_provider.py # IoT Credentials Provider: temp STS creds via X.509 certs
 │       ├── motion_detector.py         # Frame-differencing motion detection + recording + status file
 │       ├── uploader.py                # S3 multipart upload with retry + status file
