@@ -79,7 +79,7 @@ export default function Labels() {
       setLabels((prev) =>
         prev.map((l) =>
           l.keyframe_key === keyframeKey
-            ? { ...l, confirmed_label: confirmedLabel, reviewed: "true" }
+            ? { ...l, confirmed_label: confirmedLabel, auto_label: confirmedLabel === "my_dog" ? "dog" : "no_dog", reviewed: "true" }
             : l
         )
       );
@@ -203,17 +203,15 @@ export default function Labels() {
                       <img src={item.imageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
                     )}
                     <div className="absolute top-1 left-1">
-                      <LabelBadge label={item.auto_label} type="auto" />
+                      <LabelBadge
+                        label={item.confirmed_label || item.auto_label}
+                        type={item.confirmed_label ? "confirmed" : "auto"}
+                      />
                     </div>
-                    {item.confidence && (
+                    {item.confidence && parseFloat(item.confidence) > 0 && (
                       <span className="absolute top-1 right-1 px-1.5 py-0.5 bg-black bg-opacity-60 text-white text-xs rounded">
                         {(parseFloat(item.confidence) * 100).toFixed(0)}%
                       </span>
-                    )}
-                    {item.confirmed_label && (
-                      <div className="absolute bottom-1 left-1">
-                        <LabelBadge label={item.confirmed_label} type="confirmed" />
-                      </div>
                     )}
                   </div>
                   {!isReviewed && (

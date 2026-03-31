@@ -163,6 +163,10 @@ public class LabelService
 
     public async Task UpdateLabelAsync(string keyframeKey, string confirmedLabel)
     {
+        // Map confirmed label to auto_label value for GSI consistency
+        // my_dog → dog, no_dog → no_dog
+        var autoLabelValue = confirmedLabel == "my_dog" ? "dog" : "no_dog";
+
         await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
         {
             TableName = _labelsTable,
@@ -170,12 +174,15 @@ public class LabelService
             {
                 ["keyframe_key"] = new() { S = keyframeKey }
             },
-            UpdateExpression = "SET confirmed_label = :label, reviewed = :rev, reviewed_at = :at",
+            UpdateExpression = "SET confirmed_label = :label, reviewed = :rev, reviewed_at = :at, " +
+                               "original_auto_label = if_not_exists(original_auto_label, auto_label), " +
+                               "auto_label = :auto",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
                 [":label"] = new() { S = confirmedLabel },
                 [":rev"] = new() { S = "true" },
-                [":at"] = new() { S = DateTime.UtcNow.ToString("O") }
+                [":at"] = new() { S = DateTime.UtcNow.ToString("O") },
+                [":auto"] = new() { S = autoLabelValue }
             }
         });
     }
