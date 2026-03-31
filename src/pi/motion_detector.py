@@ -15,7 +15,7 @@ import yaml
 try:
     from picamera2 import Picamera2
     from picamera2.encoders import H264Encoder
-    from picamera2.outputs import FfmpegOutput
+    from picamera2.outputs import CircularOutput, FfmpegOutput
 except ImportError:
     Picamera2 = None  # Allow importing on non-Pi systems for testing
 
@@ -52,6 +52,7 @@ class MotionDetector:
         self.last_motion_time = 0.0
         self.picam2 = None
         self.encoder = None
+        self.circular_output = None
 
         # Status tracking
         self._camera_ok = False
@@ -108,9 +109,19 @@ class MotionDetector:
         )
         self.picam2.configure(config)
         self.picam2.start()
+
+        # Start encoder with circular buffer for pre-motion recording
+        pre_buffer = self.record_cfg.get("pre_buffer", 3)
+        record_fps = self.camera_cfg.get("record_fps", 30)
+        buffersize = record_fps * pre_buffer
+
+        self.encoder = H264Encoder(bitrate=5_000_000)
+        self.circular_output = CircularOutput(buffersize=buffersize)
+        self.picam2.start_encoder(self.encoder, self.circular_output)
+
         self._camera_ok = True
         self._write_status()
-        logger.info(f"Camera started: preview={preview_w}x{preview_h}, record={record_w}x{record_h}")
+        logger.info(f"Camera started: preview={preview_w}x{preview_h}, record={record_w}x{record_h}, pre_buffer={pre_buffer}s ({buffersize} frames)")
 
     def detect_motion(self, frame: np.ndarray) -> bool:
         """Compare current frame with previous to detect motion."""
@@ -136,14 +147,14 @@ class MotionDetector:
         return changed_pixels > self.motion_cfg["threshold"]
 
     def start_recording(self) -> str:
-        """Start recording video to a file."""
+        """Start recording video to a file, flushing the pre-motion buffer."""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
         filename = f"{timestamp}.mp4"
         filepath = self.output_dir / filename
 
-        self.encoder = H264Encoder(bitrate=5_000_000)
-        output = FfmpegOutput(str(filepath))
-        self.picam2.start_encoder(self.encoder, output)
+        # Switch circular output to write to file — flushes the ring buffer (pre-roll)
+        self.circular_output.fileoutput = str(filepath)
+        self.circular_output.start()
 
         self.recording = True
         self.record_start_time = time.time()
@@ -156,13 +167,14 @@ class MotionDetector:
         self._write_status()
         self._touch_shadow_dirty()
 
-        logger.info(f"Recording started: {filepath}")
+        logger.info(f"Recording started (with pre-buffer): {filepath}")
         return str(filepath)
 
     def stop_recording(self, filepath: str):
-        """Stop recording and finalize the clip."""
-        if self.encoder:
-            self.picam2.stop_encoder(self.encoder)
+        """Stop recording and finalize the clip. Encoder keeps running to circular buffer."""
+        # Stop file output but keep encoder running for the ring buffer
+        self.circular_output.stop()
+        self.circular_output.fileoutput = None
 
         duration = int(time.time() - self.record_start_time)
 
@@ -172,7 +184,6 @@ class MotionDetector:
         src.rename(dst)
 
         self.recording = False
-        self.encoder = None
 
         self._last_recording_stopped = datetime.now(timezone.utc).isoformat()
         self._recordings_today += 1
@@ -255,6 +266,8 @@ class MotionDetector:
             logger.info("Shutting down...")
             if self.recording and current_filepath:
                 self.stop_recording(current_filepath)
+            if self.encoder and self.picam2:
+                self.picam2.stop_encoder(self.encoder)
             if self.picam2:
                 self.picam2.stop()
 
