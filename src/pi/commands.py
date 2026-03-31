@@ -1,4 +1,4 @@
-"""Device command execution from shadow delta."""
+"""Device command execution — commands arrive via MQTT, results reported via shadow."""
 
 import json
 import logging
@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from awscrt import mqtt
+from shadow import update_shadow
 
 logger = logging.getLogger("snout-spotter-agent")
 
 BACKUP_DIR = Path.home() / ".snoutspotter" / "backups"
-STALE_THRESHOLD_SECONDS = 600  # 10 minutes
 
 ALLOWED_ACTIONS = {
     "restart-motion",
@@ -25,38 +25,23 @@ ALLOWED_ACTIONS = {
 }
 
 
-def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_command_id: list) -> None:
-    """Execute a device command and report the result via shadow."""
+def execute_command(cmd: dict, config: dict, connection, thing_name: str, updating: bool = False) -> None:
+    """Execute a device command and report the result via shadow reported state."""
     cmd_id = cmd.get("id")
     action = cmd.get("action")
-    requested_at = cmd.get("requestedAt", "")
 
     if not cmd_id or not action:
         logger.warning(f"Invalid command: missing id or action: {cmd}")
         return
 
-    # Skip duplicate
-    if cmd_id == last_command_id[0]:
-        logger.info(f"Skipping duplicate command {cmd_id}")
+    if updating:
+        logger.info(f"Command {action} rejected — OTA in progress")
+        _report_result(connection, thing_name, cmd_id, "failed", error="OTA in progress")
         return
-
-    # Skip stale
-    if requested_at:
-        try:
-            req_time = datetime.fromisoformat(requested_at.replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - req_time).total_seconds()
-            if age > STALE_THRESHOLD_SECONDS:
-                logger.info(f"Skipping stale command {cmd_id} ({action}, {int(age)}s old)")
-                _report_result(connection, thing_name, cmd_id, "skipped", message="Command too old")
-                last_command_id[0] = cmd_id
-                return
-        except (ValueError, TypeError):
-            pass
 
     if action not in ALLOWED_ACTIONS:
         logger.warning(f"Unknown command action: {action}")
         _report_result(connection, thing_name, cmd_id, "failed", error=f"Unknown action: {action}")
-        last_command_id[0] = cmd_id
         return
 
     logger.info(f"Executing command {cmd_id}: {action}")
@@ -64,14 +49,11 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_c
     try:
         if action == "reboot":
             _report_result(connection, thing_name, cmd_id, "success", message="Rebooting")
-            last_command_id[0] = cmd_id
             time.sleep(2)
             subprocess.run(["sudo", "reboot"], timeout=5)
 
         elif action == "restart-agent":
-            # Report before restarting — agent process will die during restart
             _report_result(connection, thing_name, cmd_id, "success", message="snoutspotter-agent restarting")
-            last_command_id[0] = cmd_id
             time.sleep(2)
             subprocess.run(["sudo", "systemctl", "restart", "snoutspotter-agent"], timeout=30)
 
@@ -103,17 +85,14 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_c
                 freed_mb = 0
             _report_result(connection, thing_name, cmd_id, "success", message=f"Freed {freed_mb} MB")
 
-        last_command_id[0] = cmd_id
-
     except Exception as e:
         logger.error(f"Command {action} failed: {e}")
         _report_result(connection, thing_name, cmd_id, "failed", error=str(e))
-        last_command_id[0] = cmd_id
 
 
 def _report_result(connection, thing_name: str, cmd_id: str, status: str,
                    message: str = "", error: str = ""):
-    """Report command result AND clear desired.command in one shadow update to prevent delta loops."""
+    """Report command result via shadow reported state only — no desired state touched."""
     result: dict = {
         "id": cmd_id,
         "status": status,
@@ -123,14 +102,4 @@ def _report_result(connection, thing_name: str, cmd_id: str, status: str,
         result["message"] = message
     if error:
         result["error"] = error
-
-    # Set desired.command to null + reported.commandResult in one atomic update
-    payload = json.dumps({
-        "state": {
-            "desired": {"command": None},
-            "reported": {"commandResult": result}
-        }
-    })
-    topic = f"$aws/things/{thing_name}/shadow/update"
-    connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
-    logger.info(f"Command result reported and desired.command cleared: {status}")
+    update_shadow(connection, thing_name, {"commandResult": result})
