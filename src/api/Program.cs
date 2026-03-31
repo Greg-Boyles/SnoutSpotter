@@ -5,6 +5,7 @@ using Amazon.IoT;
 using Amazon.IotData;
 using Amazon.KinesisVideo;
 using Amazon.S3;
+using Amazon.SecurityToken;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using SnoutSpotter.Api.Services;
 
@@ -31,6 +32,7 @@ builder.Services.AddSingleton<IAmazonIotData>(sp =>
 });
 
 builder.Services.AddSingleton<IAmazonKinesisVideo, AmazonKinesisVideoClient>();
+builder.Services.AddSingleton<IAmazonSecurityTokenService, AmazonSecurityTokenServiceClient>();
 
 // Application services
 builder.Services.AddSingleton<StreamService>();
