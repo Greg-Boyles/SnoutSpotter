@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload } from "lucide-react";
 import { api } from "../api";
 
 type Filter = "all" | "dog" | "no_dog" | "unreviewed";
@@ -36,6 +36,9 @@ export default function Labels() {
   const [labelling, setLabelling] = useState(false);
   const [nextPageKey, setNextPageKey] = useState<string | null>(null);
   const [updating, setUpdating] = useState<Set<string>>(new Set());
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadStats = () => api.getLabelStats().then(setStats).catch(console.error);
 
@@ -70,6 +73,26 @@ export default function Labels() {
       console.error("Auto-label failed:", e);
     }
     setLabelling(false);
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    setUploading(true);
+    setUploadProgress(`Uploading ${files.length} photo${files.length > 1 ? "s" : ""}...`);
+    try {
+      const result = await api.uploadTrainingImages(files);
+      setUploadProgress(`Uploaded ${result.uploaded} photo${result.uploaded !== 1 ? "s" : ""}${result.errors.length > 0 ? ` (${result.errors.length} failed)` : ""}`);
+      loadStats();
+      loadLabels();
+      setTimeout(() => setUploadProgress(""), 5000);
+    } catch (err) {
+      setUploadProgress(`Upload failed: ${(err as Error).message}`);
+      setTimeout(() => setUploadProgress(""), 5000);
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleConfirm = async (keyframeKey: string, confirmedLabel: string) => {
@@ -122,15 +145,39 @@ export default function Labels() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Labels</h1>
-        <button
-          onClick={handleAutoLabel}
-          disabled={labelling}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
-        >
-          {labelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-          {labelling ? "Running..." : "Run Auto-Label"}
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png"
+            multiple
+            onChange={handleUpload}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50"
+          >
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {uploading ? "Uploading..." : "Upload Photos"}
+          </button>
+          <button
+            onClick={handleAutoLabel}
+            disabled={labelling}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+          >
+            {labelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            {labelling ? "Running..." : "Run Auto-Label"}
+          </button>
+        </div>
       </div>
+
+      {uploadProgress && (
+        <div className="mb-4 p-3 bg-green-50 text-green-700 rounded-lg text-sm">
+          {uploadProgress}
+        </div>
+      )}
 
       {/* Stats */}
       {stats && (

@@ -132,6 +132,18 @@ export const api = {
   bulkConfirmLabels: (keyframeKeys: string[], confirmedLabel: string) =>
     postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel }),
 
+  uploadTrainingImages: async (files: File[]) => {
+    const formData = new FormData();
+    files.forEach((f) => formData.append("files", f));
+    const res = await fetch(`${BASE}/ml/labels/upload`, {
+      method: "POST",
+      headers: { ...authHeaders() },
+      body: formData,
+    });
+    if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+    return res.json() as Promise<{ uploaded: number; errors: string[]; labels: Record<string, string>[] }>;
+  },
+
   // Streaming
   startStream: (thingName: string) =>
     postJson<StreamStartResult>(`/stream/${thingName}/start`),
