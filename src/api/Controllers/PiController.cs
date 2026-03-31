@@ -187,22 +187,10 @@ public class PiController : ControllerBase
         if (result == null || result.GetValueOrDefault("id") != commandId)
             return Ok(new { commandId, status = "pending" });
 
-        var status = result.GetValueOrDefault("status", "unknown");
-
-        // Clear desired.command as belt-and-suspenders cleanup
-        if (status is "success" or "failed" or "skipped")
-        {
-            try
-            {
-                await _piUpdateService.ClearDesiredCommandAsync(thingName);
-            }
-            catch { /* Best effort */ }
-        }
-
         return Ok(new
         {
             commandId,
-            status,
+            status = result.GetValueOrDefault("status", "unknown"),
             message = result.GetValueOrDefault("message"),
             error = result.GetValueOrDefault("error"),
             completedAt = result.GetValueOrDefault("completedAt")

@@ -300,19 +300,6 @@ public class PiUpdateService
         await Task.WhenAll(tasks);
     }
 
-    public async Task ClearDesiredCommandAsync(string thingName)
-    {
-        var payload = JsonSerializer.Serialize(new
-        {
-            state = new { desired = new { command = (object?)null } }
-        });
-        await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
-        {
-            ThingName = thingName,
-            Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
-        });
-    }
-
     private static readonly HashSet<string> AllowedCommands = new()
     {
         "restart-motion", "restart-uploader", "restart-agent",
@@ -327,23 +314,16 @@ public class PiUpdateService
         var commandId = Guid.NewGuid().ToString("N");
         var payload = JsonSerializer.Serialize(new
         {
-            state = new
-            {
-                desired = new
-                {
-                    command = new
-                    {
-                        id = commandId,
-                        action,
-                        requestedAt = DateTime.UtcNow.ToString("O")
-                    }
-                }
-            }
+            id = commandId,
+            action,
+            requestedAt = DateTime.UtcNow.ToString("O")
         });
 
-        await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
+        var topic = $"snoutspotter/{thingName}/commands";
+        await _iotData.PublishAsync(new Amazon.IotData.Model.PublishRequest
         {
-            ThingName = thingName,
+            Topic = topic,
+            Qos = 1,
             Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
         });
 
