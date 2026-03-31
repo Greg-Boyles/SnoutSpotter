@@ -111,8 +111,14 @@ def on_shadow_get_accepted(topic, payload, **kwargs):
 
         desired_command = delta.get("command")
         if desired_command:
-            logger.info(f"Pending command delta on startup: {desired_command.get('action')}")
-            on_shadow_delta.pending_command = desired_command
+            # Check if this command was already executed (compare with reported.commandResult.id)
+            reported = state.get("reported", {})
+            last_result = reported.get("commandResult", {})
+            if last_result.get("id") == desired_command.get("id"):
+                logger.info(f"Startup: command {desired_command.get('id')} already executed — skipping")
+            else:
+                logger.info(f"Pending command delta on startup: {desired_command.get('action')}")
+                on_shadow_delta.pending_command = desired_command
 
         if not desired_version and not desired_config and "streaming" not in delta and not desired_command:
             logger.info("No pending shadow delta")
