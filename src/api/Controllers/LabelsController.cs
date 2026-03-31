@@ -10,9 +10,11 @@ namespace SnoutSpotter.Api.Controllers;
 public class LabelsController : ControllerBase
 {
     private readonly LabelService _labelService;
+    private readonly ExportService _exportService;
 
-    public LabelsController(LabelService labelService)
+    public LabelsController(LabelService labelService, ExportService exportService)
     {
+        _exportService = exportService;
         _labelService = labelService;
     }
 
@@ -123,6 +125,43 @@ public class LabelsController : ControllerBase
         }
 
         return Ok(new { uploaded = results.Count, errors, labels = results });
+    }
+
+    [HttpPost("export")]
+    public async Task<ActionResult> TriggerExport()
+    {
+        try
+        {
+            var exportId = await _exportService.TriggerExportAsync();
+            return Ok(new { exportId, message = "Export started" });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    [HttpGet("exports")]
+    public async Task<ActionResult> ListExports()
+    {
+        var exports = await _exportService.ListExportsAsync();
+        return Ok(new { exports });
+    }
+
+    [HttpGet("exports/{exportId}/download")]
+    public async Task<ActionResult> GetExportDownload(string exportId)
+    {
+        var url = await _exportService.GetDownloadUrlAsync(exportId);
+        if (url == null)
+            return NotFound(new { error = "Export not found or not ready" });
+        return Ok(new { downloadUrl = url });
+    }
+
+    [HttpDelete("exports/{exportId}")]
+    public async Task<ActionResult> DeleteExport(string exportId)
+    {
+        await _exportService.DeleteExportAsync(exportId);
+        return Ok(new { message = "Export deleted" });
     }
 }
 

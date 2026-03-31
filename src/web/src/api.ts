@@ -144,6 +144,19 @@ export const api = {
     return res.json() as Promise<{ uploaded: number; errors: string[]; labels: Record<string, string>[] }>;
   },
 
+  // Training exports
+  triggerExport: () =>
+    postJson<{ exportId: string; message: string }>("/ml/export"),
+
+  listExports: () =>
+    fetchJson<{ exports: Record<string, string>[] }>("/ml/exports"),
+
+  getExportDownload: (exportId: string) =>
+    fetchJson<{ downloadUrl: string }>(`/ml/exports/${exportId}/download`),
+
+  deleteExport: (exportId: string) =>
+    deleteJson<{ message: string }>(`/ml/exports/${exportId}`),
+
   // Streaming
   startStream: (thingName: string) =>
     postJson<StreamStartResult>(`/stream/${thingName}/start`),

@@ -12,6 +12,7 @@ import DeviceLogs from "./pages/DeviceLogs";
 import LiveView from "./pages/LiveView";
 import CommandHistory from "./pages/CommandHistory";
 import Labels from "./pages/Labels";
+import TrainingExports from "./pages/TrainingExports";
 import { setAuthGetter } from "./api";
 
 const navItems = [
@@ -102,6 +103,7 @@ export default function App() {
                   <Route path="/detections" element={<Detections />} />
                   <Route path="/live" element={<LiveView />} />
                   <Route path="/labels" element={<Labels />} />
+                  <Route path="/exports" element={<TrainingExports />} />
                   <Route path="/health" element={<SystemHealthPage />} />
                   <Route path="/device/:thingName/config" element={<DeviceConfig />} />
                   <Route path="/device/:thingName/logs" element={<DeviceLogs />} />
