@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package } from "lucide-react";
 import { api } from "../api";
 
 type Filter = "all" | "dog" | "no_dog" | "unreviewed";
@@ -38,6 +39,7 @@ export default function Labels() {
   const [updating, setUpdating] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
+  const [exporting, setExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadStats = () => api.getLabelStats().then(setStats).catch(console.error);
@@ -176,6 +178,24 @@ export default function Labels() {
             {labelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             {labelling ? "Running..." : "Run Auto-Label"}
           </button>
+          <button
+            onClick={async () => {
+              setExporting(true);
+              try { await api.triggerExport(); } catch (e) { console.error(e); }
+              setExporting(false);
+            }}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50"
+          >
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+            {exporting ? "Exporting..." : "Export Dataset"}
+          </button>
+          <Link
+            to="/exports"
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
+          >
+            View Exports
+          </Link>
         </div>
       </div>
 
