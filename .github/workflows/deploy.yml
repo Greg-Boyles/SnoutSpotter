@@ -29,6 +29,7 @@ jobs:
       pi-mgmt: ${{ steps.filter.outputs.pi-mgmt }}
       log-ingestion: ${{ steps.filter.outputs.log-ingestion }}
       command-ack: ${{ steps.filter.outputs.command-ack }}
+      auto-label: ${{ steps.filter.outputs.auto-label }}
       web: ${{ steps.filter.outputs.web }}
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +56,9 @@ jobs:
               - 'src/infra/**'
             command-ack:
               - 'src/lambdas/SnoutSpotter.Lambda.CommandAck/**'
+              - 'src/infra/**'
+            auto-label:
+              - 'src/lambdas/SnoutSpotter.Lambda.AutoLabel/**'
               - 'src/infra/**'
             web:
               - 'src/web/**'
@@ -118,6 +122,16 @@ jobs:
     uses: ./.github/workflows/build-log-ingestion-image.yml
     secrets: inherit
 
+  build-auto-label-image:
+    name: Build auto-label image
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.auto-label == 'true' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-auto-label-image.yml
+    secrets: inherit
+
   build-command-ack-image:
     name: Build command ack image
     needs: [changes, stage-1-infra]
@@ -177,6 +191,16 @@ jobs:
       !failure() && !cancelled() &&
       needs.build-log-ingestion-image.result == 'success'
     uses: ./.github/workflows/deploy-log-ingestion.yml
+    secrets: inherit
+
+  deploy-auto-label:
+    name: Deploy auto-label
+    needs: build-auto-label-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-auto-label-image.result == 'success'
+    uses: ./.github/workflows/deploy-auto-label.yml
     secrets: inherit
 
   deploy-command-ack:
