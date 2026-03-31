@@ -154,6 +154,49 @@ public class PiController : ControllerBase
         var logs = await _logService.GetLogsAsync(thingName, minutes, level, service, limit);
         return Ok(new { logs, thingName, queryMinutes = minutes });
     }
+
+    [HttpPost("{thingName}/command")]
+    public async Task<ActionResult> SendCommand(string thingName, [FromBody] CommandRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Action))
+            return BadRequest(new { error = "Action is required" });
+
+        try
+        {
+            var commandId = await _piUpdateService.SendCommandAsync(thingName, request.Action);
+            return Ok(new { commandId, message = $"Command '{request.Action}' sent to {thingName}" });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    [HttpGet("{thingName}/command/{commandId}")]
+    public async Task<ActionResult> GetCommandResult(string thingName, string commandId)
+    {
+        var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
+        if (shadow == null)
+            return NotFound(new { error = "Device not found" });
+
+        var result = shadow.CommandResult;
+        if (result == null || result.GetValueOrDefault("id") != commandId)
+            return Ok(new { commandId, status = "pending" });
+
+        return Ok(new
+        {
+            commandId,
+            status = result.GetValueOrDefault("status", "unknown"),
+            message = result.GetValueOrDefault("message"),
+            error = result.GetValueOrDefault("error"),
+            completedAt = result.GetValueOrDefault("completedAt")
+        });
+    }
 }
 
 public record UpdateRequest(string? Version);
+public record CommandRequest(string Action);
