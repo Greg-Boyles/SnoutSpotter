@@ -18,7 +18,9 @@ public class CoreStack : Stack
     public Repository LogIngestionEcrRepo { get; }
     public Repository CommandAckEcrRepo { get; }
     public Table LabelsTable { get; }
+    public Table ExportsTable { get; }
     public Repository AutoLabelEcrRepo { get; }
+    public Repository ExportDatasetEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -238,6 +240,30 @@ public class CoreStack : Stack
         AutoLabelEcrRepo = new Repository(this, "AutoLabelEcrRepo", new RepositoryProps
         {
             RepositoryName = "snout-spotter-auto-label",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        // DynamoDB table for training dataset export manifests
+        ExportsTable = new Table(this, "ExportsTable", new TableProps
+        {
+            TableName = "snout-spotter-exports",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "export_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.DESTROY,
+        });
+
+        // ECR repository for ExportDataset Lambda
+        ExportDatasetEcrRepo = new Repository(this, "ExportDatasetEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-export-dataset",
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {
