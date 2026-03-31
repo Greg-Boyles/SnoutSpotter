@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Amazon.IoT;
 using Amazon.IoT.Model;
-using Amazon.Runtime;
 using Amazon.SecurityToken;
 using Amazon.SecurityToken.Model;
 using Microsoft.AspNetCore.Authorization;
@@ -55,7 +54,9 @@ public class IotController : ControllerBase
             var creds = assumeResponse.Credentials;
             var presignedUrl = CreatePresignedMqttUrl(
                 _cachedIotEndpoint,
-                new ImmutableCredentials(creds.AccessKeyId, creds.SecretAccessKey, creds.SessionToken),
+                creds.AccessKeyId,
+                creds.SecretAccessKey,
+                creds.SessionToken,
                 "eu-west-1"
             );
 
@@ -74,7 +75,7 @@ public class IotController : ControllerBase
     }
 
     private static string CreatePresignedMqttUrl(
-        string host, ImmutableCredentials credentials, string region)
+        string host, string accessKey, string secretKey, string sessionToken, string region)
     {
         var now = DateTime.UtcNow;
         var datestamp = now.ToString("yyyyMMdd");
@@ -82,38 +83,67 @@ public class IotController : ControllerBase
         var service = "iotdevicegateway";
         var credentialScope = $"{datestamp}/{region}/{service}/aws4_request";
 
-        var queryParams = new SortedDictionary<string, string>
+        // Build query parameters — must be sorted by key for SigV4
+        // Use custom encoding that matches AWS SigV4 requirements exactly
+        var qp = new SortedDictionary<string, string>
         {
             ["X-Amz-Algorithm"] = "AWS4-HMAC-SHA256",
-            ["X-Amz-Credential"] = $"{credentials.AccessKey}/{credentialScope}",
+            ["X-Amz-Credential"] = $"{accessKey}/{credentialScope}",
             ["X-Amz-Date"] = amzDate,
             ["X-Amz-Expires"] = "86400",
             ["X-Amz-SignedHeaders"] = "host"
         };
 
-        if (!string.IsNullOrEmpty(credentials.Token))
-            queryParams["X-Amz-Security-Token"] = credentials.Token;
+        if (!string.IsNullOrEmpty(sessionToken))
+            qp["X-Amz-Security-Token"] = sessionToken;
 
         var canonicalQueryString = string.Join("&",
-            queryParams.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+            qp.Select(kv => $"{AwsEncode(kv.Key)}={AwsEncode(kv.Value)}"));
 
-        var canonicalRequest =
-            $"GET\n/mqtt\n{canonicalQueryString}\nhost:{host}\n\nhost\n" +
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        var canonicalHeaders = $"host:{host}\n";
+        var payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-        var stringToSign =
-            $"AWS4-HMAC-SHA256\n{amzDate}\n{credentialScope}\n" +
-            Hex(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalRequest)));
+        var canonicalRequest = string.Join("\n",
+            "GET", "/mqtt", canonicalQueryString, canonicalHeaders, "host", payloadHash);
 
-        var signingKey = GetSignatureKey(credentials.SecretKey, datestamp, region, service);
+        var stringToSign = string.Join("\n",
+            "AWS4-HMAC-SHA256", amzDate, credentialScope,
+            Hex(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalRequest))));
+
+        var signingKey = DeriveSigningKey(secretKey, datestamp, region, service);
         var signature = Hex(HMACSHA256.HashData(signingKey, Encoding.UTF8.GetBytes(stringToSign)));
 
         return $"wss://{host}/mqtt?{canonicalQueryString}&X-Amz-Signature={signature}";
     }
 
-    private static byte[] GetSignatureKey(string key, string datestamp, string region, string service)
+    /// <summary>
+    /// RFC 3986 percent-encoding as required by AWS SigV4.
+    /// Uri.EscapeDataString doesn't encode all characters SigV4 requires.
+    /// </summary>
+    private static string AwsEncode(string value)
     {
-        var kDate = HMACSHA256.HashData(Encoding.UTF8.GetBytes($"AWS4{key}"), Encoding.UTF8.GetBytes(datestamp));
+        var encoded = new StringBuilder();
+        foreach (var c in value)
+        {
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+            {
+                encoded.Append(c);
+            }
+            else
+            {
+                foreach (var b in Encoding.UTF8.GetBytes(new[] { c }))
+                {
+                    encoded.Append($"%{b:X2}");
+                }
+            }
+        }
+        return encoded.ToString();
+    }
+
+    private static byte[] DeriveSigningKey(string secretKey, string datestamp, string region, string service)
+    {
+        var kDate = HMACSHA256.HashData(Encoding.UTF8.GetBytes($"AWS4{secretKey}"), Encoding.UTF8.GetBytes(datestamp));
         var kRegion = HMACSHA256.HashData(kDate, Encoding.UTF8.GetBytes(region));
         var kService = HMACSHA256.HashData(kRegion, Encoding.UTF8.GetBytes(service));
         return HMACSHA256.HashData(kService, Encoding.UTF8.GetBytes("aws4_request"));
