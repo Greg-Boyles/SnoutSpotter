@@ -14,7 +14,9 @@ public class ApiStackProps : StackProps
     public required Bucket DataBucket { get; init; }
     public required Table ClipsTable { get; init; }
     public required Table CommandsTable { get; init; }
+    public required Table LabelsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
+    public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public required string ImageTag { get; init; }
     public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
     public required string OktaIssuer { get; init; }
@@ -47,12 +49,15 @@ public class ApiStack : Stack
                 ["OKTA_ISSUER"] = props.OktaIssuer,
                 ["ALLOWED_ORIGIN"] = props.AllowedOrigin,
                 ["PI_LOG_GROUP"] = "/snoutspotter/pi-logs",
-                ["COMMANDS_TABLE"] = props.CommandsTable.TableName
+                ["COMMANDS_TABLE"] = props.CommandsTable.TableName,
+                ["LABELS_TABLE"] = props.LabelsTable.TableName,
+                ["AUTO_LABEL_FUNCTION"] = props.AutoLabelFunctionName
             }
         });
 
         // Grant permissions
         props.CommandsTable.GrantReadWriteData(apiFunction);
+        props.LabelsTable.GrantReadWriteData(apiFunction);
         props.DataBucket.GrantRead(apiFunction);
         props.ClipsTable.GrantReadData(apiFunction);
         props.DataBucket.GrantRead(apiFunction, "raw-clips/*");
@@ -87,6 +92,14 @@ public class ApiStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[] { "iot:ListThingsInThingGroup" },
             Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
+        }));
+
+        // Lambda invoke for auto-label trigger
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "lambda:InvokeFunction" },
+            Resources = new[] { $"arn:aws:lambda:{Region}:{Account}:function:{props.AutoLabelFunctionName}" }
         }));
 
         // IoT Publish for device commands
