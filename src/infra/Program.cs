@@ -50,8 +50,7 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
 var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new IoTStackProps
 {
     Env = env,
-    DataBucket = coreStack.DataBucket,
-    CommandsTable = coreStack.CommandsTable
+    DataBucket = coreStack.DataBucket
 });
 
 var logIngestionStack = new LogIngestionStack(app, "SnoutSpotter-LogIngestion", new LogIngestionStackProps
@@ -60,6 +59,14 @@ var logIngestionStack = new LogIngestionStack(app, "SnoutSpotter-LogIngestion", 
     LogIngestionEcrRepo = coreStack.LogIngestionEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     PiLogGroupName = iotStack.PiLogGroupName
+});
+
+var commandAckStack = new CommandAckStack(app, "SnoutSpotter-CommandAck", new CommandAckStackProps
+{
+    Env = env,
+    CommandAckEcrRepo = coreStack.CommandAckEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    CommandsTable = coreStack.CommandsTable
 });
 
 var piMgmtStack = new PiMgmtStack(app, "SnoutSpotter-PiMgmt", new PiMgmtStackProps

@@ -1,5 +1,4 @@
 using Amazon.CDK;
-using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Logs;
 using Amazon.CDK.AWS.S3;
@@ -11,7 +10,6 @@ namespace SnoutSpotter.Infra.Stacks;
 public class IoTStackProps : StackProps
 {
     public required Bucket DataBucket { get; init; }
-    public required Table CommandsTable { get; init; }
 }
 
 public class IoTStack : Stack
@@ -138,37 +136,6 @@ public class IoTStack : Stack
             LogGroupName = PiLogGroupName,
             Retention = RetentionDays.ONE_WEEK,
             RemovalPolicy = RemovalPolicy.DESTROY
-        });
-
-        // IoT Rule: command ack → DynamoDB
-        var commandAckRole = new Role(this, "CommandAckRole", new RoleProps
-        {
-            AssumedBy = new ServicePrincipal("iot.amazonaws.com"),
-        });
-        props.CommandsTable.GrantWriteData(commandAckRole);
-
-        _ = new IoT.CfnTopicRule(this, "CommandAckRule", new IoT.CfnTopicRuleProps
-        {
-            RuleName = "snoutspotter_command_ack",
-            TopicRulePayload = new IoT.CfnTopicRule.TopicRulePayloadProperty
-            {
-                Sql = "SELECT command_id, status, message, error, completed_at FROM 'snoutspotter/+/commands/ack'",
-                AwsIotSqlVersion = "2016-03-23",
-                Actions = new[]
-                {
-                    new IoT.CfnTopicRule.ActionProperty
-                    {
-                        DynamoDb = new IoT.CfnTopicRule.DynamoDBActionProperty
-                        {
-                            TableName = props.CommandsTable.TableName,
-                            HashKeyField = "command_id",
-                            HashKeyValue = "${command_id}",
-                            HashKeyType = "STRING",
-                            RoleArn = commandAckRole.RoleArn
-                        }
-                    }
-                }
-            }
         });
 
         // Outputs
