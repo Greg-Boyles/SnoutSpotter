@@ -68,6 +68,13 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_c
             time.sleep(2)
             subprocess.run(["sudo", "reboot"], timeout=5)
 
+        elif action == "restart-agent":
+            # Report before restarting — agent process will die during restart
+            _report_result(connection, thing_name, cmd_id, "success", message="snoutspotter-agent restarting")
+            last_command_id[0] = cmd_id
+            time.sleep(2)
+            subprocess.run(["sudo", "systemctl", "restart", "snoutspotter-agent"], timeout=30)
+
         elif action.startswith("restart-"):
             svc_name = action.replace("restart-", "")
             svc = f"snoutspotter-{svc_name}"
