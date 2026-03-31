@@ -1,5 +1,6 @@
 """Device command execution from shadow delta."""
 
+import json
 import logging
 import shutil
 import subprocess
@@ -7,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shadow import update_shadow
+from awscrt import mqtt
 
 logger = logging.getLogger("snout-spotter-agent")
 
@@ -105,6 +106,7 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_c
 
 def _report_result(connection, thing_name: str, cmd_id: str, status: str,
                    message: str = "", error: str = ""):
+    """Report command result AND clear desired.command in one shadow update to prevent delta loops."""
     result: dict = {
         "id": cmd_id,
         "status": status,
@@ -114,4 +116,14 @@ def _report_result(connection, thing_name: str, cmd_id: str, status: str,
         result["message"] = message
     if error:
         result["error"] = error
-    update_shadow(connection, thing_name, {"commandResult": result})
+
+    # Set desired.command to null + reported.commandResult in one atomic update
+    payload = json.dumps({
+        "state": {
+            "desired": {"command": None},
+            "reported": {"commandResult": result}
+        }
+    })
+    topic = f"$aws/things/{thing_name}/shadow/update"
+    connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
+    logger.info(f"Command result reported and desired.command cleared: {status}")
