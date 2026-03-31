@@ -19,6 +19,9 @@ import {
   Thermometer,
   Settings,
   FileText,
+  RotateCw,
+  Power,
+  FolderX,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
@@ -66,6 +69,35 @@ export default function SystemHealthPage() {
   const [registering, setRegistering] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [commandRunning, setCommandRunning] = useState<Record<string, string>>({});
+
+  const sendCommand = async (thingName: string, action: string) => {
+    const key = `${thingName}:${action}`;
+    setCommandRunning((prev) => ({ ...prev, [key]: "sending" }));
+    try {
+      const { commandId } = await api.sendCommand(thingName, action);
+      setCommandRunning((prev) => ({ ...prev, [key]: "polling" }));
+      // Poll for result
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, i < 3 ? 2000 : 5000));
+        const result = await api.getCommandResult(thingName, commandId);
+        if (result.status !== "pending") {
+          setUpdateMessage(
+            result.status === "success"
+              ? `${action} on ${thingName}: ${result.message || "done"}`
+              : `${action} failed: ${result.error || result.status}`
+          );
+          setCommandRunning((prev) => { const n = { ...prev }; delete n[key]; return n; });
+          refreshHealth();
+          return;
+        }
+      }
+      setUpdateMessage(`${action}: timed out waiting for result`);
+    } catch (e) {
+      setUpdateMessage(`${action} failed: ${(e as Error).message}`);
+    }
+    setCommandRunning((prev) => { const n = { ...prev }; delete n[key]; return n; });
+  };
 
   const refreshHealth = () =>
     Promise.all([api.getHealth(), api.getDevices()])
@@ -419,19 +451,31 @@ export default function SystemHealthPage() {
             {device.services && (
               <div className="mt-3 pt-3 border-t border-gray-100">
                 <div className="flex items-center flex-wrap gap-1.5">
-                  {Object.entries(device.services).map(([name, status]) => (
-                    <span
-                      key={name}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-                        status === "active"
-                          ? "bg-green-50 text-green-700"
-                          : "bg-red-50 text-red-700"
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${status === "active" ? "bg-green-500" : "bg-red-500"}`} />
-                      {name}
-                    </span>
-                  ))}
+                  {Object.entries(device.services).map(([name, status]) => {
+                    const cmdKey = `${device.thingName}:restart-${name}`;
+                    const isRestarting = !!commandRunning[cmdKey];
+                    return (
+                      <span
+                        key={name}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                          status === "active"
+                            ? "bg-green-50 text-green-700"
+                            : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${status === "active" ? "bg-green-500" : "bg-red-500"}`} />
+                        {name}
+                        <button
+                          onClick={() => sendCommand(device.thingName, `restart-${name}`)}
+                          disabled={isRestarting}
+                          className="p-0.5 rounded hover:bg-black hover:bg-opacity-10 disabled:opacity-50"
+                          title={`Restart ${name}`}
+                        >
+                          <RotateCw className={`w-3 h-3 ${isRestarting ? "animate-spin" : ""}`} />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -608,22 +652,46 @@ export default function SystemHealthPage() {
               </div>
             )}
 
-            {/* Device Settings & Logs Links */}
-            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4">
+            {/* Device Actions */}
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center flex-wrap gap-2">
               <Link
                 to={`/device/${device.thingName}/config`}
-                className="flex items-center gap-2 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
+                className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
               >
                 <Settings className="w-3.5 h-3.5" />
-                Device Settings
+                Settings
               </Link>
               <Link
                 to={`/device/${device.thingName}/logs`}
-                className="flex items-center gap-2 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
+                className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-blue-600 transition-colors"
               >
                 <FileText className="w-3.5 h-3.5" />
-                Device Logs
+                Logs
               </Link>
+              <button
+                onClick={() => { if (confirm("Reboot this device?")) sendCommand(device.thingName, "reboot"); }}
+                disabled={!!commandRunning[`${device.thingName}:reboot`]}
+                className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-red-600 transition-colors disabled:opacity-50"
+              >
+                <Power className="w-3.5 h-3.5" />
+                Reboot
+              </button>
+              <button
+                onClick={() => sendCommand(device.thingName, "clear-clips")}
+                disabled={!!commandRunning[`${device.thingName}:clear-clips`]}
+                className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-amber-600 transition-colors disabled:opacity-50"
+              >
+                <FolderX className="w-3.5 h-3.5" />
+                Clear Clips
+              </button>
+              <button
+                onClick={() => sendCommand(device.thingName, "clear-backups")}
+                disabled={!!commandRunning[`${device.thingName}:clear-backups`]}
+                className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-amber-600 transition-colors disabled:opacity-50"
+              >
+                <FolderX className="w-3.5 h-3.5" />
+                Clear Backups
+              </button>
             </div>
 
             {device.updateAvailable && (
