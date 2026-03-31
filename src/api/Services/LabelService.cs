@@ -203,4 +203,48 @@ public class LabelService
             Expires = DateTime.UtcNow.AddMinutes(15)
         });
     }
+
+    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName)
+    {
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        if (ext is not (".jpg" or ".jpeg" or ".png"))
+            ext = ".jpg";
+
+        var timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ss");
+        var id = Guid.NewGuid().ToString("N")[..8];
+        var s3Key = $"training-uploads/{timestamp}_{id}{ext}";
+
+        await _s3.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest
+        {
+            BucketName = _bucketName,
+            Key = s3Key,
+            InputStream = imageStream,
+            ContentType = ext == ".png" ? "image/png" : "image/jpeg"
+        });
+
+        var now = DateTime.UtcNow.ToString("O");
+        var item = new Dictionary<string, AttributeValue>
+        {
+            ["keyframe_key"] = new() { S = s3Key },
+            ["clip_id"] = new() { S = "uploaded" },
+            ["auto_label"] = new() { S = "dog" },
+            ["confirmed_label"] = new() { S = "my_dog" },
+            ["confidence"] = new() { N = "1" },
+            ["bounding_boxes"] = new() { S = "[]" },
+            ["reviewed"] = new() { S = "true" },
+            ["labelled_at"] = new() { S = now },
+            ["reviewed_at"] = new() { S = now },
+        };
+
+        await _dynamoDb.PutItemAsync(_labelsTable, item);
+
+        return new Dictionary<string, string>
+        {
+            ["keyframe_key"] = s3Key,
+            ["auto_label"] = "dog",
+            ["confirmed_label"] = "my_dog",
+            ["reviewed"] = "true",
+            ["imageUrl"] = GetPresignedUrl(s3Key)
+        };
+    }
 }
