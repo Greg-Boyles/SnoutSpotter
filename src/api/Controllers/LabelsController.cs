@@ -83,6 +83,47 @@ public class LabelsController : ControllerBase
         await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel);
         return Ok(new { message = $"Updated {request.KeyframeKeys.Count} labels" });
     }
+
+    [HttpPost("labels/upload")]
+    [RequestSizeLimit(100 * 1024 * 1024)] // 100MB total
+    public async Task<ActionResult> UploadTrainingImages()
+    {
+        var files = Request.Form.Files;
+        if (files.Count == 0)
+            return BadRequest(new { error = "No files uploaded" });
+
+        var allowedTypes = new HashSet<string> { "image/jpeg", "image/png", "image/jpg" };
+        var results = new List<object>();
+        var errors = new List<string>();
+
+        foreach (var file in files)
+        {
+            if (!allowedTypes.Contains(file.ContentType.ToLowerInvariant()))
+            {
+                errors.Add($"{file.FileName}: unsupported type {file.ContentType}");
+                continue;
+            }
+
+            if (file.Length > 10 * 1024 * 1024)
+            {
+                errors.Add($"{file.FileName}: exceeds 10MB limit");
+                continue;
+            }
+
+            try
+            {
+                var label = await _labelService.UploadTrainingImageAsync(
+                    file.OpenReadStream(), file.FileName);
+                results.Add(label);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{file.FileName}: {ex.Message}");
+            }
+        }
+
+        return Ok(new { uploaded = results.Count, errors, labels = results });
+    }
 }
 
 public record UpdateLabelRequest(string ConfirmedLabel);
