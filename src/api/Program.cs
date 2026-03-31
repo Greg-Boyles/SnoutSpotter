@@ -41,6 +41,7 @@ builder.Services.AddSingleton<HealthService>();
 builder.Services.AddSingleton<PiUpdateService>();
 builder.Services.AddSingleton<LogService>();
 builder.Services.AddSingleton<LabelService>();
+builder.Services.AddSingleton<ExportService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
