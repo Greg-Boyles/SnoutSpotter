@@ -1,95 +1,31 @@
 #!/usr/bin/env python3
-"""SnoutSpotter Pi agent — health heartbeat, shadow reporting, and OTA updates via a single MQTT connection."""
+"""SnoutSpotter Pi agent — thin orchestrator for MQTT connection and shadow delta dispatch."""
 
 import json
 import os
-import platform
-import re
-import shutil
-import socket
-import sqlite3
 import subprocess
 import sys
-import tarfile
 import time
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-import boto3
-import yaml
-
 from awsiot import mqtt_connection_builder
 from awscrt import mqtt
 
-import config_schema
 import config_loader
 import iot_credential_provider
+from ota import load_version, apply_update
+from shadow import update_shadow, report_full_shadow
+from remote_config import apply_remote_config
+from log_shipping import collect_and_ship_logs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("snout-spotter-agent")
 
 INSTALL_DIR = Path(__file__).parent
-BACKUP_DIR = Path.home() / ".snoutspotter" / "backups"
 STATUS_DIR = Path.home() / ".snoutspotter"
-SERVICES = ["snoutspotter-motion", "snoutspotter-uploader", "snoutspotter-agent"]
-
 SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
-CONFIG_RELOAD_MOTION = STATUS_DIR / "config-reload-motion"
-CONFIG_RELOAD_UPLOADER = STATUS_DIR / "config-reload-uploader"
-
-# Cached values that don't change at runtime
-_cached_pi_model = None
-_cached_python_version = None
-_cached_sensor_model = None
-
-
-# ── Config & version ──────────────────────────────────────────────────
-
-def load_config() -> dict:
-    return config_loader.load_config()
-
-
-def load_version() -> str:
-    try:
-        with open(INSTALL_DIR / "version.json") as f:
-            return json.load(f).get("version", "unknown")
-    except Exception:
-        return "unknown"
-
-
-def save_version(version: str):
-    with open(INSTALL_DIR / "version.json", "w") as f:
-        json.dump({"version": version, "updated_at": datetime.now(timezone.utc).isoformat()}, f, indent=4)
-
-
-# ── Service status ────────────────────────────────────────────────────
-
-def get_service_status(service_name: str) -> str:
-    try:
-        result = subprocess.run(
-            ["systemctl", "is-active", service_name],
-            capture_output=True, text=True, timeout=5
-        )
-        return result.stdout.strip()
-    except Exception:
-        return "unknown"
-
-
-def check_services_healthy() -> bool:
-    for svc in SERVICES:
-        try:
-            result = subprocess.run(
-                ["systemctl", "is-active", svc],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.stdout.strip() != "active":
-                logger.warning(f"Service {svc} is not active: {result.stdout.strip()}")
-                return False
-        except Exception as e:
-            logger.warning(f"Failed to check {svc}: {e}")
-            return False
-    return True
 
 
 # ── CloudWatch heartbeat ──────────────────────────────────────────────
@@ -107,618 +43,6 @@ def send_heartbeat(cloudwatch, namespace: str, metric_name: str):
         ],
     )
     logger.info("CloudWatch heartbeat sent")
-
-
-# ── Health data gathering ─────────────────────────────────────────────
-
-def _read_status_file(filename: str) -> dict | None:
-    try:
-        path = STATUS_DIR / filename
-        if path.exists():
-            return json.loads(path.read_text())
-    except Exception:
-        pass
-    return None
-
-
-def get_camera_status(config: dict) -> dict:
-    try:
-        connected = os.path.exists("/dev/video0")
-        healthy = connected
-
-        motion_status = _read_status_file("motion-status.json")
-        if motion_status is not None:
-            healthy = motion_status.get("cameraOk", connected)
-
-        result = {"connected": connected, "healthy": healthy}
-
-        # Sensor model (cached)
-        global _cached_sensor_model
-        if _cached_sensor_model is None:
-            try:
-                out = subprocess.run(
-                    ["journalctl", "-u", "snoutspotter-motion", "--no-pager", "-n", "50"],
-                    capture_output=True, text=True, timeout=5
-                )
-                match = re.search(r"Sensor: .*/(\w+)@", out.stdout)
-                if match:
-                    _cached_sensor_model = match.group(1)
-            except Exception:
-                pass
-        if _cached_sensor_model:
-            result["sensor"] = _cached_sensor_model
-
-        # Native sensor resolution from v4l2
-        if connected:
-            try:
-                out = subprocess.run(
-                    ["v4l2-ctl", "-d", "/dev/video0", "--get-fmt-video"],
-                    capture_output=True, text=True, timeout=5
-                )
-                match = re.search(r"Width/Height\s*:\s*(\d+/\d+)", out.stdout)
-                if match:
-                    result["resolution"] = match.group(1).replace("/", "x")
-            except Exception:
-                pass
-
-        # Record resolution from config
-        rec_res = config.get("camera", {}).get("record_resolution")
-        if rec_res and len(rec_res) == 2:
-            result["recordResolution"] = f"{rec_res[0]}x{rec_res[1]}"
-
-        return result
-    except Exception:
-        return {"connected": False, "healthy": False}
-
-
-def get_last_motion_time() -> str | None:
-    try:
-        status = _read_status_file("motion-status.json")
-        if status:
-            return status.get("lastMotionAt")
-    except Exception:
-        pass
-    return None
-
-
-def get_last_upload_time() -> str | None:
-    try:
-        db_path = STATUS_DIR / "uploads.db"
-        if not db_path.exists():
-            return None
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        cursor = conn.execute("SELECT MAX(uploaded_at) FROM uploads WHERE status = 'uploaded'")
-        row = cursor.fetchone()
-        conn.close()
-        return row[0] if row and row[0] else None
-    except Exception:
-        return None
-
-
-def get_upload_stats() -> dict:
-    try:
-        db_path = STATUS_DIR / "uploads.db"
-        if not db_path.exists():
-            return {"uploadsToday": 0, "failedToday": 0, "totalUploaded": 0}
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        uploaded_today = conn.execute(
-            "SELECT COUNT(*) FROM uploads WHERE status = 'uploaded' AND uploaded_at >= ?",
-            (today,)
-        ).fetchone()[0]
-
-        failed_today = conn.execute(
-            "SELECT COUNT(*) FROM uploads WHERE status = 'failed' AND last_attempt >= ?",
-            (today,)
-        ).fetchone()[0]
-
-        total = conn.execute(
-            "SELECT COUNT(*) FROM uploads WHERE status = 'uploaded'"
-        ).fetchone()[0]
-
-        conn.close()
-        return {"uploadsToday": uploaded_today, "failedToday": failed_today, "totalUploaded": total}
-    except Exception:
-        return {"uploadsToday": 0, "failedToday": 0, "totalUploaded": 0}
-
-
-def get_clips_pending(config: dict) -> int:
-    try:
-        clips_dir = Path(config.get("recording", {}).get("output_dir", "/home/admin/clips"))
-        if clips_dir.exists():
-            return len(list(clips_dir.glob("*.mp4")))
-    except Exception:
-        pass
-    return 0
-
-
-def get_system_health() -> dict:
-    result = {}
-
-    # CPU temperature
-    try:
-        temp = Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip()
-        result["cpuTempC"] = round(int(temp) / 1000, 1)
-    except Exception:
-        pass
-
-    # Memory
-    try:
-        meminfo = Path("/proc/meminfo").read_text()
-        total = int(re.search(r"MemTotal:\s+(\d+)", meminfo).group(1))
-        available = int(re.search(r"MemAvailable:\s+(\d+)", meminfo).group(1))
-        result["memUsedPercent"] = round((1 - available / total) * 100, 1)
-    except Exception:
-        pass
-
-    # Disk
-    try:
-        usage = shutil.disk_usage("/")
-        result["diskUsedPercent"] = round(usage.used / usage.total * 100, 1)
-        result["diskFreeGb"] = round(usage.free / (1024 ** 3), 1)
-    except Exception:
-        pass
-
-    # Uptime
-    try:
-        uptime_str = Path("/proc/uptime").read_text().strip().split()[0]
-        result["uptimeSeconds"] = int(float(uptime_str))
-    except Exception:
-        pass
-
-    # Load average
-    try:
-        result["loadAvg"] = [round(x, 2) for x in os.getloadavg()]
-    except Exception:
-        pass
-
-    # Pi model (cached)
-    global _cached_pi_model
-    if _cached_pi_model is None:
-        try:
-            _cached_pi_model = Path("/proc/device-tree/model").read_text().strip().rstrip("\x00")
-        except Exception:
-            _cached_pi_model = ""
-    if _cached_pi_model:
-        result["piModel"] = _cached_pi_model
-
-    # Python version (cached)
-    global _cached_python_version
-    if _cached_python_version is None:
-        _cached_python_version = platform.python_version()
-    result["pythonVersion"] = _cached_python_version
-
-    # IP address
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        result["ipAddress"] = s.getsockname()[0]
-        s.close()
-    except Exception:
-        pass
-
-    # WiFi signal strength and SSID
-    try:
-        wireless = Path("/proc/net/wireless").read_text()
-        lines = wireless.strip().split("\n")
-        if len(lines) >= 3:
-            parts = lines[2].split()
-            result["wifiSignalDbm"] = int(float(parts[3]))
-    except Exception:
-        pass
-
-    try:
-        out = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=5)
-        ssid = out.stdout.strip()
-        if ssid:
-            result["wifiSsid"] = ssid
-    except Exception:
-        pass
-
-    return result
-
-
-# ── IoT Shadow ────────────────────────────────────────────────────────
-
-def build_shadow_state(version: str, config: dict, streaming: bool = False) -> dict:
-    services = {svc.replace("snoutspotter-", ""): get_service_status(svc) for svc in SERVICES}
-    log_cfg = config.get("log_shipping", {})
-    return {
-        "state": {
-            "reported": {
-                "version": version,
-                "hostname": socket.gethostname(),
-                "services": services,
-                "lastHeartbeat": datetime.now(timezone.utc).isoformat(),
-                "updateStatus": "idle",
-                "camera": get_camera_status(config),
-                "lastMotionAt": get_last_motion_time(),
-                "lastUploadAt": get_last_upload_time(),
-                "uploadStats": get_upload_stats(),
-                "clipsPending": get_clips_pending(config),
-                "system": get_system_health(),
-                "config": config_schema.get_configurable_values(config),
-                "logShipping": log_cfg.get("enabled", True),
-                "streaming": streaming,
-            }
-        }
-    }
-
-
-def update_shadow(connection, thing_name: str, reported: dict):
-    payload = json.dumps({"state": {"reported": reported}})
-    topic = f"$aws/things/{thing_name}/shadow/update"
-    connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
-    logger.info(f"Shadow updated: {reported}")
-
-
-def report_full_shadow(connection, thing_name: str, version: str, config: dict, streaming: bool = False):
-    shadow_state = build_shadow_state(version, config, streaming=streaming)
-    topic = f"$aws/things/{thing_name}/shadow/update"
-    payload = json.dumps(shadow_state)
-    connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
-    logger.info(f"Full shadow reported (version={version})")
-
-
-# ── Remote config ────────────────────────────────────────────────────
-
-def apply_remote_config(changes: dict, config: dict, connection, thing_name: str, heartbeat_ref: list):
-    """Validate and apply remote config changes from the shadow delta."""
-    valid_changes = {}
-    errors = {}
-
-    for key, value in changes.items():
-        ok, msg = config_schema.validate_config_value(key, value)
-        if ok:
-            valid_changes[key] = value
-        else:
-            errors[key] = msg
-            logger.warning(f"Config validation error — {msg}")
-
-    if valid_changes:
-        config_path = INSTALL_DIR / "config.yaml"
-        try:
-            with open(config_path) as f:
-                file_config = yaml.safe_load(f)
-
-            for key, value in valid_changes.items():
-                config_schema.apply_to_dict(file_config, key, value)
-                config_schema.apply_to_dict(config, key, value)  # update in-memory config too
-
-            tmp = config_path.with_suffix(".yaml.tmp")
-            with open(tmp, "w") as f:
-                yaml.dump(file_config, f, default_flow_style=False, allow_unicode=True)
-            tmp.rename(config_path)
-            logger.info(f"config.yaml updated: {list(valid_changes.keys())}")
-
-            # Update agent's own heartbeat interval in-process (no restart needed)
-            if "health.interval_seconds" in valid_changes:
-                heartbeat_ref[0] = valid_changes["health.interval_seconds"]
-                logger.info(f"Heartbeat interval updated to {heartbeat_ref[0]}s")
-
-            # Signal motion detector and uploader to hot-reload their config dicts
-            CONFIG_RELOAD_MOTION.touch(exist_ok=True)
-            CONFIG_RELOAD_UPLOADER.touch(exist_ok=True)
-
-        except Exception as e:
-            logger.error(f"Failed to write config.yaml: {e}")
-            errors["_write"] = str(e)
-
-    # Report applied config (and any errors) back to shadow
-    reported: dict = {"config": config_schema.get_configurable_values(config)}
-    if errors:
-        reported["configErrors"] = errors
-    update_shadow(connection, thing_name, reported)
-    SHADOW_DIRTY_FLAG.touch(exist_ok=True)
-
-
-# ── OTA update logic ──────────────────────────────────────────────────
-
-def backup_current(old_version: str):
-    backup_path = BACKUP_DIR / old_version
-    backup_path.mkdir(parents=True, exist_ok=True)
-    for item in INSTALL_DIR.iterdir():
-        if item.name.startswith(".") or item.name == "__pycache__":
-            continue
-        dest = backup_path / item.name
-        if item.is_dir():
-            shutil.copytree(item, dest, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, dest)
-    logger.info(f"Backed up current version ({old_version}) to {backup_path}")
-
-
-def rollback(old_version: str):
-    backup_path = BACKUP_DIR / old_version
-    if not backup_path.exists():
-        logger.error(f"Backup not found for rollback: {backup_path}")
-        return False
-    for item in backup_path.iterdir():
-        dest = INSTALL_DIR / item.name
-        if item.is_dir():
-            shutil.copytree(item, dest, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, dest)
-    logger.info(f"Rolled back to version {old_version}")
-    return True
-
-
-def parse_system_deps(path: Path) -> set[str]:
-    """Parse system-deps.txt into a set of package names, ignoring comments and blanks."""
-    if not path.exists():
-        return set()
-    packages = set()
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            packages.add(line)
-    return packages
-
-
-def install_system_deps(old_version: str | None):
-    """Install system apt packages if system-deps.txt has changed since the previous version."""
-    new_deps_path = INSTALL_DIR / "system-deps.txt"
-    new_deps = parse_system_deps(new_deps_path)
-    if not new_deps:
-        return
-
-    old_deps = set()
-    if old_version:
-        old_deps_path = BACKUP_DIR / old_version / "system-deps.txt"
-        old_deps = parse_system_deps(old_deps_path)
-
-    if new_deps == old_deps:
-        logger.info("System deps unchanged — skipping apt install")
-        return
-
-    added = new_deps - old_deps
-    if added:
-        logger.info(f"New system packages to install: {added}")
-    else:
-        logger.info("System deps file changed — ensuring all packages are installed")
-
-    packages = sorted(new_deps)
-    logger.info(f"Running apt install for: {packages}")
-    subprocess.run(["sudo", "apt-get", "update", "-qq"], timeout=120, check=True)
-    subprocess.run(
-        ["sudo", "apt-get", "install", "-y", "-qq", "--no-install-recommends"] + packages,
-        timeout=600, check=True,
-    )
-    logger.info("System packages installed successfully")
-
-
-def parse_custom_debs(path: Path) -> list[str]:
-    """Parse custom-debs.txt into a list of S3 paths, ignoring comments and blanks."""
-    if not path.exists():
-        return []
-    entries = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            entries.append(line)
-    return entries
-
-
-def _deb_package_name(deb_path: str) -> str:
-    """Extract package name from a .deb filename (e.g. 'kvssink_1.0.0_arm64.deb' -> 'kvssink')."""
-    return Path(deb_path).name.split("_")[0]
-
-
-def _is_deb_installed(package_name: str) -> bool:
-    """Check if a .deb package is installed via dpkg."""
-    try:
-        result = subprocess.run(
-            ["dpkg", "-s", package_name],
-            capture_output=True, text=True, timeout=5,
-        )
-        return "Status: install ok installed" in result.stdout
-    except Exception:
-        return False
-
-
-def install_custom_debs(old_version: str | None, bucket: str, region: str, session: boto3.Session = None):
-    """Download and install custom .deb packages from S3 if custom-debs.txt has changed or packages are missing."""
-    new_debs_path = INSTALL_DIR / "custom-debs.txt"
-    new_debs = parse_custom_debs(new_debs_path)
-    if not new_debs:
-        return
-
-    old_debs = []
-    if old_version:
-        old_debs_path = BACKUP_DIR / old_version / "custom-debs.txt"
-        old_debs = parse_custom_debs(old_debs_path)
-
-    # Check if any listed packages are not actually installed
-    missing = [p for p in new_debs if not _is_deb_installed(_deb_package_name(p))]
-
-    if new_debs == old_debs and not missing:
-        logger.info("Custom debs unchanged and all installed — skipping")
-        return
-
-    if missing:
-        logger.info(f"Missing packages detected: {[_deb_package_name(p) for p in missing]}")
-
-    s3 = (session or boto3).client("s3", region_name=region)
-    for s3_path in (missing if new_debs == old_debs else new_debs):
-        deb_name = Path(s3_path).name
-        local_path = Path(f"/tmp/{deb_name}")
-        try:
-            logger.info(f"Downloading s3://{bucket}/{s3_path}")
-            s3.download_file(bucket, s3_path, str(local_path))
-            logger.info(f"Installing {deb_name}")
-            subprocess.run(
-                ["sudo", "dpkg", "-i", str(local_path)],
-                timeout=120, check=True,
-            )
-            logger.info(f"Installed {deb_name} successfully")
-        except subprocess.CalledProcessError:
-            logger.warning(f"dpkg failed for {deb_name} — attempting to fix dependencies")
-            subprocess.run(
-                ["sudo", "apt-get", "install", "-f", "-y", "-qq"],
-                timeout=300, check=True,
-            )
-        except Exception as e:
-            logger.error(f"Failed to install {deb_name}: {e}")
-        finally:
-            if local_path.exists():
-                local_path.unlink()
-
-
-def restart_services():
-    for svc in SERVICES:
-        try:
-            subprocess.run(["sudo", "systemctl", "restart", svc], timeout=30, check=True)
-            logger.info(f"Restarted {svc}")
-        except Exception as e:
-            logger.error(f"Failed to restart {svc}: {e}")
-
-
-def apply_update(version: str, bucket: str, region: str, connection, thing_name: str, session: boto3.Session = None):
-    old_version = load_version()
-    s3_key = f"releases/pi/v{version}.tar.gz"
-    local_path = Path(f"/tmp/pi-v{version}.tar.gz")
-
-    logger.info(f"Starting update: {old_version} -> {version}")
-    update_shadow(connection, thing_name, {"updateStatus": "updating"})
-
-    try:
-        logger.info(f"Downloading s3://{bucket}/{s3_key}")
-        s3 = (session or boto3).client("s3", region_name=region)
-        s3.download_file(bucket, s3_key, str(local_path))
-
-        backup_current(old_version)
-
-        logger.info(f"Extracting to {INSTALL_DIR}")
-        with tarfile.open(local_path, "r:gz") as tar:
-            # Exclude config.yaml to preserve device-specific settings
-            members = [m for m in tar.getmembers() if m.name not in ("./config.yaml", "config.yaml")]
-            tar.extractall(path=INSTALL_DIR, members=members)
-
-        install_system_deps(old_version)
-        install_custom_debs(old_version, bucket, region, session)
-
-        logger.info("Installing Python dependencies")
-        subprocess.run(
-            ["pip3", "install", "-r", str(INSTALL_DIR / "requirements.txt"),
-             "--break-system-packages", "--quiet"],
-            timeout=120, check=True
-        )
-
-        save_version(version)
-        restart_services()
-
-        logger.info("Waiting 30 seconds for services to stabilize...")
-        time.sleep(30)
-
-        if check_services_healthy():
-            logger.info(f"Update successful: now running v{version}")
-            update_shadow(connection, thing_name, {
-                "version": version,
-                "updateStatus": "success"
-            })
-            time.sleep(60)
-            update_shadow(connection, thing_name, {"updateStatus": "idle"})
-        else:
-            raise RuntimeError("Services unhealthy after update")
-
-    except Exception as e:
-        logger.error(f"Update failed: {e}")
-        logger.info("Attempting rollback...")
-        if rollback(old_version):
-            save_version(old_version)
-            restart_services()
-        update_shadow(connection, thing_name, {
-            "version": old_version,
-            "updateStatus": "failed"
-        })
-        time.sleep(60)
-        update_shadow(connection, thing_name, {"updateStatus": "idle"})
-    finally:
-        if local_path.exists():
-            local_path.unlink()
-
-
-# ── Log shipping ─────────────────────────────────────────────────────
-
-# Map Python log level names to journalctl priority values
-_LEVEL_TO_PRIORITY = {"DEBUG": "7", "INFO": "6", "WARNING": "4", "ERROR": "3"}
-
-# Map journalctl numeric priority back to level name
-_PRIORITY_TO_LEVEL = {"7": "DEBUG", "6": "INFO", "5": "NOTICE", "4": "WARNING", "3": "ERROR", "2": "CRITICAL"}
-
-
-def _extract_log_timestamp(entry: dict) -> str:
-    """Extract a valid ISO timestamp from a journalctl JSON entry with fallbacks."""
-    for field in ("__REALTIME_USEC", "_SOURCE_REALTIME_USEC"):
-        usec_str = entry.get(field, "")
-        if usec_str and usec_str != "0":
-            try:
-                ts = datetime.fromtimestamp(int(usec_str) / 1_000_000, tz=timezone.utc)
-                if ts.year >= 2020:
-                    return ts.isoformat()
-            except (ValueError, OSError):
-                continue
-    # Last resort: use current time
-    logger.warning("No valid timestamp in journalctl entry, using current time")
-    return datetime.now(timezone.utc).isoformat()
-
-
-def collect_and_ship_logs(connection, thing_name: str, config: dict, last_log_timestamp: list):
-    """Read recent journald logs and publish them via MQTT."""
-    log_cfg = config.get("log_shipping", {})
-    if not log_cfg.get("enabled", True):
-        return
-
-    min_level = log_cfg.get("min_level", "INFO")
-    max_lines = log_cfg.get("max_lines_per_batch", 50)
-    priority = _LEVEL_TO_PRIORITY.get(min_level, "6")
-
-    since = last_log_timestamp[0]
-    now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-    try:
-        cmd = [
-            "journalctl", "--since", since, "--no-pager", "-o", "json",
-            "-u", "snoutspotter-motion",
-            "-u", "snoutspotter-uploader",
-            "-u", "snoutspotter-agent",
-            "-p", priority,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
-
-        log_entries = []
-        for line in lines[-max_lines:]:
-            try:
-                entry = json.loads(line)
-                prio = entry.get("PRIORITY", "6")
-                level = _PRIORITY_TO_LEVEL.get(prio, "INFO")
-                unit = entry.get("_SYSTEMD_UNIT", "")
-                # Strip .service suffix for cleaner display
-                service = unit.replace("snoutspotter-", "").replace(".service", "")
-                msg = entry.get("MESSAGE", "")
-                ts = _extract_log_timestamp(entry)
-                log_entries.append({"ts": ts, "level": level, "service": service, "msg": msg})
-            except (json.JSONDecodeError, ValueError, KeyError):
-                continue
-
-        if log_entries:
-            payload = json.dumps({
-                "thingName": thing_name,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "logs": log_entries,
-            })
-            topic = f"snoutspotter/{thing_name}/logs"
-            connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
-            logger.info(f"Shipped {len(log_entries)} log entries to {topic}")
-
-        last_log_timestamp[0] = now_ts
-
-    except subprocess.TimeoutExpired:
-        logger.warning("journalctl timed out during log collection")
-    except Exception as e:
-        logger.error(f"Log shipping failed: {e}")
 
 
 # ── Shadow delta handler ──────────────────────────────────────────────
@@ -795,7 +119,7 @@ on_shadow_delta.updating = False
 # ── Main loop ─────────────────────────────────────────────────────────
 
 def main():
-    config = load_config()
+    config = config_loader.load_config()
     iot_cfg = config.get("iot", {})
     health_cfg = config["health"]
     upload_cfg = config["upload"]
@@ -820,7 +144,7 @@ def main():
 
     # CloudWatch client for heartbeats
     cloudwatch = iot_session.client("cloudwatch", region_name=upload_cfg["region"])
-    heartbeat_ref = [health_cfg["interval_seconds"]]  # list so apply_remote_config can update it
+    heartbeat_ref = [health_cfg["interval_seconds"]]
 
     # Single MQTT connection for shadow + OTA
     connection = mqtt_connection_builder.mtls_from_path(
@@ -837,27 +161,21 @@ def main():
     connect_future.result(timeout=10)
     logger.info(f"Connected to IoT Core at {endpoint}")
 
-    # Subscribe to shadow delta for OTA
+    # Subscribe to shadow delta
     delta_topic = f"$aws/things/{thing_name}/shadow/update/delta"
     subscribe_future, _ = connection.subscribe(
-        topic=delta_topic,
-        qos=mqtt.QoS.AT_LEAST_ONCE,
-        callback=on_shadow_delta,
+        topic=delta_topic, qos=mqtt.QoS.AT_LEAST_ONCE, callback=on_shadow_delta,
     )
     subscribe_future.result(timeout=10)
     logger.info(f"Subscribed to {delta_topic}")
 
-    # Subscribe to shadow get response, then request current shadow to catch any pending delta
+    # Request current shadow to catch any pending delta from while offline
     get_accepted_topic = f"$aws/things/{thing_name}/shadow/get/accepted"
     sub_future, _ = connection.subscribe(
-        topic=get_accepted_topic,
-        qos=mqtt.QoS.AT_LEAST_ONCE,
-        callback=on_shadow_get_accepted,
+        topic=get_accepted_topic, qos=mqtt.QoS.AT_LEAST_ONCE, callback=on_shadow_get_accepted,
     )
     sub_future.result(timeout=10)
-
-    get_topic = f"$aws/things/{thing_name}/shadow/get"
-    connection.publish(topic=get_topic, payload="", qos=mqtt.QoS.AT_LEAST_ONCE)
+    connection.publish(topic=f"$aws/things/{thing_name}/shadow/get", payload="", qos=mqtt.QoS.AT_LEAST_ONCE)
     logger.info("Requested current shadow to check for pending updates")
 
     # Report initial state
@@ -869,44 +187,42 @@ def main():
     log_ship_interval_ref = [log_ship_cfg.get("batch_interval_seconds", 60)]
     last_log_timestamp = [datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")]
 
-    logger.info(f"Agent started (version={version}). Heartbeat every {heartbeat_ref[0]}s, watching for OTA/config updates.")
+    logger.info(f"Agent started (version={version}). Heartbeat every {heartbeat_ref[0]}s.")
 
     last_heartbeat = 0
     last_log_ship = 0
-    stream_proc = None  # subprocess.Popen for stream_manager.py
+    stream_proc = None
 
     try:
         while True:
             now = time.time()
 
-            # Heartbeat + shadow report on interval
+            # ── Heartbeat + shadow report ──
             if now - last_heartbeat >= heartbeat_ref[0]:
                 try:
                     send_heartbeat(cloudwatch, health_cfg["namespace"], health_cfg["metric_name"])
                 except Exception as e:
                     logger.error(f"Failed to send CloudWatch heartbeat: {e}")
-
                 try:
                     version = load_version()
                     is_streaming = stream_proc is not None and stream_proc.poll() is None
                     report_full_shadow(connection, thing_name, version, config, streaming=is_streaming)
                 except Exception as e:
                     logger.error(f"Failed to update shadow: {e}")
-
                 last_heartbeat = now
 
-            # Check for dirty flag — publish shadow immediately on meaningful events from other services
+            # ── Shadow dirty flag ──
             if SHADOW_DIRTY_FLAG.exists():
                 try:
                     SHADOW_DIRTY_FLAG.unlink(missing_ok=True)
                     version = load_version()
                     is_streaming = stream_proc is not None and stream_proc.poll() is None
                     report_full_shadow(connection, thing_name, version, config, streaming=is_streaming)
-                    last_heartbeat = now  # reset so heartbeat doesn't fire redundantly right after
+                    last_heartbeat = now
                 except Exception as e:
                     logger.error(f"Failed to process shadow dirty flag: {e}")
 
-            # Check for pending OTA updates
+            # ── OTA updates ──
             if on_shadow_delta.pending_version:
                 pending = on_shadow_delta.pending_version
                 on_shadow_delta.pending_version = None
@@ -926,7 +242,7 @@ def main():
                     finally:
                         on_shadow_delta.updating = False
 
-            # Check for pending config changes
+            # ── Config changes ──
             if on_shadow_delta.pending_config:
                 pending = on_shadow_delta.pending_config
                 on_shadow_delta.pending_config = None
@@ -935,15 +251,13 @@ def main():
                 else:
                     was_shipping = config.get("log_shipping", {}).get("enabled", True)
                     apply_remote_config(pending, config, connection, thing_name, heartbeat_ref)
-                    # Pick up log shipping config changes in-process
                     new_log_cfg = config.get("log_shipping", {})
                     log_ship_interval_ref[0] = new_log_cfg.get("batch_interval_seconds", 60)
-                    # Reset log cursor when shipping is enabled so we start from now
                     if not was_shipping and new_log_cfg.get("enabled", True):
                         last_log_timestamp[0] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                         logger.info("Log shipping enabled — shipping logs from now")
 
-            # Check for pending streaming requests
+            # ── Streaming ──
             if on_shadow_delta.pending_streaming is not None:
                 want_stream = on_shadow_delta.pending_streaming
                 on_shadow_delta.pending_streaming = None
@@ -975,7 +289,7 @@ def main():
                         logger.warning(f"Failed to start motion service: {e}")
                     update_shadow(connection, thing_name, {"streaming": False})
 
-            # Check if stream_manager exited on its own (timeout or crash)
+            # ── Stream exit detection ──
             if stream_proc is not None and stream_proc.poll() is not None:
                 logger.info(f"stream_manager.py exited (code={stream_proc.returncode})")
                 stream_proc = None
@@ -984,7 +298,6 @@ def main():
                     subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
                 except Exception as e:
                     logger.warning(f"Failed to start motion service: {e}")
-                # Clear both desired and reported to prevent shadow delta loop
                 payload = json.dumps({"state": {
                     "desired": {"streaming": False},
                     "reported": {"streaming": False}
@@ -993,7 +306,7 @@ def main():
                 connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
                 logger.info("Streaming stopped — cleared desired and reported shadow state")
 
-            # Ship logs on interval
+            # ── Log shipping ──
             if now - last_log_ship >= log_ship_interval_ref[0]:
                 try:
                     collect_and_ship_logs(connection, thing_name, config, last_log_timestamp)
