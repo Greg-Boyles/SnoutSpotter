@@ -80,17 +80,23 @@ export default function Labels() {
     if (files.length === 0) return;
 
     setUploading(true);
-    setUploadProgress(`Uploading ${files.length} photo${files.length > 1 ? "s" : ""}...`);
-    try {
-      const result = await api.uploadTrainingImages(files);
-      setUploadProgress(`Uploaded ${result.uploaded} photo${result.uploaded !== 1 ? "s" : ""}${result.errors.length > 0 ? ` (${result.errors.length} failed)` : ""}`);
-      loadStats();
-      loadLabels();
-      setTimeout(() => setUploadProgress(""), 5000);
-    } catch (err) {
-      setUploadProgress(`Upload failed: ${(err as Error).message}`);
-      setTimeout(() => setUploadProgress(""), 5000);
+    let uploaded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      setUploadProgress(`Uploading ${i + 1} of ${files.length}...`);
+      try {
+        await api.uploadTrainingImage(files[i]);
+        uploaded++;
+      } catch {
+        failed++;
+      }
     }
+
+    setUploadProgress(`Uploaded ${uploaded} photo${uploaded !== 1 ? "s" : ""}${failed > 0 ? ` (${failed} failed)` : ""}`);
+    loadStats();
+    loadLabels();
+    setTimeout(() => setUploadProgress(""), 5000);
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
