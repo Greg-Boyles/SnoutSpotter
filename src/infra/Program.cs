@@ -40,6 +40,7 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     Env = env,
     DataBucket = coreStack.DataBucket,
     ClipsTable = coreStack.ClipsTable,
+    CommandsTable = coreStack.CommandsTable,
     ApiEcrRepo = coreStack.ApiEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     OktaIssuer = oktaIssuer,
@@ -49,7 +50,8 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
 var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new IoTStackProps
 {
     Env = env,
-    DataBucket = coreStack.DataBucket
+    DataBucket = coreStack.DataBucket,
+    CommandsTable = coreStack.CommandsTable
 });
 
 var logIngestionStack = new LogIngestionStack(app, "SnoutSpotter-LogIngestion", new LogIngestionStackProps
