@@ -12,6 +12,7 @@ export class IotConnection {
   private client: mqtt.MqttClient | null = null;
   private callback: ShadowUpdateCallback;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private active = true;
 
   constructor(callback: ShadowUpdateCallback) {
     this.callback = callback;
@@ -20,15 +21,23 @@ export class IotConnection {
   async connect(): Promise<void> {
     const { presignedUrl, clientId } = await api.getIotCredentials();
 
-    this.client = mqtt.connect(presignedUrl, {
+    // mqtt.js needs a custom WebSocket factory to avoid modifying the presigned URL
+    this.client = mqtt.connect({
       clientId,
       protocolVersion: 4,
       clean: true,
-      reconnectPeriod: 0, // Don't auto-reconnect — we'll reconnect with fresh presigned URL
-    });
+      reconnectPeriod: 0,
+      browserBufferSize: 512 * 1024,
+      createWebsocket: () => new WebSocket(presignedUrl, ["mqtt"]),
+    } as mqtt.IClientOptions);
 
     this.client.on("connect", () => {
+      console.log("IoT MQTT connected");
       this.client?.subscribe("$aws/things/snoutspotter-+/shadow/update/documents");
+    });
+
+    this.client.on("error", (err) => {
+      console.warn("IoT MQTT error:", err.message);
     });
 
     this.client.on("message", (topic, payload) => {
@@ -45,9 +54,9 @@ export class IotConnection {
     });
 
     this.client.on("close", () => {
-      // URL expired or connection dropped — reconnect with fresh URL
-      if (this.refreshTimer === null) return; // Already disconnecting
-      this.scheduleReconnect(5000);
+      if (!this.active) return;
+      console.log("IoT MQTT closed, reconnecting in 10s...");
+      this.scheduleReconnect(10000);
     });
 
     // Proactively reconnect before the URL/credentials expire (50 minutes)
@@ -64,6 +73,7 @@ export class IotConnection {
       this.client.end(true);
       this.client = null;
     }
+    if (!this.active) return;
     try {
       await this.connect();
     } catch (e) {
@@ -73,6 +83,7 @@ export class IotConnection {
   }
 
   disconnect(): void {
+    this.active = false;
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
