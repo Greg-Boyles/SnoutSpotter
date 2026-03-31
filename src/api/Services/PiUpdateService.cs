@@ -133,9 +133,6 @@ public class PiUpdateService
             if (reported.TryGetProperty("streamError", out var se))
                 state.StreamError = se.GetString();
 
-            if (reported.TryGetProperty("commandResult", out var cmdResult))
-                state.CommandResult = JsonSerializer.Deserialize<Dictionary<string, string>>(cmdResult.GetRawText());
-
             return state;
         }
         catch (Amazon.IotData.Model.ResourceNotFoundException)
@@ -312,29 +309,89 @@ public class PiUpdateService
             throw new ArgumentException($"Unknown command: {action}");
 
         var commandId = Guid.NewGuid().ToString("N");
+        var requestedAt = DateTime.UtcNow.ToString("O");
+        var ttl = DateTimeOffset.UtcNow.AddDays(14).ToUnixTimeSeconds();
+
+        // Write command to DynamoDB ledger
+        var commandsTable = Environment.GetEnvironmentVariable("COMMANDS_TABLE") ?? "snout-spotter-commands";
+        await new Amazon.DynamoDBv2.AmazonDynamoDBClient().PutItemAsync(commandsTable,
+            new Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
+            {
+                ["command_id"] = new() { S = commandId },
+                ["thing_name"] = new() { S = thingName },
+                ["action"] = new() { S = action },
+                ["status"] = new() { S = "sent" },
+                ["requested_at"] = new() { S = requestedAt },
+                ["ttl"] = new() { N = ttl.ToString() },
+            });
+
+        // Publish command via MQTT
         var payload = JsonSerializer.Serialize(new
         {
-            state = new
-            {
-                desired = new
-                {
-                    command = new
-                    {
-                        id = commandId,
-                        action,
-                        requestedAt = DateTime.UtcNow.ToString("O")
-                    }
-                }
-            }
+            command_id = commandId,
+            action,
+            requestedAt
         });
 
-        await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
+        var topic = $"snoutspotter/{thingName}/commands";
+        await _iotData.PublishAsync(new Amazon.IotData.Model.PublishRequest
         {
-            ThingName = thingName,
+            Topic = topic,
+            Qos = 1,
             Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
         });
 
         return commandId;
+    }
+
+    public async Task<Dictionary<string, string>?> GetCommandFromLedgerAsync(string commandId)
+    {
+        var commandsTable = Environment.GetEnvironmentVariable("COMMANDS_TABLE") ?? "snout-spotter-commands";
+        var result = await new Amazon.DynamoDBv2.AmazonDynamoDBClient().GetItemAsync(commandsTable,
+            new Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
+            {
+                ["command_id"] = new() { S = commandId }
+            });
+
+        if (!result.IsItemSet) return null;
+
+        var item = result.Item;
+        var dict = new Dictionary<string, string>();
+        foreach (var (k, v) in item)
+        {
+            if (v.S != null) dict[k] = v.S;
+            else if (v.N != null) dict[k] = v.N;
+        }
+        return dict;
+    }
+
+    public async Task<List<Dictionary<string, string>>> GetCommandHistoryAsync(string thingName, int limit = 50)
+    {
+        var commandsTable = Environment.GetEnvironmentVariable("COMMANDS_TABLE") ?? "snout-spotter-commands";
+        var client = new Amazon.DynamoDBv2.AmazonDynamoDBClient();
+        var result = await client.QueryAsync(new Amazon.DynamoDBv2.Model.QueryRequest
+        {
+            TableName = commandsTable,
+            IndexName = "by-device",
+            KeyConditionExpression = "thing_name = :tn",
+            ExpressionAttributeValues = new Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
+            {
+                [":tn"] = new() { S = thingName }
+            },
+            ScanIndexForward = false,
+            Limit = limit
+        });
+
+        return result.Items.Select(item =>
+        {
+            var dict = new Dictionary<string, string>();
+            foreach (var (k, v) in item)
+            {
+                if (v.S != null) dict[k] = v.S;
+                else if (v.N != null) dict[k] = v.N;
+            }
+            return dict;
+        }).ToList();
     }
 }
 
@@ -358,7 +415,6 @@ public class PiShadowState
     public string? LogShippingError { get; set; }
     public bool? Streaming { get; set; }
     public string? StreamError { get; set; }
-    public Dictionary<string, string>? CommandResult { get; set; }
 }
 
 public record CameraStatus(

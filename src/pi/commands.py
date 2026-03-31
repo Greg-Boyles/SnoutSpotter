@@ -1,5 +1,6 @@
-"""Device command execution from shadow delta."""
+"""Device command execution — commands arrive via MQTT, results acked via MQTT topic."""
 
+import json
 import logging
 import shutil
 import subprocess
@@ -7,12 +8,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shadow import update_shadow
+from awscrt import mqtt
 
 logger = logging.getLogger("snout-spotter-agent")
 
 BACKUP_DIR = Path.home() / ".snoutspotter" / "backups"
-STALE_THRESHOLD_SECONDS = 600  # 10 minutes
 
 ALLOWED_ACTIONS = {
     "restart-motion",
@@ -24,54 +24,43 @@ ALLOWED_ACTIONS = {
 }
 
 
-def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_command_id: list) -> None:
-    """Execute a device command and report the result via shadow."""
-    cmd_id = cmd.get("id")
+def execute_command(cmd: dict, config: dict, connection, thing_name: str, updating: bool = False) -> None:
+    """Execute a device command and publish result to ack topic."""
+    cmd_id = cmd.get("command_id")
     action = cmd.get("action")
-    requested_at = cmd.get("requestedAt", "")
 
     if not cmd_id or not action:
-        logger.warning(f"Invalid command: missing id or action: {cmd}")
+        logger.warning(f"Invalid command: missing command_id or action: {cmd}")
         return
 
-    # Skip duplicate
-    if cmd_id == last_command_id[0]:
-        logger.info(f"Skipping duplicate command {cmd_id}")
+    if updating:
+        logger.info(f"Command {action} rejected — OTA in progress")
+        _publish_ack(connection, thing_name, cmd_id, action, "failed", error="OTA in progress")
         return
-
-    # Skip stale
-    if requested_at:
-        try:
-            req_time = datetime.fromisoformat(requested_at.replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - req_time).total_seconds()
-            if age > STALE_THRESHOLD_SECONDS:
-                logger.info(f"Skipping stale command {cmd_id} ({action}, {int(age)}s old)")
-                _report_result(connection, thing_name, cmd_id, "skipped", message="Command too old")
-                last_command_id[0] = cmd_id
-                return
-        except (ValueError, TypeError):
-            pass
 
     if action not in ALLOWED_ACTIONS:
         logger.warning(f"Unknown command action: {action}")
-        _report_result(connection, thing_name, cmd_id, "failed", error=f"Unknown action: {action}")
-        last_command_id[0] = cmd_id
+        _publish_ack(connection, thing_name, cmd_id, action, "failed", error=f"Unknown action: {action}")
         return
 
     logger.info(f"Executing command {cmd_id}: {action}")
 
     try:
         if action == "reboot":
-            _report_result(connection, thing_name, cmd_id, "success", message="Rebooting")
-            last_command_id[0] = cmd_id
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message="Rebooting")
             time.sleep(2)
             subprocess.run(["sudo", "reboot"], timeout=5)
+
+        elif action == "restart-agent":
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message="snoutspotter-agent restarting")
+            time.sleep(2)
+            subprocess.run(["sudo", "systemctl", "restart", "snoutspotter-agent"], timeout=30)
 
         elif action.startswith("restart-"):
             svc_name = action.replace("restart-", "")
             svc = f"snoutspotter-{svc_name}"
             subprocess.run(["sudo", "systemctl", "restart", svc], timeout=30, check=True)
-            _report_result(connection, thing_name, cmd_id, "success", message=f"{svc} restarted")
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message=f"{svc} restarted")
 
         elif action == "clear-clips":
             clips_dir = Path(config.get("recording", {}).get("output_dir", "/home/admin/clips"))
@@ -80,7 +69,7 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_c
                 for f in clips_dir.glob("*.mp4"):
                     f.unlink()
                     count += 1
-            _report_result(connection, thing_name, cmd_id, "success", message=f"Deleted {count} clips")
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message=f"Deleted {count} clips")
 
         elif action == "clear-backups":
             freed = 0
@@ -93,25 +82,28 @@ def execute_command(cmd: dict, config: dict, connection, thing_name: str, last_c
                 freed_mb = round(freed / (1024 * 1024), 1)
             else:
                 freed_mb = 0
-            _report_result(connection, thing_name, cmd_id, "success", message=f"Freed {freed_mb} MB")
-
-        last_command_id[0] = cmd_id
+            _publish_ack(connection, thing_name, cmd_id, action, "success", message=f"Freed {freed_mb} MB")
 
     except Exception as e:
         logger.error(f"Command {action} failed: {e}")
-        _report_result(connection, thing_name, cmd_id, "failed", error=str(e))
-        last_command_id[0] = cmd_id
+        _publish_ack(connection, thing_name, cmd_id, action, "failed", error=str(e))
 
 
-def _report_result(connection, thing_name: str, cmd_id: str, status: str,
-                   message: str = "", error: str = ""):
-    result: dict = {
-        "id": cmd_id,
+def _publish_ack(connection, thing_name: str, cmd_id: str, action: str,
+                 status: str, message: str = "", error: str = ""):
+    """Publish command result to ack topic — IoT Rule writes to DynamoDB."""
+    payload: dict = {
+        "command_id": cmd_id,
+        "thing_name": thing_name,
+        "action": action,
         "status": status,
-        "completedAt": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
     }
     if message:
-        result["message"] = message
+        payload["message"] = message
     if error:
-        result["error"] = error
-    update_shadow(connection, thing_name, {"commandResult": result})
+        payload["error"] = error
+
+    topic = f"snoutspotter/{thing_name}/commands/ack"
+    connection.publish(topic=topic, payload=json.dumps(payload), qos=mqtt.QoS.AT_LEAST_ONCE)
+    logger.info(f"Command ack published: {cmd_id} {status}")

@@ -10,6 +10,7 @@ public class CoreStack : Stack
 {
     public Bucket DataBucket { get; }
     public Table ClipsTable { get; }
+    public Table CommandsTable { get; }
     public Repository ApiEcrRepo { get; }
     public Repository IngestEcrRepo { get; }
     public Repository InferenceEcrRepo { get; }
@@ -94,6 +95,24 @@ public class CoreStack : Stack
             IndexName = "by-detection",
             PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "detection_type", Type = AttributeType.STRING },
             SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
+            ProjectionType = ProjectionType.ALL
+        });
+
+        // DynamoDB table for device command ledger
+        CommandsTable = new Table(this, "CommandsTable", new TableProps
+        {
+            TableName = "snout-spotter-commands",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "command_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            TimeToLiveAttribute = "ttl"
+        });
+
+        CommandsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "by-device",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "thing_name", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "requested_at", Type = AttributeType.STRING },
             ProjectionType = ProjectionType.ALL
         });
 

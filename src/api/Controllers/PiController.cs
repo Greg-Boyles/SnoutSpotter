@@ -179,22 +179,27 @@ public class PiController : ControllerBase
     [HttpGet("{thingName}/command/{commandId}")]
     public async Task<ActionResult> GetCommandResult(string thingName, string commandId)
     {
-        var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
-        if (shadow == null)
-            return NotFound(new { error = "Device not found" });
-
-        var result = shadow.CommandResult;
-        if (result == null || result.GetValueOrDefault("id") != commandId)
-            return Ok(new { commandId, status = "pending" });
+        var result = await _piUpdateService.GetCommandFromLedgerAsync(commandId);
+        if (result == null)
+            return NotFound(new { error = "Command not found" });
 
         return Ok(new
         {
             commandId,
-            status = result.GetValueOrDefault("status", "unknown"),
+            status = result.GetValueOrDefault("status", "sent"),
+            action = result.GetValueOrDefault("action"),
             message = result.GetValueOrDefault("message"),
             error = result.GetValueOrDefault("error"),
-            completedAt = result.GetValueOrDefault("completedAt")
+            requestedAt = result.GetValueOrDefault("requested_at"),
+            completedAt = result.GetValueOrDefault("completed_at"),
         });
+    }
+
+    [HttpGet("{thingName}/commands")]
+    public async Task<ActionResult> GetCommandHistory(string thingName, [FromQuery] int limit = 50)
+    {
+        var commands = await _piUpdateService.GetCommandHistoryAsync(thingName, limit);
+        return Ok(new { commands, thingName });
     }
 }
 

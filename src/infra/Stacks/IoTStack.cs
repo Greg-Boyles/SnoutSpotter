@@ -1,4 +1,5 @@
 using Amazon.CDK;
+using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Logs;
 using Amazon.CDK.AWS.S3;
@@ -10,6 +11,7 @@ namespace SnoutSpotter.Infra.Stacks;
 public class IoTStackProps : StackProps
 {
     public required Bucket DataBucket { get; init; }
+    public required Table CommandsTable { get; init; }
 }
 
 public class IoTStack : Stack
@@ -104,7 +106,9 @@ public class IoTStack : Stack
                         ["Resource"] = new[]
                         {
                             $"arn:aws:iot:{Region}:{Account}:topicfilter/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
-                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*"
+                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
+                            $"arn:aws:iot:{Region}:{Account}:topicfilter/snoutspotter/${{iot:Connection.Thing.ThingName}}/commands",
+                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/${{iot:Connection.Thing.ThingName}}/commands"
                         }
                     },
                     new Dictionary<string, object>
@@ -114,7 +118,8 @@ public class IoTStack : Stack
                         ["Resource"] = new[]
                         {
                             $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
-                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/${{iot:Connection.Thing.ThingName}}/logs"
+                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/${{iot:Connection.Thing.ThingName}}/logs",
+                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/${{iot:Connection.Thing.ThingName}}/commands/ack"
                         }
                     },
                     new Dictionary<string, object>
@@ -133,6 +138,37 @@ public class IoTStack : Stack
             LogGroupName = PiLogGroupName,
             Retention = RetentionDays.ONE_WEEK,
             RemovalPolicy = RemovalPolicy.DESTROY
+        });
+
+        // IoT Rule: command ack → DynamoDB
+        var commandAckRole = new Role(this, "CommandAckRole", new RoleProps
+        {
+            AssumedBy = new ServicePrincipal("iot.amazonaws.com"),
+        });
+        props.CommandsTable.GrantWriteData(commandAckRole);
+
+        _ = new IoT.CfnTopicRule(this, "CommandAckRule", new IoT.CfnTopicRuleProps
+        {
+            RuleName = "snoutspotter_command_ack",
+            TopicRulePayload = new IoT.CfnTopicRule.TopicRulePayloadProperty
+            {
+                Sql = "SELECT * FROM 'snoutspotter/+/commands/ack'",
+                AwsIotSqlVersion = "2016-03-23",
+                Actions = new[]
+                {
+                    new IoT.CfnTopicRule.ActionProperty
+                    {
+                        DynamoDBv2 = new IoT.CfnTopicRule.DynamoDBv2ActionProperty
+                        {
+                            PutItem = new IoT.CfnTopicRule.PutItemInputProperty
+                            {
+                                TableName = props.CommandsTable.TableName
+                            },
+                            RoleArn = commandAckRole.RoleArn
+                        }
+                    }
+                }
+            }
         });
 
         // Outputs

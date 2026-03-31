@@ -13,6 +13,7 @@ public class ApiStackProps : StackProps
 {
     public required Bucket DataBucket { get; init; }
     public required Table ClipsTable { get; init; }
+    public required Table CommandsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
     public required string ImageTag { get; init; }
     public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
@@ -45,11 +46,13 @@ public class ApiStack : Stack
                 ["IOT_THING_GROUP"] = props.IoTThingGroupName,
                 ["OKTA_ISSUER"] = props.OktaIssuer,
                 ["ALLOWED_ORIGIN"] = props.AllowedOrigin,
-                ["PI_LOG_GROUP"] = "/snoutspotter/pi-logs"
+                ["PI_LOG_GROUP"] = "/snoutspotter/pi-logs",
+                ["COMMANDS_TABLE"] = props.CommandsTable.TableName
             }
         });
 
         // Grant permissions
+        props.CommandsTable.GrantReadWriteData(apiFunction);
         props.DataBucket.GrantRead(apiFunction);
         props.ClipsTable.GrantReadData(apiFunction);
         props.DataBucket.GrantRead(apiFunction, "raw-clips/*");
@@ -84,6 +87,14 @@ public class ApiStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[] { "iot:ListThingsInThingGroup" },
             Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
+        }));
+
+        // IoT Publish for device commands
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot:Publish" },
+            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/*/commands" }
         }));
 
         // IoT DescribeEndpoint (global action, no resource-level scoping)
