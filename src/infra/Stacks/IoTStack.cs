@@ -104,7 +104,9 @@ public class IoTStack : Stack
                         ["Resource"] = new[]
                         {
                             $"arn:aws:iot:{Region}:{Account}:topicfilter/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
-                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*"
+                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
+                            $"arn:aws:iot:{Region}:{Account}:topicfilter/snoutspotter/${{iot:Connection.Thing.ThingName}}/commands",
+                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/${{iot:Connection.Thing.ThingName}}/commands"
                         }
                     },
                     new Dictionary<string, object>

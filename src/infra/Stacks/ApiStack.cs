@@ -86,6 +86,14 @@ public class ApiStack : Stack
             Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
         }));
 
+        // IoT Publish for device commands
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot:Publish" },
+            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/*/commands" }
+        }));
+
         // IoT DescribeEndpoint (global action, no resource-level scoping)
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
