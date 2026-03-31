@@ -23,6 +23,8 @@ const CONFIG_SECTIONS: {
   {
     title: "Recording",
     keys: [
+      { key: "recording.pre_buffer_enabled", label: "Pre-motion buffer", type: "bool", description: "Capture footage from before motion was detected" },
+      { key: "recording.pre_buffer", label: "Pre-buffer duration", type: "int", min: 1, max: 10, unit: "s", description: "Seconds of pre-motion footage to include in clips" },
       { key: "recording.max_clip_length", label: "Max clip length", type: "int", min: 10, max: 300, unit: "s", description: "Maximum recording duration per clip" },
       { key: "recording.post_motion_buffer", label: "Post-motion buffer", type: "int", min: 3, max: 60, unit: "s", description: "Keep recording after last motion detected" },
     ],
