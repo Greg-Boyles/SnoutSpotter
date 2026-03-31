@@ -93,7 +93,10 @@ export const api = {
   // IoT real-time
   getIotCredentials: () =>
     fetchJson<{
-      presignedUrl: string;
+      accessKeyId: string;
+      secretAccessKey: string;
+      sessionToken: string;
+      iotEndpoint: string;
       clientId: string;
       region: string;
       expiration: string;

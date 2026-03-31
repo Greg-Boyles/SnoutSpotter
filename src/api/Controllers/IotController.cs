@@ -52,17 +52,12 @@ public class IotController : ControllerBase
             });
 
             var creds = assumeResponse.Credentials;
-            var presignedUrl = CreatePresignedMqttUrl(
-                _cachedIotEndpoint,
-                creds.AccessKeyId,
-                creds.SecretAccessKey,
-                creds.SessionToken,
-                "eu-west-1"
-            );
-
             return Ok(new
             {
-                presignedUrl,
+                accessKeyId = creds.AccessKeyId,
+                secretAccessKey = creds.SecretAccessKey,
+                sessionToken = creds.SessionToken,
+                iotEndpoint = _cachedIotEndpoint,
                 clientId,
                 region = "eu-west-1",
                 expiration = creds.Expiration.ToString("O")
