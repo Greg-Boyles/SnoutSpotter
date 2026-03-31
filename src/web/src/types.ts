@@ -79,6 +79,7 @@ export interface PiDevice {
   configErrors?: Record<string, string>;
   logShipping?: boolean;
   logShippingError?: string;
+  streaming?: boolean;
   updateAvailable?: boolean;
 }
 

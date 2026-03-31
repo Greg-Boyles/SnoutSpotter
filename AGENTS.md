@@ -72,6 +72,7 @@ SnoutSpotter/
 │   │   ├── src/
 │   │   │   ├── App.tsx                # Router, sidebar, auth gates, logout
 │   │   │   ├── api.ts                 # API client with Bearer token injection
+│   │   │   ├── iotWebSocket.ts        # IoT Core MQTT over WebSocket for real-time shadow updates
 │   │   │   ├── types.ts               # TypeScript interfaces (Clip, PiDevice, CameraStatus, etc.)
 │   │   │   ├── auth/
 │   │   │   │   └── oktaConfig.ts      # OktaAuth instance (PKCE, scopes)
@@ -195,6 +196,15 @@ SnoutSpotter/
 - The credential provider endpoint is returned during device registration and stored in `config.yaml`
 - Can also be pushed to existing devices via the shadow config system (`credentials_provider.endpoint` key)
 
+### Browser Real-Time (IoT Core MQTT over WebSocket)
+- The SystemHealth page connects directly to IoT Core via MQTT over WebSocket for real-time device shadow updates
+- Browser obtains temporary read-only credentials via `GET /api/iot/credentials` (requires Okta JWT)
+- API Lambda assumes `snoutspotter-browser-iot` IAM role via STS to vend scoped credentials
+- Browser subscribes to `$aws/things/snoutspotter-+/shadow/update/documents` — receives shadow changes in real-time
+- Credentials are read-only (Connect, Subscribe, Receive only — no Publish)
+- Credentials auto-refresh after 50 minutes (1 hour expiry)
+- Falls back to API polling at 2-minute intervals for non-shadow data
+
 ### Okta Terraform resources
 - `okta_app_oauth` — SPA app (PKCE, `authorization_code`)
 - `okta_group` — `SnoutSpotter Users` (add users here to grant access)
@@ -226,7 +236,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 |-------|-----------|
 | CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips`, 5 ECR repos |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
-| ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
+| ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars, Browser IoT Role `snoutspotter-browser-iot` |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
 | InferenceStack | Docker Lambda triggered by S3 `keyframes/` events |
@@ -251,6 +261,9 @@ All main API endpoints require a valid Okta JWT Bearer token.
 
 **Detections:**
 - `GET /api/detections?type=my_dog&limit=50` — list detection results
+
+**IoT Real-Time:**
+- `GET /api/iot/credentials` — temporary read-only IoT credentials for browser MQTT WebSocket
 
 **Pi Management (OTA):**
 - `GET /api/pi/devices` — list all Pi devices with full shadow state

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -21,7 +21,8 @@ import {
   FileText,
 } from "lucide-react";
 import { api } from "../api";
-import type { SystemHealth } from "../types";
+import { IotConnection } from "../iotWebSocket";
+import type { PiDevice, SystemHealth } from "../types";
 
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);
@@ -67,6 +68,8 @@ export default function SystemHealthPage() {
   const [removing, setRemoving] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
+  const iotRef = useRef<IotConnection | null>(null);
+
   const refreshHealth = () =>
     Promise.all([api.getHealth(), api.getDevices()])
       .then(([health, devices]) => {
@@ -84,6 +87,7 @@ export default function SystemHealthPage() {
       .catch(console.error);
 
   useEffect(() => {
+    // Initial load from API
     Promise.all([api.getHealth(), api.getDevices()])
       .then(([health, devices]) => {
         const deviceMap = new Map(
@@ -99,8 +103,53 @@ export default function SystemHealthPage() {
       })
       .catch((e: Error) => setError(e.message));
 
-    const interval = setInterval(refreshHealth, 30_000);
-    return () => clearInterval(interval);
+    // Real-time updates via IoT Core WebSocket
+    const iot = new IotConnection((thingName, reported) => {
+      setHealth((prev) => {
+        if (!prev) return prev;
+        const piOnline = reported.lastHeartbeat
+          ? (Date.now() - new Date(reported.lastHeartbeat as string).getTime()) < 5 * 60 * 1000
+          : false;
+
+        return {
+          ...prev,
+          devices: prev.devices.map((d) =>
+            d.thingName === thingName
+              ? {
+                  ...d,
+                  online: piOnline,
+                  version: (reported.version as string) ?? d.version,
+                  hostname: (reported.hostname as string) ?? d.hostname,
+                  lastHeartbeat: (reported.lastHeartbeat as string) ?? d.lastHeartbeat,
+                  updateStatus: (reported.updateStatus as string) ?? d.updateStatus,
+                  services: (reported.services as Record<string, string>) ?? d.services,
+                  camera: (reported.camera as PiDevice["camera"]) ?? d.camera,
+                  lastMotionAt: (reported.lastMotionAt as string) ?? d.lastMotionAt,
+                  lastUploadAt: (reported.lastUploadAt as string) ?? d.lastUploadAt,
+                  uploadStats: (reported.uploadStats as PiDevice["uploadStats"]) ?? d.uploadStats,
+                  clipsPending: (reported.clipsPending as number) ?? d.clipsPending,
+                  system: (reported.system as PiDevice["system"]) ?? d.system,
+                  logShipping: (reported.logShipping as boolean) ?? d.logShipping,
+                  streaming: (reported.streaming as boolean) ?? d.streaming,
+                }
+              : d
+          ),
+        };
+      });
+    });
+
+    iot.connect().catch((e) => {
+      console.warn("IoT WebSocket failed, falling back to polling:", e);
+    });
+    iotRef.current = iot;
+
+    // Fallback polling at longer interval (2 minutes) for data not in shadow
+    const interval = setInterval(refreshHealth, 120_000);
+
+    return () => {
+      clearInterval(interval);
+      iot.disconnect();
+    };
   }, []);
 
   const handleUpdate = async (thingName: string) => {
