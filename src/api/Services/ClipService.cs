@@ -7,10 +7,10 @@ namespace SnoutSpotter.Api.Services;
 public class ClipService : IClipService
 {
     private readonly IAmazonDynamoDB _dynamoClient;
-    private readonly S3UrlService _s3UrlService;
+    private readonly IS3UrlService _s3UrlService;
     private const string TableName = "snout-spotter-clips";
 
-    public ClipService(IAmazonDynamoDB dynamoClient, S3UrlService s3UrlService)
+    public ClipService(IAmazonDynamoDB dynamoClient, IS3UrlService s3UrlService)
     {
         _dynamoClient = dynamoClient;
         _s3UrlService = s3UrlService;
