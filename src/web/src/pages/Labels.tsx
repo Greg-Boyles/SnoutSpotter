@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package } from "lucide-react";
+import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal } from "lucide-react";
 import { api } from "../api";
 
 type Filter = "all" | "dog" | "no_dog" | "unreviewed";
@@ -41,6 +41,27 @@ export default function Labels() {
   const [uploadProgress, setUploadProgress] = useState("");
   const [exporting, setExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Confidence filter & sort
+  const [confidenceMin, setConfidenceMin] = useState(0);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc" | "none">("none");
+
+  // Multi-select
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkActioning, setBulkActioning] = useState(false);
+
+  const filteredLabels = useMemo(() => {
+    let items = labels.filter((item) => {
+      const conf = item.confidence ? parseFloat(item.confidence) : 0;
+      return conf >= confidenceMin;
+    });
+    if (sortOrder === "asc") {
+      items = [...items].sort((a, b) => parseFloat(a.confidence || "0") - parseFloat(b.confidence || "0"));
+    } else if (sortOrder === "desc") {
+      items = [...items].sort((a, b) => parseFloat(b.confidence || "0") - parseFloat(a.confidence || "0"));
+    }
+    return items;
+  }, [labels, confidenceMin, sortOrder]);
 
   const loadStats = () => api.getLabelStats().then(setStats).catch(console.error);
 
@@ -142,6 +163,23 @@ export default function Labels() {
     }
   };
 
+  const handleBulkConfirmSelected = async (label: "my_dog" | "no_dog") => {
+    const keys = Array.from(selected);
+    if (keys.length === 0) return;
+    if (!window.confirm(`Confirm ${keys.length} item${keys.length > 1 ? "s" : ""} as "${label}"?`)) return;
+
+    setBulkActioning(true);
+    try {
+      await api.bulkConfirmLabels(keys, label);
+      setSelected(new Set());
+      loadLabels();
+      loadStats();
+    } catch (e) {
+      console.error("Bulk confirm failed:", e);
+    }
+    setBulkActioning(false);
+  };
+
   const filters: { key: Filter; label: string }[] = [
     { key: "unreviewed", label: "Unreviewed" },
     { key: "dog", label: "Dogs" },
@@ -228,7 +266,7 @@ export default function Labels() {
         {filters.map(({ key, label }) => (
           <button
             key={key}
-            onClick={() => { setFilter(key); setLabels([]); setNextPageKey(null); }}
+            onClick={() => { setFilter(key); setLabels([]); setNextPageKey(null); setSelected(new Set()); setConfidenceMin(0); setSortOrder("none"); }}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg ${
               filter === key
                 ? "bg-blue-600 text-white"
@@ -248,6 +286,85 @@ export default function Labels() {
         )}
       </div>
 
+      {/* Secondary filters */}
+      <div className="flex items-center gap-4 mb-4 text-sm">
+        <label className="flex items-center gap-2 text-gray-600">
+          <SlidersHorizontal className="w-4 h-4" />
+          <span className="whitespace-nowrap">Min confidence:</span>
+          <input
+            type="range"
+            min={0} max={1} step={0.05}
+            value={confidenceMin}
+            onChange={(e) => setConfidenceMin(parseFloat(e.target.value))}
+            className="w-32"
+          />
+          <span className="w-10 text-right font-mono text-xs">
+            {(confidenceMin * 100).toFixed(0)}%
+          </span>
+        </label>
+
+        <label className="flex items-center gap-2 text-gray-600">
+          <span>Sort:</span>
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value as "asc" | "desc" | "none")}
+            className="text-xs border border-gray-300 rounded px-2 py-1"
+          >
+            <option value="none">Default</option>
+            <option value="asc">Confidence ↑ (low first)</option>
+            <option value="desc">Confidence ↓ (high first)</option>
+          </select>
+        </label>
+
+        <span className="text-xs text-gray-400 ml-auto">
+          Showing {filteredLabels.length} of {labels.length} loaded
+        </span>
+      </div>
+
+      {/* Selection toolbar */}
+      {selected.size > 0 && (
+        <div className="sticky top-0 z-10 flex items-center gap-3 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg shadow-sm">
+          <span className="text-sm font-medium text-blue-800">
+            {selected.size} selected
+          </span>
+          <button
+            onClick={() => {
+              const allVisibleUnreviewed = filteredLabels
+                .filter((l) => l.reviewed !== "true")
+                .map((l) => l.keyframe_key);
+              setSelected(new Set(allVisibleUnreviewed));
+            }}
+            className="px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 rounded"
+          >
+            Select All Visible
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 rounded"
+          >
+            Deselect All
+          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => handleBulkConfirmSelected("my_dog")}
+              disabled={bulkActioning}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded disabled:opacity-50"
+            >
+              {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Dog className="w-3 h-3" />}
+              Confirm as My Dog
+            </button>
+            <button
+              onClick={() => handleBulkConfirmSelected("no_dog")}
+              disabled={bulkActioning}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-gray-600 hover:bg-gray-700 rounded disabled:opacity-50"
+            >
+              {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />}
+              Confirm as No Dog
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Grid */}
       {loading && labels.length === 0 ? (
         <div className="flex items-center gap-2 text-gray-400 justify-center py-12">
@@ -258,17 +375,27 @@ export default function Labels() {
         <div className="bg-gray-50 rounded-xl border border-gray-200 p-8 text-center">
           <p className="text-gray-500">No keyframes found for this filter</p>
         </div>
+      ) : filteredLabels.length === 0 ? (
+        <div className="bg-gray-50 rounded-xl border border-gray-200 p-8 text-center">
+          <p className="text-gray-500">No items match the current confidence filter</p>
+          <button onClick={() => setConfidenceMin(0)} className="mt-2 text-sm text-blue-600 hover:underline">
+            Reset filter
+          </button>
+        </div>
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {labels.map((item) => {
+            {filteredLabels.map((item) => {
               const isUpdating = updating.has(item.keyframe_key);
               const isReviewed = item.reviewed === "true";
+              const isSelected = selected.has(item.keyframe_key);
               return (
                 <div
                   key={item.keyframe_key}
                   className={`bg-white rounded-lg border overflow-hidden ${
-                    isReviewed ? "border-green-200" : "border-gray-200"
+                    isSelected
+                      ? "border-blue-400 ring-2 ring-blue-200"
+                      : isReviewed ? "border-green-200" : "border-gray-200"
                   }`}
                 >
                   <div className="aspect-video bg-gray-100 relative">
@@ -281,6 +408,23 @@ export default function Labels() {
                         type={item.confirmed_label ? "confirmed" : "auto"}
                       />
                     </div>
+                    {!isReviewed && (
+                      <div className="absolute top-1 right-8">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(item.keyframe_key);
+                              else next.delete(item.keyframe_key);
+                              return next;
+                            });
+                          }}
+                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        />
+                      </div>
+                    )}
                     {item.confidence && parseFloat(item.confidence) > 0 && (
                       <span className="absolute top-1 right-1 px-1.5 py-0.5 bg-black bg-opacity-60 text-white text-xs rounded">
                         {(parseFloat(item.confidence) * 100).toFixed(0)}%
