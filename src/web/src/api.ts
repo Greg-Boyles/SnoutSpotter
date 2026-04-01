@@ -115,28 +115,30 @@ export const api = {
     postJson<{ message: string }>(`/ml/auto-label${date ? `?date=${date}` : ""}`),
 
   getLabelStats: () =>
-    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number }>("/ml/labels/stats"),
+    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> }>("/ml/labels/stats"),
 
-  getLabels: (params: { reviewed?: string; label?: string; confirmedLabel?: string; limit?: number; nextPageKey?: string } = {}) => {
+  getLabels: (params: { reviewed?: string; label?: string; confirmedLabel?: string; breed?: string; limit?: number; nextPageKey?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.reviewed) qs.set("reviewed", params.reviewed);
     if (params.label) qs.set("label", params.label);
     if (params.confirmedLabel) qs.set("confirmedLabel", params.confirmedLabel);
+    if (params.breed) qs.set("breed", params.breed);
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.nextPageKey) qs.set("nextPageKey", params.nextPageKey);
     return fetchJson<{ labels: Record<string, string | null>[]; nextPageKey: string | null }>(`/ml/labels?${qs}`);
   },
 
-  updateLabel: (keyframeKey: string, confirmedLabel: string) =>
-    putJson<{ message: string }>(`/ml/labels/${keyframeKey}`, { confirmedLabel }),
+  updateLabel: (keyframeKey: string, confirmedLabel: string, breed?: string) =>
+    putJson<{ message: string }>(`/ml/labels/${keyframeKey}`, { confirmedLabel, breed }),
 
-  bulkConfirmLabels: (keyframeKeys: string[], confirmedLabel: string) =>
-    postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel }),
+  bulkConfirmLabels: (keyframeKeys: string[], confirmedLabel: string, breed?: string) =>
+    postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel, breed }),
 
-  uploadTrainingImage: async (file: File, label: string = "my_dog") => {
+  uploadTrainingImage: async (file: File, label: string = "my_dog", breed?: string) => {
     const formData = new FormData();
     formData.append("files", file);
-    const res = await fetch(`${BASE}/ml/labels/upload?label=${encodeURIComponent(label)}`, {
+    const qs = `label=${encodeURIComponent(label)}${breed ? `&breed=${encodeURIComponent(breed)}` : ""}`;
+    const res = await fetch(`${BASE}/ml/labels/upload?${qs}`, {
       method: "POST",
       headers: { ...authHeaders() },
       body: formData,

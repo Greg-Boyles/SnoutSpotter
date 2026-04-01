@@ -3,6 +3,41 @@ import { Link } from "react-router-dom";
 import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal } from "lucide-react";
 import { api } from "../api";
 
+const DOG_BREEDS = [
+  "Unknown", "Mixed",
+  "Affenpinscher", "Afghan Hound", "African Hunting Dog", "Airedale",
+  "American Staffordshire Terrier", "Appenzeller", "Australian Terrier",
+  "Basenji", "Basset", "Beagle", "Bedlington Terrier", "Bernese Mountain Dog",
+  "Black-and-tan Coonhound", "Blenheim Spaniel", "Bloodhound", "Bluetick",
+  "Border Collie", "Border Terrier", "Borzoi", "Boston Bull",
+  "Bouvier des Flandres", "Boxer", "Brabancon Griffon", "Briard",
+  "Brittany Spaniel", "Bull Mastiff", "Cairn", "Cardigan",
+  "Chesapeake Bay Retriever", "Chihuahua", "Chow", "Clumber",
+  "Cocker Spaniel", "Collie", "Curly-coated Retriever", "Dandie Dinmont",
+  "Dhole", "Dingo", "Doberman", "English Foxhound", "English Setter",
+  "English Springer", "EntleBucher", "Eskimo Dog", "Flat-coated Retriever",
+  "French Bulldog", "German Shepherd", "German Short-haired Pointer",
+  "Giant Schnauzer", "Golden Retriever", "Gordon Setter", "Great Dane",
+  "Great Pyrenees", "Greater Swiss Mountain Dog", "Groenendael",
+  "Ibizan Hound", "Irish Setter", "Irish Terrier", "Irish Water Spaniel",
+  "Irish Wolfhound", "Italian Greyhound", "Japanese Spaniel", "Keeshond",
+  "Kelpie", "Kerry Blue Terrier", "Komondor", "Kuvasz",
+  "Labrador Retriever", "Lakeland Terrier", "Leonberg", "Lhasa",
+  "Malamute", "Malinois", "Maltese Dog", "Mexican Hairless",
+  "Miniature Pinscher", "Miniature Poodle", "Miniature Schnauzer",
+  "Newfoundland", "Norfolk Terrier", "Norwegian Elkhound", "Norwich Terrier",
+  "Old English Sheepdog", "Otterhound", "Papillon", "Pekinese", "Pembroke",
+  "Pomeranian", "Pug", "Redbone", "Rhodesian Ridgeback", "Rottweiler",
+  "Saint Bernard", "Saluki", "Samoyed", "Schipperke", "Scotch Terrier",
+  "Scottish Deerhound", "Sealyham Terrier", "Shetland Sheepdog", "Shih-Tzu",
+  "Siberian Husky", "Silky Terrier", "Soft-coated Wheaten Terrier",
+  "Staffordshire Bullterrier", "Standard Poodle", "Standard Schnauzer",
+  "Sussex Spaniel", "Tibetan Mastiff", "Tibetan Terrier", "Toy Poodle",
+  "Toy Terrier", "Vizsla", "Walker Hound", "Weimaraner",
+  "Welsh Springer Spaniel", "West Highland White Terrier", "Whippet",
+  "Wire-haired Fox Terrier", "Yorkshire Terrier",
+];
+
 type Filter = "all" | "dog" | "no_dog" | "unreviewed" | "confirmed_my_dog" | "confirmed_other_dog" | "confirmed_no_dog";
 
 interface LabelItem {
@@ -14,6 +49,7 @@ interface LabelItem {
   bounding_boxes?: string;
   reviewed?: string;
   imageUrl?: string;
+  breed?: string;
 }
 
 function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed" }) {
@@ -31,7 +67,7 @@ function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed"
 }
 
 export default function Labels() {
-  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number } | null>(null);
+  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
   const [labels, setLabels] = useState<LabelItem[]>([]);
   const [filter, setFilter] = useState<Filter>("unreviewed");
   const [loading, setLoading] = useState(true);
@@ -43,6 +79,8 @@ export default function Labels() {
   const [exporting, setExporting] = useState(false);
   const [showUploadPicker, setShowUploadPicker] = useState(false);
   const [uploadLabel, setUploadLabel] = useState<"my_dog" | "other_dog" | "no_dog">("my_dog");
+  const [uploadBreed, setUploadBreed] = useState("");
+  const [uploadStep, setUploadStep] = useState<"label" | "breed">("label");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Confidence filter & sort
@@ -52,6 +90,14 @@ export default function Labels() {
   // Multi-select
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkActioning, setBulkActioning] = useState(false);
+  const [bulkBreed, setBulkBreed] = useState("");
+
+  // Per-card breed selection (two-step confirm for dog labels)
+  const [pendingConfirm, setPendingConfirm] = useState<{ key: string; label: string } | null>(null);
+  const [pendingBreed, setPendingBreed] = useState("Unknown");
+
+  // Breed sub-filter for Other Dog tab
+  const [breedFilter, setBreedFilter] = useState("");
 
   const filteredLabels = useMemo(() => {
     let items = labels.filter((item) => {
@@ -70,13 +116,14 @@ export default function Labels() {
 
   const loadLabels = (pageKey?: string) => {
     setLoading(true);
-    const params: { reviewed?: string; label?: string; confirmedLabel?: string; limit?: number; nextPageKey?: string } = { limit: 30 };
+    const params: { reviewed?: string; label?: string; confirmedLabel?: string; breed?: string; limit?: number; nextPageKey?: string } = { limit: 30 };
     if (filter === "unreviewed") params.reviewed = "false";
     else if (filter === "dog") params.label = "dog";
     else if (filter === "no_dog") params.label = "no_dog";
     else if (filter === "confirmed_my_dog") params.confirmedLabel = "my_dog";
     else if (filter === "confirmed_other_dog") params.confirmedLabel = "other_dog";
     else if (filter === "confirmed_no_dog") params.confirmedLabel = "no_dog";
+    if (breedFilter) params.breed = breedFilter;
     if (pageKey) params.nextPageKey = pageKey;
 
     api.getLabels(params)
@@ -92,7 +139,7 @@ export default function Labels() {
   useEffect(() => {
     loadStats();
     loadLabels();
-  }, [filter]);
+  }, [filter, breedFilter]);
 
   const handleAutoLabel = async () => {
     setLabelling(true);
@@ -115,7 +162,7 @@ export default function Labels() {
     for (let i = 0; i < files.length; i++) {
       setUploadProgress(`Uploading ${i + 1} of ${files.length}...`);
       try {
-        await api.uploadTrainingImage(files[i], uploadLabel);
+        await api.uploadTrainingImage(files[i], uploadLabel, uploadBreed || undefined);
         uploaded++;
       } catch {
         failed++;
@@ -130,17 +177,18 @@ export default function Labels() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleConfirm = async (keyframeKey: string, confirmedLabel: string) => {
+  const handleConfirm = async (keyframeKey: string, confirmedLabel: string, breed?: string) => {
     setUpdating((prev) => new Set(prev).add(keyframeKey));
     try {
-      await api.updateLabel(keyframeKey, confirmedLabel);
+      await api.updateLabel(keyframeKey, confirmedLabel, breed);
       setLabels((prev) =>
         prev.map((l) =>
           l.keyframe_key === keyframeKey
-            ? { ...l, confirmed_label: confirmedLabel, auto_label: confirmedLabel === "my_dog" || confirmedLabel === "other_dog" ? "dog" : "no_dog", reviewed: "true" }
+            ? { ...l, confirmed_label: confirmedLabel, auto_label: confirmedLabel === "my_dog" || confirmedLabel === "other_dog" ? "dog" : "no_dog", reviewed: "true", breed: breed || l.breed }
             : l
         )
       );
+      setPendingConfirm(null);
       loadStats();
     } catch (e) {
       console.error("Update failed:", e);
@@ -172,11 +220,15 @@ export default function Labels() {
   const handleBulkConfirmSelected = async (label: "my_dog" | "other_dog" | "no_dog") => {
     const keys = Array.from(selected);
     if (keys.length === 0) return;
-    if (!window.confirm(`Confirm ${keys.length} item${keys.length > 1 ? "s" : ""} as "${label}"?`)) return;
+    if (label !== "no_dog" && !bulkBreed) {
+      window.alert("Please select a breed before confirming dog labels.");
+      return;
+    }
+    if (!window.confirm(`Confirm ${keys.length} item${keys.length > 1 ? "s" : ""} as "${label}"${bulkBreed && label !== "no_dog" ? ` (${bulkBreed})` : ""}?`)) return;
 
     setBulkActioning(true);
     try {
-      await api.bulkConfirmLabels(keys, label);
+      await api.bulkConfirmLabels(keys, label, label !== "no_dog" ? bulkBreed : undefined);
       setSelected(new Set());
       loadLabels();
       loadStats();
@@ -219,24 +271,65 @@ export default function Labels() {
               {uploading ? "Uploading..." : "Upload Photos"}
             </button>
             {showUploadPicker && (
-              <div className="absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
-                {([
-                  { value: "my_dog" as const, label: "My Dog", color: "text-green-700 hover:bg-green-50" },
-                  { value: "other_dog" as const, label: "Other Dog", color: "text-orange-700 hover:bg-orange-50" },
-                  { value: "no_dog" as const, label: "No Dog", color: "text-gray-700 hover:bg-gray-50" },
-                ]).map(({ value, label, color }) => (
-                  <button
-                    key={value}
-                    onClick={() => {
-                      setUploadLabel(value);
-                      setShowUploadPicker(false);
-                      fileInputRef.current?.click();
-                    }}
-                    className={`w-full text-left px-4 py-2 text-sm font-medium ${color} first:rounded-t-lg last:rounded-b-lg`}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-2">
+                {uploadStep === "label" ? (
+                  <>
+                    {([
+                      { value: "my_dog" as const, label: "My Dog", color: "text-green-700 hover:bg-green-50" },
+                      { value: "other_dog" as const, label: "Other Dog", color: "text-orange-700 hover:bg-orange-50" },
+                      { value: "no_dog" as const, label: "No Dog", color: "text-gray-700 hover:bg-gray-50" },
+                    ]).map(({ value, label, color }) => (
+                      <button
+                        key={value}
+                        onClick={() => {
+                          setUploadLabel(value);
+                          if (value === "no_dog") {
+                            setUploadBreed("");
+                            setShowUploadPicker(false);
+                            setUploadStep("label");
+                            fileInputRef.current?.click();
+                          } else {
+                            setUploadStep("breed");
+                          }
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium rounded ${color}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-gray-500 mb-1 px-1">Select breed for {uploadLabel === "my_dog" ? "My Dog" : "Other Dog"}:</p>
+                    <select
+                      value={uploadBreed}
+                      onChange={(e) => setUploadBreed(e.target.value)}
+                      className="w-full text-sm border border-gray-300 rounded px-2 py-1.5 mb-2"
+                    >
+                      <option value="">-- Select breed --</option>
+                      {DOG_BREEDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setUploadStep("label")}
+                        className="flex-1 px-2 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded"
+                      >
+                        Back
+                      </button>
+                      <button
+                        disabled={!uploadBreed}
+                        onClick={() => {
+                          setShowUploadPicker(false);
+                          setUploadStep("label");
+                          fileInputRef.current?.click();
+                        }}
+                        className="flex-1 px-2 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
+                      >
+                        Choose Files
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -311,7 +404,7 @@ export default function Labels() {
         {filters.map(({ key, label }) => (
           <button
             key={key}
-            onClick={() => { setFilter(key); setLabels([]); setNextPageKey(null); setSelected(new Set()); setConfidenceMin(0); setSortOrder("none"); }}
+            onClick={() => { setFilter(key); setLabels([]); setNextPageKey(null); setSelected(new Set()); setConfidenceMin(0); setSortOrder("none"); setBreedFilter(""); setPendingConfirm(null); }}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg ${
               filter === key
                 ? "bg-blue-600 text-white"
@@ -361,6 +454,20 @@ export default function Labels() {
           </select>
         </label>
 
+        {(filter === "confirmed_other_dog" || filter === "confirmed_my_dog") && (
+          <label className="flex items-center gap-2 text-gray-600">
+            <span>Breed:</span>
+            <select
+              value={breedFilter}
+              onChange={(e) => { setBreedFilter(e.target.value); setLabels([]); setNextPageKey(null); }}
+              className="text-xs border border-gray-300 rounded px-2 py-1"
+            >
+              <option value="">All breeds</option>
+              {DOG_BREEDS.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </label>
+        )}
+
         <span className="text-xs text-gray-400 ml-auto">
           Showing {filteredLabels.length} of {labels.length} loaded
         </span>
@@ -390,13 +497,21 @@ export default function Labels() {
             Deselect All
           </button>
           <div className="ml-auto flex items-center gap-2">
+            <select
+              value={bulkBreed}
+              onChange={(e) => setBulkBreed(e.target.value)}
+              className="text-xs border border-gray-300 rounded px-2 py-1.5"
+            >
+              <option value="">-- Breed --</option>
+              {DOG_BREEDS.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
             <button
               onClick={() => handleBulkConfirmSelected("my_dog")}
               disabled={bulkActioning}
               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded disabled:opacity-50"
             >
               {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Dog className="w-3 h-3" />}
-              Confirm as My Dog
+              My Dog
             </button>
             <button
               onClick={() => handleBulkConfirmSelected("other_dog")}
@@ -404,7 +519,7 @@ export default function Labels() {
               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded disabled:opacity-50"
             >
               {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Dog className="w-3 h-3" />}
-              Confirm as Other Dog
+              Other Dog
             </button>
             <button
               onClick={() => handleBulkConfirmSelected("no_dog")}
@@ -412,7 +527,7 @@ export default function Labels() {
               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-gray-600 hover:bg-gray-700 rounded disabled:opacity-50"
             >
               {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />}
-              Confirm as No Dog
+              No Dog
             </button>
           </div>
         </div>
@@ -483,17 +598,17 @@ export default function Labels() {
                       </span>
                     )}
                   </div>
-                  {!isReviewed && (
+                  {!isReviewed && pendingConfirm?.key !== item.keyframe_key && (
                     <div className="p-2 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => handleConfirm(item.keyframe_key, "my_dog")}
+                        onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: "my_dog" }); setPendingBreed("Unknown"); }}
                         disabled={isUpdating}
                         className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded disabled:opacity-50"
                       >
                         <Dog className="w-3 h-3" /> My Dog
                       </button>
                       <button
-                        onClick={() => handleConfirm(item.keyframe_key, "other_dog")}
+                        onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: "other_dog" }); setPendingBreed("Unknown"); }}
                         disabled={isUpdating}
                         className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded disabled:opacity-50"
                       >
@@ -508,9 +623,39 @@ export default function Labels() {
                       </button>
                     </div>
                   )}
+                  {!isReviewed && pendingConfirm?.key === item.keyframe_key && (
+                    <div className="p-2 space-y-1" onClick={(e) => e.stopPropagation()}>
+                      <p className="text-xs text-gray-500">
+                        {pendingConfirm.label === "my_dog" ? "My Dog" : "Other Dog"} — select breed:
+                      </p>
+                      <select
+                        value={pendingBreed}
+                        onChange={(e) => setPendingBreed(e.target.value)}
+                        className="w-full text-xs border border-gray-300 rounded px-2 py-1"
+                      >
+                        {DOG_BREEDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setPendingConfirm(null)}
+                          className="flex-1 px-2 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => handleConfirm(item.keyframe_key, pendingConfirm.label, pendingBreed)}
+                          disabled={isUpdating}
+                          className="flex-1 px-2 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
+                        >
+                          Confirm
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {isReviewed && (
                     <div className="p-2 flex items-center justify-center gap-1 text-xs text-green-600">
                       <CheckCircle className="w-3 h-3" /> Reviewed
+                      {item.breed && <span className="text-gray-500 ml-1">({item.breed})</span>}
                     </div>
                   )}
                 </div>
