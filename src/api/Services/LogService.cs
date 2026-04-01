@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
-public class LogService
+public class LogService : ILogService
 {
     private readonly IAmazonCloudWatchLogs _logsClient;
     private readonly string _logGroupName;

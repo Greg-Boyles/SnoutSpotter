@@ -11,7 +11,7 @@ using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
-public class PiUpdateService
+public class PiUpdateService : IPiUpdateService
 {
     private readonly IAmazonIoT _iot;
     private readonly IAmazonIotData _iotData;

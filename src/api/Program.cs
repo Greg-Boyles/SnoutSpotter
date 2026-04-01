@@ -51,15 +51,15 @@ builder.Services.AddSingleton<IAmazonIotData>(sp =>
 builder.Services.AddSingleton<IAmazonKinesisVideo, AmazonKinesisVideoClient>();
 
 // Application services
-builder.Services.AddSingleton<StreamService>();
-builder.Services.AddSingleton<S3UrlService>();
-builder.Services.AddSingleton<ClipService>();
-builder.Services.AddSingleton<S3PresignService>();
-builder.Services.AddSingleton<HealthService>();
-builder.Services.AddSingleton<PiUpdateService>();
-builder.Services.AddSingleton<LogService>();
-builder.Services.AddSingleton<LabelService>();
-builder.Services.AddSingleton<ExportService>();
+builder.Services.AddSingleton<IStreamService, StreamService>();
+builder.Services.AddSingleton<IS3UrlService, S3UrlService>();
+builder.Services.AddSingleton<IClipService, ClipService>();
+builder.Services.AddSingleton<IS3PresignService, S3PresignService>();
+builder.Services.AddSingleton<IHealthService, HealthService>();
+builder.Services.AddSingleton<IPiUpdateService, PiUpdateService>();
+builder.Services.AddSingleton<ILogService, LogService>();
+builder.Services.AddSingleton<ILabelService, LabelService>();
+builder.Services.AddSingleton<IExportService, ExportService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

@@ -4,7 +4,7 @@ using SnoutSpotter.Api.Models;
 
 namespace SnoutSpotter.Api.Services;
 
-public class ClipService
+public class ClipService : IClipService
 {
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly S3UrlService _s3UrlService;

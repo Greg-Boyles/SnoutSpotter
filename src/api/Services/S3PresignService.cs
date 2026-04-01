@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
-public class S3PresignService
+public class S3PresignService : IS3PresignService
 {
     private readonly IAmazonS3 _s3Client;
     private readonly string _bucketName;

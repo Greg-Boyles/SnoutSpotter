@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
-public class LabelService
+public class LabelService : ILabelService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonS3 _s3;

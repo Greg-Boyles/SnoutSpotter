@@ -10,10 +10,10 @@ namespace SnoutSpotter.Api.Controllers;
 [Authorize]
 public class ClipsController : ControllerBase
 {
-    private readonly ClipService _clipService;
-    private readonly S3PresignService _presignService;
+    private readonly IClipService _clipService;
+    private readonly IS3PresignService _presignService;
 
-    public ClipsController(ClipService clipService, S3PresignService presignService)
+    public ClipsController(IClipService clipService, IS3PresignService presignService)
     {
         _clipService = clipService;
         _presignService = presignService;

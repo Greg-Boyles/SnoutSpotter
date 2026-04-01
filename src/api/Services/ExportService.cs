@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
-public class ExportService
+public class ExportService : IExportService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonS3 _s3;
