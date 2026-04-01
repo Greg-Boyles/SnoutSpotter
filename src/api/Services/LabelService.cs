@@ -134,12 +134,10 @@ public class LabelService : ILabelService
 
         if (confirmedLabel != null)
         {
-            // Query reviewed=true items and filter by confirmed_label
-            indexName = "by-review";
-            pkField = "reviewed";
-            pkValue = "true";
-            filterParts.Add("confirmed_label = :cl");
-            filterValues[":cl"] = new() { S = confirmedLabel };
+            // Direct query on confirmed_label GSI — no filter needed
+            indexName = "by-confirmed-label";
+            pkField = "confirmed_label";
+            pkValue = confirmedLabel;
         }
         else if (reviewed != null)
         {
