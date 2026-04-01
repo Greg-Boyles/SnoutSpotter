@@ -31,7 +31,7 @@ function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed"
 }
 
 export default function Labels() {
-  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number } | null>(null);
+  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number } | null>(null);
   const [labels, setLabels] = useState<LabelItem[]>([]);
   const [filter, setFilter] = useState<Filter>("unreviewed");
   const [loading, setLoading] = useState(true);
@@ -246,20 +246,33 @@ export default function Labels() {
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-5 gap-3 mb-6">
-          {[
-            { label: "Total", value: stats.total },
-            { label: "Dogs", value: stats.dogs },
-            { label: "No Dog", value: stats.noDogs },
-            { label: "Reviewed", value: stats.reviewed },
-            { label: "Unreviewed", value: stats.unreviewed },
-          ].map(({ label, value }) => (
-            <div key={label} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
-              <p className="text-2xl font-bold text-gray-900">{value}</p>
-              <p className="text-xs text-gray-500">{label}</p>
-            </div>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            {[
+              { label: "Total", value: stats.total },
+              { label: "Dogs", value: stats.dogs },
+              { label: "No Dog", value: stats.noDogs },
+              { label: "Unreviewed", value: stats.unreviewed },
+            ].map(({ label, value }) => (
+              <div key={label} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <p className="text-2xl font-bold text-gray-900">{value}</p>
+                <p className="text-xs text-gray-500">{label}</p>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            {[
+              { label: "Confirmed My Dog", value: stats.myDog, color: "text-green-600" },
+              { label: "Confirmed Other Dog", value: stats.otherDog, color: "text-orange-600" },
+              { label: "Confirmed No Dog", value: stats.confirmedNoDog, color: "text-gray-600" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                <p className="text-xs text-gray-500">{label}</p>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Filter tabs */}

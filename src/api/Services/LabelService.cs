@@ -43,8 +43,48 @@ public class LabelService : ILabelService
         var noDogs = await CountAsync("by-label", "no_dog");
         var unreviewed = await CountAsync("by-review", "false");
         var reviewed = await CountAsync("by-review", "true");
+        var confirmedCounts = await CountConfirmedLabelsAsync();
 
-        return new { total, dogs, noDogs, reviewed, unreviewed };
+        return new
+        {
+            total, dogs, noDogs, reviewed, unreviewed,
+            myDog = confirmedCounts.GetValueOrDefault("my_dog"),
+            otherDog = confirmedCounts.GetValueOrDefault("other_dog"),
+            confirmedNoDog = confirmedCounts.GetValueOrDefault("no_dog"),
+        };
+    }
+
+    private async Task<Dictionary<string, int>> CountConfirmedLabelsAsync()
+    {
+        var counts = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0, ["no_dog"] = 0 };
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _config.LabelsTable,
+                IndexName = "by-review",
+                KeyConditionExpression = "reviewed = :rev",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":rev"] = new() { S = "true" }
+                },
+                ProjectionExpression = "confirmed_label",
+                ExclusiveStartKey = lastKey
+            });
+
+            foreach (var item in response.Items)
+            {
+                var label = item.GetValueOrDefault("confirmed_label")?.S ?? "";
+                if (counts.ContainsKey(label))
+                    counts[label]++;
+            }
+
+            lastKey = response.LastEvaluatedKey;
+        } while (lastKey != null && lastKey.Count > 0);
+
+        return counts;
     }
 
     private async Task<int> CountAsync(string? indexName, string? pkValue)

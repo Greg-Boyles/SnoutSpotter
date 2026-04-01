@@ -115,7 +115,7 @@ export const api = {
     postJson<{ message: string }>(`/ml/auto-label${date ? `?date=${date}` : ""}`),
 
   getLabelStats: () =>
-    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number }>("/ml/labels/stats"),
+    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number }>("/ml/labels/stats"),
 
   getLabels: (params: { reviewed?: string; label?: string; limit?: number; nextPageKey?: string } = {}) => {
     const qs = new URLSearchParams();
