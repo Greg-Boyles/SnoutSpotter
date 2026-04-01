@@ -132,10 +132,10 @@ export const api = {
   bulkConfirmLabels: (keyframeKeys: string[], confirmedLabel: string) =>
     postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel }),
 
-  uploadTrainingImage: async (file: File) => {
+  uploadTrainingImage: async (file: File, label: string = "my_dog") => {
     const formData = new FormData();
     formData.append("files", file);
-    const res = await fetch(`${BASE}/ml/labels/upload`, {
+    const res = await fetch(`${BASE}/ml/labels/upload?label=${encodeURIComponent(label)}`, {
       method: "POST",
       headers: { ...authHeaders() },
       body: formData,
