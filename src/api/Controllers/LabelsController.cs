@@ -43,10 +43,12 @@ public class LabelsController : ControllerBase
     public async Task<ActionResult> GetLabels(
         [FromQuery] string? reviewed = null,
         [FromQuery] string? label = null,
+        [FromQuery] string? confirmedLabel = null,
+        [FromQuery] string? breed = null,
         [FromQuery] int limit = 50,
         [FromQuery] string? nextPageKey = null)
     {
-        var (items, nextKey) = await _labelService.GetLabelsAsync(reviewed, label, limit, nextPageKey);
+        var (items, nextKey) = await _labelService.GetLabelsAsync(reviewed, label, confirmedLabel, breed, limit, nextPageKey);
 
         // Add presigned URLs for each keyframe
         var enriched = items.Select(item =>
@@ -69,7 +71,7 @@ public class LabelsController : ControllerBase
         if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
             return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
 
-        await _labelService.UpdateLabelAsync(keyframeKey, request.ConfirmedLabel);
+        await _labelService.UpdateLabelAsync(keyframeKey, request.ConfirmedLabel, request.Breed);
         return Ok(new { message = "Label updated" });
     }
 
@@ -82,13 +84,25 @@ public class LabelsController : ControllerBase
         if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
             return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
 
-        await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel);
+        await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel, request.Breed);
         return Ok(new { message = $"Updated {request.KeyframeKeys.Count} labels" });
+    }
+
+    [HttpPost("labels/backfill-breed")]
+    public async Task<ActionResult> BackfillBreed([FromBody] BackfillBreedRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ConfirmedLabel))
+            return BadRequest(new { error = "confirmedLabel is required" });
+        if (string.IsNullOrWhiteSpace(request.Breed))
+            return BadRequest(new { error = "breed is required" });
+
+        var count = await _labelService.BackfillBreedAsync(request.ConfirmedLabel, request.Breed);
+        return Ok(new { message = $"Updated {count} labels with breed '{request.Breed}'" , updated = count });
     }
 
     [HttpPost("labels/upload")]
     [RequestSizeLimit(100 * 1024 * 1024)] // 100MB total
-    public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog")
+    public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog", [FromQuery] string? breed = null)
     {
         if (label is not ("my_dog" or "other_dog" or "no_dog"))
             return BadRequest(new { error = "label must be 'my_dog', 'other_dog', or 'no_dog'" });
@@ -118,7 +132,7 @@ public class LabelsController : ControllerBase
             try
             {
                 var result = await _labelService.UploadTrainingImageAsync(
-                    file.OpenReadStream(), file.FileName, label);
+                    file.OpenReadStream(), file.FileName, label, breed);
                 results.Add(result);
             }
             catch (Exception ex)
@@ -168,5 +182,6 @@ public class LabelsController : ControllerBase
     }
 }
 
-public record UpdateLabelRequest(string ConfirmedLabel);
-public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel);
+public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
+public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
+public record BackfillBreedRequest(string ConfirmedLabel, string Breed);
