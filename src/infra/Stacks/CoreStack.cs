@@ -236,6 +236,14 @@ public class CoreStack : Stack
             ProjectionType = ProjectionType.ALL
         });
 
+        LabelsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "by-confirmed-label",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "confirmed_label", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "labelled_at", Type = AttributeType.STRING },
+            ProjectionType = ProjectionType.ALL
+        });
+
         // ECR repository for AutoLabel Lambda Docker image
         AutoLabelEcrRepo = new Repository(this, "AutoLabelEcrRepo", new RepositoryProps
         {

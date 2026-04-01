@@ -134,12 +134,10 @@ public class LabelService : ILabelService
 
         if (confirmedLabel != null)
         {
-            // Query reviewed=true items and filter by confirmed_label
-            indexName = "by-review";
-            pkField = "reviewed";
-            pkValue = "true";
-            filterParts.Add("confirmed_label = :cl");
-            filterValues[":cl"] = new() { S = confirmedLabel };
+            // Direct query on confirmed_label GSI — no filter needed
+            indexName = "by-confirmed-label";
+            pkField = "confirmed_label";
+            pkValue = confirmedLabel;
         }
         else if (reviewed != null)
         {
@@ -182,19 +180,44 @@ public class LabelService : ILabelService
             foreach (var kv in filterValues)
                 exprValues[kv.Key] = kv.Value;
 
-            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            // When using FilterExpression, DynamoDB Limit applies before filtering.
+            // We must loop until we collect enough results or exhaust the index.
+            if (filterExpression != null)
             {
-                TableName = _config.LabelsTable,
-                IndexName = indexName,
-                KeyConditionExpression = $"{pkField} = :val",
-                FilterExpression = filterExpression,
-                ExpressionAttributeValues = exprValues,
-                ScanIndexForward = false,
-                Limit = limit,
-                ExclusiveStartKey = exclusiveStartKey
-            });
-            items = response.Items;
-            lastKey = response.LastEvaluatedKey;
+                items = new List<Dictionary<string, AttributeValue>>();
+                lastKey = exclusiveStartKey;
+                do
+                {
+                    var response = await _dynamoDb.QueryAsync(new QueryRequest
+                    {
+                        TableName = _config.LabelsTable,
+                        IndexName = indexName,
+                        KeyConditionExpression = $"{pkField} = :val",
+                        FilterExpression = filterExpression,
+                        ExpressionAttributeValues = exprValues,
+                        ScanIndexForward = false,
+                        Limit = 100,
+                        ExclusiveStartKey = lastKey
+                    });
+                    items.AddRange(response.Items);
+                    lastKey = response.LastEvaluatedKey;
+                } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
+            }
+            else
+            {
+                var response = await _dynamoDb.QueryAsync(new QueryRequest
+                {
+                    TableName = _config.LabelsTable,
+                    IndexName = indexName,
+                    KeyConditionExpression = $"{pkField} = :val",
+                    ExpressionAttributeValues = exprValues,
+                    ScanIndexForward = false,
+                    Limit = limit,
+                    ExclusiveStartKey = exclusiveStartKey
+                });
+                items = response.Items;
+                lastKey = response.LastEvaluatedKey;
+            }
         }
         else
         {
