@@ -1,10 +1,13 @@
 using System.Text.Json;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Amazon.IoT;
 using Amazon.IoT.Model;
 using Amazon.IotData;
 using Amazon.IotData.Model;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
@@ -13,21 +16,21 @@ public class PiUpdateService
     private readonly IAmazonIoT _iot;
     private readonly IAmazonIotData _iotData;
     private readonly IAmazonS3 _s3Client;
-    private readonly string _bucketName;
-    private readonly string _thingGroupName;
+    private readonly IAmazonDynamoDB _dynamoDb;
+    private readonly AppConfig _config;
 
     private string? _cachedLatestVersion;
     private DateTime _cacheExpiry = DateTime.MinValue;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
-    public PiUpdateService(IAmazonIoT iot, IAmazonIotData iotData, IAmazonS3 s3Client, IConfiguration configuration)
+    public PiUpdateService(IAmazonIoT iot, IAmazonIotData iotData, IAmazonS3 s3Client,
+        IAmazonDynamoDB dynamoDb, IOptions<AppConfig> config)
     {
         _iot = iot;
         _iotData = iotData;
         _s3Client = s3Client;
-        _bucketName = configuration["BUCKET_NAME"]
-            ?? throw new InvalidOperationException("BUCKET_NAME not configured");
-        _thingGroupName = configuration["IOT_THING_GROUP"] ?? "snoutspotter-pis";
+        _dynamoDb = dynamoDb;
+        _config = config.Value;
     }
 
     public async Task<List<string>> ListPisAsync()
@@ -36,7 +39,7 @@ public class PiUpdateService
         {
             var response = await _iot.ListThingsInThingGroupAsync(new ListThingsInThingGroupRequest
             {
-                ThingGroupName = _thingGroupName
+                ThingGroupName = _config.IoTThingGroup
             });
             return response.Things;
         }
@@ -150,7 +153,7 @@ public class PiUpdateService
         {
             var response = await _s3Client.GetObjectAsync(new GetObjectRequest
             {
-                BucketName = _bucketName,
+                BucketName = _config.BucketName,
                 Key = "releases/pi/manifest.json"
             });
 
@@ -313,8 +316,7 @@ public class PiUpdateService
         var ttl = DateTimeOffset.UtcNow.AddDays(14).ToUnixTimeSeconds();
 
         // Write command to DynamoDB ledger
-        var commandsTable = Environment.GetEnvironmentVariable("COMMANDS_TABLE") ?? "snout-spotter-commands";
-        await new Amazon.DynamoDBv2.AmazonDynamoDBClient().PutItemAsync(commandsTable,
+        await _dynamoDb.PutItemAsync(_config.CommandsTable,
             new Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
             {
                 ["command_id"] = new() { S = commandId },
@@ -346,8 +348,7 @@ public class PiUpdateService
 
     public async Task<Dictionary<string, string>?> GetCommandFromLedgerAsync(string commandId)
     {
-        var commandsTable = Environment.GetEnvironmentVariable("COMMANDS_TABLE") ?? "snout-spotter-commands";
-        var result = await new Amazon.DynamoDBv2.AmazonDynamoDBClient().GetItemAsync(commandsTable,
+        var result = await _dynamoDb.GetItemAsync(_config.CommandsTable,
             new Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
             {
                 ["command_id"] = new() { S = commandId }
@@ -367,11 +368,9 @@ public class PiUpdateService
 
     public async Task<List<Dictionary<string, string>>> GetCommandHistoryAsync(string thingName, int limit = 50)
     {
-        var commandsTable = Environment.GetEnvironmentVariable("COMMANDS_TABLE") ?? "snout-spotter-commands";
-        var client = new Amazon.DynamoDBv2.AmazonDynamoDBClient();
-        var result = await client.QueryAsync(new Amazon.DynamoDBv2.Model.QueryRequest
+        var result = await _dynamoDb.QueryAsync(new QueryRequest
         {
-            TableName = commandsTable,
+            TableName = _config.CommandsTable,
             IndexName = "by-device",
             KeyConditionExpression = "thing_name = :tn",
             ExpressionAttributeValues = new Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>

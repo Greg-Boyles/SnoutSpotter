@@ -6,9 +6,27 @@ using Amazon.IotData;
 using Amazon.KinesisVideo;
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Options;
+using SnoutSpotter.Api;
 using SnoutSpotter.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Bind AppConfig from environment variables
+builder.Services.Configure<AppConfig>(cfg =>
+{
+    cfg.BucketName = Environment.GetEnvironmentVariable("BUCKET_NAME") ?? "";
+    cfg.ClipsTable = Environment.GetEnvironmentVariable("TABLE_NAME") ?? "snout-spotter-clips";
+    cfg.CommandsTable = Environment.GetEnvironmentVariable("COMMANDS_TABLE") ?? "snout-spotter-commands";
+    cfg.LabelsTable = Environment.GetEnvironmentVariable("LABELS_TABLE") ?? "snout-spotter-labels";
+    cfg.ExportsTable = Environment.GetEnvironmentVariable("EXPORTS_TABLE") ?? "snout-spotter-exports";
+    cfg.IoTThingGroup = Environment.GetEnvironmentVariable("IOT_THING_GROUP") ?? "snoutspotter-pis";
+    cfg.PiLogGroup = Environment.GetEnvironmentVariable("PI_LOG_GROUP") ?? "/snoutspotter/pi-logs";
+    cfg.AutoLabelFunction = Environment.GetEnvironmentVariable("AUTO_LABEL_FUNCTION") ?? "snout-spotter-auto-label";
+    cfg.ExportDatasetFunction = Environment.GetEnvironmentVariable("EXPORT_DATASET_FUNCTION") ?? "snout-spotter-export-dataset";
+    cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
+    cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
+});
 
 // AWS services
 builder.Services.AddSingleton<IAmazonDynamoDB, AmazonDynamoDBClient>();
@@ -46,6 +64,7 @@ builder.Services.AddSingleton<ExportService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        var cfg = builder.Configuration;
         options.Authority = Environment.GetEnvironmentVariable("OKTA_ISSUER");
         options.Audience = "api://default";
     });

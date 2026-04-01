@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Amazon.CloudWatchLogs;
 using Amazon.CloudWatchLogs.Model;
+using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
@@ -9,10 +10,10 @@ public class LogService
     private readonly IAmazonCloudWatchLogs _logsClient;
     private readonly string _logGroupName;
 
-    public LogService(IAmazonCloudWatchLogs logsClient, IConfiguration configuration)
+    public LogService(IAmazonCloudWatchLogs logsClient, IOptions<AppConfig> config)
     {
         _logsClient = logsClient;
-        _logGroupName = configuration["PI_LOG_GROUP"] ?? "/snoutspotter/pi-logs";
+        _logGroupName = config.Value.PiLogGroup;
     }
 
     public async Task<List<LogEntry>> GetLogsAsync(

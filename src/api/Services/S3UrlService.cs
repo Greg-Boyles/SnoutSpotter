@@ -1,5 +1,6 @@
 using Amazon.S3;
 using Amazon.S3.Model;
+using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
@@ -8,11 +9,10 @@ public class S3UrlService
     private readonly IAmazonS3 _s3Client;
     private readonly string _bucketName;
 
-    public S3UrlService(IAmazonS3 s3Client, IConfiguration configuration)
+    public S3UrlService(IAmazonS3 s3Client, IOptions<AppConfig> config)
     {
         _s3Client = s3Client;
-        _bucketName = configuration["BUCKET_NAME"]
-            ?? throw new InvalidOperationException("BUCKET_NAME not configured");
+        _bucketName = config.Value.BucketName;
     }
 
     public string GetPresignedUrl(string key, TimeSpan expiration)
