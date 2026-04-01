@@ -66,8 +66,8 @@ public class LabelsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.ConfirmedLabel))
             return BadRequest(new { error = "confirmedLabel is required" });
 
-        if (request.ConfirmedLabel is not ("my_dog" or "no_dog"))
-            return BadRequest(new { error = "confirmedLabel must be 'my_dog' or 'no_dog'" });
+        if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
+            return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
 
         await _labelService.UpdateLabelAsync(keyframeKey, request.ConfirmedLabel);
         return Ok(new { message = "Label updated" });
@@ -79,8 +79,8 @@ public class LabelsController : ControllerBase
         if (request.KeyframeKeys == null || request.KeyframeKeys.Count == 0)
             return BadRequest(new { error = "keyframeKeys is required" });
 
-        if (request.ConfirmedLabel is not ("my_dog" or "no_dog"))
-            return BadRequest(new { error = "confirmedLabel must be 'my_dog' or 'no_dog'" });
+        if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
+            return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
 
         await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel);
         return Ok(new { message = $"Updated {request.KeyframeKeys.Count} labels" });

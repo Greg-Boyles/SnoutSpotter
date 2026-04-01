@@ -160,8 +160,8 @@ public class LabelService : ILabelService
     public async Task UpdateLabelAsync(string keyframeKey, string confirmedLabel)
     {
         // Map confirmed label to auto_label value for GSI consistency
-        // my_dog → dog, no_dog → no_dog
-        var autoLabelValue = confirmedLabel == "my_dog" ? "dog" : "no_dog";
+        // my_dog → dog, other_dog → dog (it is a dog, just not ours), no_dog → no_dog
+        var autoLabelValue = confirmedLabel is "my_dog" or "other_dog" ? "dog" : "no_dog";
 
         await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
         {

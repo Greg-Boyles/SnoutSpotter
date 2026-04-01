@@ -52,9 +52,9 @@ public class Function
                 return;
             }
 
-            // Split into my_dog and not_my_dog
+            // Split into my_dog and not_my_dog (other_dog + no_dog both go into not_my_dog)
             var myDog = labels.Where(l => l.confirmedLabel == "my_dog").ToList();
-            var notMyDog = labels.Where(l => l.confirmedLabel == "no_dog").ToList();
+            var notMyDog = labels.Where(l => l.confirmedLabel is "other_dog" or "no_dog").ToList();
 
             // 80/20 train/val split (random shuffle)
             var rng = new Random();
@@ -206,7 +206,7 @@ public class Function
             foreach (var item in response.Items)
             {
                 var confirmedLabel = item.GetValueOrDefault("confirmed_label")?.S ?? "";
-                if (confirmedLabel is not ("my_dog" or "no_dog")) continue;
+                if (confirmedLabel is not ("my_dog" or "other_dog" or "no_dog")) continue;
 
                 labels.Add(new LabelRecord
                 {
