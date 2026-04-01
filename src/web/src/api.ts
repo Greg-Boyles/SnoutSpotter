@@ -117,10 +117,11 @@ export const api = {
   getLabelStats: () =>
     fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number }>("/ml/labels/stats"),
 
-  getLabels: (params: { reviewed?: string; label?: string; limit?: number; nextPageKey?: string } = {}) => {
+  getLabels: (params: { reviewed?: string; label?: string; confirmedLabel?: string; limit?: number; nextPageKey?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.reviewed) qs.set("reviewed", params.reviewed);
     if (params.label) qs.set("label", params.label);
+    if (params.confirmedLabel) qs.set("confirmedLabel", params.confirmedLabel);
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.nextPageKey) qs.set("nextPageKey", params.nextPageKey);
     return fetchJson<{ labels: Record<string, string | null>[]; nextPageKey: string | null }>(`/ml/labels?${qs}`);

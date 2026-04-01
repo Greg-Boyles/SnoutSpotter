@@ -115,13 +115,27 @@ public class LabelService : ILabelService
     }
 
     public async Task<(List<Dictionary<string, string>> items, string? nextPageKey)> GetLabelsAsync(
-        string? reviewed, string? label, int limit, string? nextPageKey)
+        string? reviewed, string? label, string? confirmedLabel, int limit, string? nextPageKey)
     {
         string? indexName = null;
         string? pkField = null;
         string? pkValue = null;
+        string? filterExpression = null;
+        Dictionary<string, AttributeValue>? filterValues = null;
 
-        if (reviewed != null)
+        if (confirmedLabel != null)
+        {
+            // Query reviewed=true items and filter by confirmed_label
+            indexName = "by-review";
+            pkField = "reviewed";
+            pkValue = "true";
+            filterExpression = "confirmed_label = :cl";
+            filterValues = new Dictionary<string, AttributeValue>
+            {
+                [":cl"] = new() { S = confirmedLabel }
+            };
+        }
+        else if (reviewed != null)
         {
             indexName = "by-review";
             pkField = "reviewed";
@@ -147,15 +161,21 @@ public class LabelService : ILabelService
 
         if (indexName != null && pkField != null)
         {
+            var exprValues = new Dictionary<string, AttributeValue>
+            {
+                [":val"] = new() { S = pkValue! }
+            };
+            if (filterValues != null)
+                foreach (var kv in filterValues)
+                    exprValues[kv.Key] = kv.Value;
+
             var response = await _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _config.LabelsTable,
                 IndexName = indexName,
                 KeyConditionExpression = $"{pkField} = :val",
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":val"] = new() { S = pkValue! }
-                },
+                FilterExpression = filterExpression,
+                ExpressionAttributeValues = exprValues,
                 ScanIndexForward = false,
                 Limit = limit,
                 ExclusiveStartKey = exclusiveStartKey

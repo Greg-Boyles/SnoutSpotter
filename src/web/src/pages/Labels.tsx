@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal } from "lucide-react";
 import { api } from "../api";
 
-type Filter = "all" | "dog" | "no_dog" | "unreviewed";
+type Filter = "all" | "dog" | "no_dog" | "unreviewed" | "confirmed_my_dog" | "confirmed_other_dog" | "confirmed_no_dog";
 
 interface LabelItem {
   keyframe_key: string;
@@ -70,10 +70,13 @@ export default function Labels() {
 
   const loadLabels = (pageKey?: string) => {
     setLoading(true);
-    const params: { reviewed?: string; label?: string; limit?: number; nextPageKey?: string } = { limit: 30 };
+    const params: { reviewed?: string; label?: string; confirmedLabel?: string; limit?: number; nextPageKey?: string } = { limit: 30 };
     if (filter === "unreviewed") params.reviewed = "false";
     else if (filter === "dog") params.label = "dog";
     else if (filter === "no_dog") params.label = "no_dog";
+    else if (filter === "confirmed_my_dog") params.confirmedLabel = "my_dog";
+    else if (filter === "confirmed_other_dog") params.confirmedLabel = "other_dog";
+    else if (filter === "confirmed_no_dog") params.confirmedLabel = "no_dog";
     if (pageKey) params.nextPageKey = pageKey;
 
     api.getLabels(params)
@@ -187,6 +190,9 @@ export default function Labels() {
     { key: "unreviewed", label: "Unreviewed" },
     { key: "dog", label: "Dogs" },
     { key: "no_dog", label: "No Dog" },
+    { key: "confirmed_my_dog", label: "My Dog" },
+    { key: "confirmed_other_dog", label: "Other Dog" },
+    { key: "confirmed_no_dog", label: "Confirmed No Dog" },
     { key: "all", label: "All" },
   ];
 
