@@ -45,8 +45,8 @@ public class Function
         
         context.Logger.LogInformation($"Processing: {s3Key}");
 
-        // Parse metadata from key: raw-clips/YYYY/MM/DD/timestamp_durations.mp4
-        var (clipId, timestamp, durationSeconds, date) = ParseS3Key(s3Key);
+        // Parse metadata from key: raw-clips/{device}/YYYY/MM/DD/timestamp_durations.mp4
+        var (clipId, timestamp, durationSeconds, date, device) = ParseS3Key(s3Key);
 
         // Download the video to /tmp for keyframe extraction
         var localVideoPath = $"/tmp/{clipId}.mp4";
@@ -60,14 +60,16 @@ public class Function
         foreach (var keyframePath in keyframePaths)
         {
             var frameNum = Path.GetFileNameWithoutExtension(keyframePath).Split('_').Last();
-            var keyframeKey = $"keyframes/{date}/{clipId}_{frameNum}.jpg";
+            var keyframeKey = string.IsNullOrEmpty(device)
+                ? $"keyframes/{date}/{clipId}_{frameNum}.jpg"
+                : $"keyframes/{device}/{date}/{clipId}_{frameNum}.jpg";
             await UploadToS3(keyframePath, keyframeKey);
             keyframeKeys.Add(keyframeKey);
             File.Delete(keyframePath);
         }
 
         // Write metadata to DynamoDB
-        await WriteClipMetadata(clipId, s3Key, timestamp, durationSeconds, date, keyframeKeys);
+        await WriteClipMetadata(clipId, s3Key, timestamp, durationSeconds, date, device, keyframeKeys);
 
         // Cleanup
         File.Delete(localVideoPath);
@@ -76,9 +78,10 @@ public class Function
             $"Ingested clip {clipId}: {keyframeKeys.Count} keyframes extracted");
     }
 
-    private static (string clipId, long timestamp, int durationSeconds, string date) ParseS3Key(string key)
+    private static (string clipId, long timestamp, int durationSeconds, string date, string device) ParseS3Key(string key)
     {
-        // Expected format: raw-clips/YYYY/MM/DD/2025-01-15T14-30-00_45s.mp4
+        // New format: raw-clips/{device}/YYYY/MM/DD/filename.mp4
+        // Old format: raw-clips/YYYY/MM/DD/filename.mp4
         var fileName = Path.GetFileNameWithoutExtension(key);
         var parts = fileName.Split('_');
 
@@ -88,11 +91,28 @@ public class Function
         var clipId = fileName;
         int.TryParse(durationStr, out var durationSeconds);
 
-        // Extract date from path
+        // Extract device and date from path
         var pathParts = key.Split('/');
-        var date = pathParts.Length >= 4
-            ? $"{pathParts[1]}/{pathParts[2]}/{pathParts[3]}"
-            : DateTime.UtcNow.ToString("yyyy/MM/dd");
+        string date;
+        string device;
+
+        if (pathParts.Length >= 5)
+        {
+            // New format: raw-clips/{device}/YYYY/MM/DD/filename
+            device = pathParts[1];
+            date = $"{pathParts[2]}/{pathParts[3]}/{pathParts[4]}";
+        }
+        else if (pathParts.Length >= 4)
+        {
+            // Old format: raw-clips/YYYY/MM/DD/filename
+            device = "";
+            date = $"{pathParts[1]}/{pathParts[2]}/{pathParts[3]}";
+        }
+        else
+        {
+            device = "";
+            date = DateTime.UtcNow.ToString("yyyy/MM/dd");
+        }
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         if (DateTime.TryParse(timestampStr.Replace('-', ':'), CultureInfo.InvariantCulture,
@@ -101,7 +121,7 @@ public class Function
             timestamp = new DateTimeOffset(parsed, TimeSpan.Zero).ToUnixTimeSeconds();
         }
 
-        return (clipId, timestamp, durationSeconds, date);
+        return (clipId, timestamp, durationSeconds, date, device);
     }
 
     private async Task DownloadFromS3(string key, string localPath)
@@ -161,7 +181,7 @@ public class Function
 
     private async Task WriteClipMetadata(
         string clipId, string s3Key, long timestamp, int durationSeconds,
-        string date, List<string> keyframeKeys)
+        string date, string device, List<string> keyframeKeys)
     {
         var item = new Dictionary<string, AttributeValue>
         {
@@ -177,6 +197,9 @@ public class Function
             ["detection_type"] = new() { S = "pending" },
             ["created_at"] = new() { S = DateTime.UtcNow.ToString("O") }
         };
+
+        if (!string.IsNullOrEmpty(device))
+            item["device"] = new() { S = device };
 
         await _dynamoClient.PutItemAsync(new PutItemRequest
         {
