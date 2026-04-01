@@ -334,4 +334,49 @@ public class LabelService : ILabelService
 
         return result;
     }
+
+    public async Task<int> BackfillBreedAsync(string confirmedLabel, string breed)
+    {
+        var updated = 0;
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _config.LabelsTable,
+                IndexName = "by-review",
+                KeyConditionExpression = "reviewed = :rev",
+                FilterExpression = "confirmed_label = :cl AND attribute_not_exists(breed)",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":rev"] = new() { S = "true" },
+                    [":cl"] = new() { S = confirmedLabel }
+                },
+                ProjectionExpression = "keyframe_key",
+                ExclusiveStartKey = lastKey
+            });
+
+            var tasks = response.Items.Select(item =>
+                _dynamoDb.UpdateItemAsync(new UpdateItemRequest
+                {
+                    TableName = _config.LabelsTable,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["keyframe_key"] = item["keyframe_key"]
+                    },
+                    UpdateExpression = "SET breed = :breed",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":breed"] = new() { S = breed }
+                    }
+                }));
+
+            await Task.WhenAll(tasks);
+            updated += response.Items.Count;
+            lastKey = response.LastEvaluatedKey;
+        } while (lastKey != null && lastKey.Count > 0);
+
+        return updated;
+    }
 }

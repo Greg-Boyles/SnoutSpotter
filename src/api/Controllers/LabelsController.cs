@@ -88,6 +88,18 @@ public class LabelsController : ControllerBase
         return Ok(new { message = $"Updated {request.KeyframeKeys.Count} labels" });
     }
 
+    [HttpPost("labels/backfill-breed")]
+    public async Task<ActionResult> BackfillBreed([FromBody] BackfillBreedRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ConfirmedLabel))
+            return BadRequest(new { error = "confirmedLabel is required" });
+        if (string.IsNullOrWhiteSpace(request.Breed))
+            return BadRequest(new { error = "breed is required" });
+
+        var count = await _labelService.BackfillBreedAsync(request.ConfirmedLabel, request.Breed);
+        return Ok(new { message = $"Updated {count} labels with breed '{request.Breed}'" , updated = count });
+    }
+
     [HttpPost("labels/upload")]
     [RequestSizeLimit(100 * 1024 * 1024)] // 100MB total
     public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog", [FromQuery] string? breed = null)
@@ -172,3 +184,4 @@ public class LabelsController : ControllerBase
 
 public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
 public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
+public record BackfillBreedRequest(string ConfirmedLabel, string Breed);

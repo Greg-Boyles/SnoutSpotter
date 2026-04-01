@@ -10,4 +10,5 @@ public interface ILabelService
     Task BulkConfirmAsync(List<string> keyframeKeys, string confirmedLabel, string? breed = null);
     string GetPresignedUrl(string keyframeKey);
     Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName, string confirmedLabel, string? breed = null);
+    Task<int> BackfillBreedAsync(string confirmedLabel, string breed);
 }

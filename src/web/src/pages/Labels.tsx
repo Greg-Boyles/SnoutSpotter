@@ -601,7 +601,7 @@ export default function Labels() {
                   {!isReviewed && pendingConfirm?.key !== item.keyframe_key && (
                     <div className="p-2 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: "my_dog" }); setPendingBreed("Unknown"); }}
+                        onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: "my_dog" }); setPendingBreed("Labrador Retriever"); }}
                         disabled={isUpdating}
                         className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded disabled:opacity-50"
                       >
