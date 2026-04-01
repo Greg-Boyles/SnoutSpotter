@@ -112,6 +112,11 @@ public class Function
             }
 
             // Write manifest.json inside the dataset
+            var breedCounts = labels
+                .Where(l => !string.IsNullOrEmpty(l.breed))
+                .GroupBy(l => l.breed)
+                .ToDictionary(g => g.Key, g => g.Count());
+
             var manifest = new
             {
                 export_id = exportId,
@@ -121,10 +126,24 @@ public class Function
                 not_my_dog = notMyDog.Count,
                 train_count = trainCount,
                 val_count = valCount,
+                breeds = breedCounts,
             };
             await File.WriteAllTextAsync(
                 Path.Combine(baseDir, "manifest.json"),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+
+            // Write labels.csv with per-image metadata
+            var csvLines = new List<string> { "filename,split,confirmed_label,breed" };
+            foreach (var (splitDir, items) in splits)
+            {
+                for (var i = 0; i < items.Count; i++)
+                {
+                    var ext = Path.GetExtension(items[i].keyframeKey).ToLowerInvariant();
+                    if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+                    csvLines.Add($"{splitDir}/img_{i:D4}{ext},{splitDir.Split('/')[0]},{items[i].confirmedLabel},{items[i].breed}");
+                }
+            }
+            await File.WriteAllLinesAsync(Path.Combine(baseDir, "labels.csv"), csvLines);
 
             // Zip
             if (File.Exists(zipPath)) File.Delete(zipPath);
@@ -211,7 +230,8 @@ public class Function
                 labels.Add(new LabelRecord
                 {
                     keyframeKey = item["keyframe_key"].S,
-                    confirmedLabel = confirmedLabel
+                    confirmedLabel = confirmedLabel,
+                    breed = item.GetValueOrDefault("breed")?.S ?? ""
                 });
             }
 
@@ -253,5 +273,6 @@ public class Function
     {
         public string keyframeKey { get; init; } = "";
         public string confirmedLabel { get; init; } = "";
+        public string breed { get; init; } = "";
     }
 }
