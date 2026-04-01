@@ -86,6 +86,7 @@ class Uploader:
         self.s3 = session.client("s3", region_name=self.config["region"])
         self.bucket = self.config["bucket_name"]
         self.prefix = self.config["prefix"]
+        self.thing_name = config["iot"]["thing_name"]
         self.ledger = UploadLedger()
 
         # Status tracking
@@ -124,9 +125,9 @@ class Uploader:
             logger.warning(f"Failed to write status file: {e}")
 
     def get_s3_key(self, filename: str) -> str:
-        """Generate S3 key from filename: raw-clips/YYYY/MM/DD/filename."""
+        """Generate S3 key: raw-clips/{thing_name}/YYYY/MM/DD/filename."""
         now = datetime.now(timezone.utc)
-        return f"{self.prefix}/{now.strftime('%Y/%m/%d')}/{filename}"
+        return f"{self.prefix}/{self.thing_name}/{now.strftime('%Y/%m/%d')}/{filename}"
 
     def upload_file(self, filepath: Path) -> bool:
         """Upload a single file to S3 with multipart upload."""
