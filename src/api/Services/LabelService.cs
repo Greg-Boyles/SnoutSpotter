@@ -43,7 +43,7 @@ public class LabelService : ILabelService
         var noDogs = await CountAsync("by-label", "no_dog");
         var unreviewed = await CountAsync("by-review", "false");
         var reviewed = await CountAsync("by-review", "true");
-        var confirmedCounts = await CountConfirmedLabelsAsync();
+        var (confirmedCounts, breedCounts) = await CountConfirmedLabelsAsync();
 
         return new
         {
@@ -51,12 +51,14 @@ public class LabelService : ILabelService
             myDog = confirmedCounts.GetValueOrDefault("my_dog"),
             otherDog = confirmedCounts.GetValueOrDefault("other_dog"),
             confirmedNoDog = confirmedCounts.GetValueOrDefault("no_dog"),
+            breeds = breedCounts,
         };
     }
 
-    private async Task<Dictionary<string, int>> CountConfirmedLabelsAsync()
+    private async Task<(Dictionary<string, int> labels, Dictionary<string, int> breeds)> CountConfirmedLabelsAsync()
     {
         var counts = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0, ["no_dog"] = 0 };
+        var breedCounts = new Dictionary<string, int>();
         Dictionary<string, AttributeValue>? lastKey = null;
 
         do
@@ -70,7 +72,7 @@ public class LabelService : ILabelService
                 {
                     [":rev"] = new() { S = "true" }
                 },
-                ProjectionExpression = "confirmed_label",
+                ProjectionExpression = "confirmed_label, breed",
                 ExclusiveStartKey = lastKey
             });
 
@@ -79,12 +81,19 @@ public class LabelService : ILabelService
                 var label = item.GetValueOrDefault("confirmed_label")?.S ?? "";
                 if (counts.ContainsKey(label))
                     counts[label]++;
+
+                var breed = item.GetValueOrDefault("breed")?.S;
+                if (!string.IsNullOrEmpty(breed))
+                {
+                    breedCounts.TryGetValue(breed, out var count);
+                    breedCounts[breed] = count + 1;
+                }
             }
 
             lastKey = response.LastEvaluatedKey;
         } while (lastKey != null && lastKey.Count > 0);
 
-        return counts;
+        return (counts, breedCounts);
     }
 
     private async Task<int> CountAsync(string? indexName, string? pkValue)
@@ -115,13 +124,13 @@ public class LabelService : ILabelService
     }
 
     public async Task<(List<Dictionary<string, string>> items, string? nextPageKey)> GetLabelsAsync(
-        string? reviewed, string? label, string? confirmedLabel, int limit, string? nextPageKey)
+        string? reviewed, string? label, string? confirmedLabel, string? breed, int limit, string? nextPageKey)
     {
         string? indexName = null;
         string? pkField = null;
         string? pkValue = null;
-        string? filterExpression = null;
-        Dictionary<string, AttributeValue>? filterValues = null;
+        var filterParts = new List<string>();
+        var filterValues = new Dictionary<string, AttributeValue>();
 
         if (confirmedLabel != null)
         {
@@ -129,11 +138,8 @@ public class LabelService : ILabelService
             indexName = "by-review";
             pkField = "reviewed";
             pkValue = "true";
-            filterExpression = "confirmed_label = :cl";
-            filterValues = new Dictionary<string, AttributeValue>
-            {
-                [":cl"] = new() { S = confirmedLabel }
-            };
+            filterParts.Add("confirmed_label = :cl");
+            filterValues[":cl"] = new() { S = confirmedLabel };
         }
         else if (reviewed != null)
         {
@@ -147,6 +153,14 @@ public class LabelService : ILabelService
             pkField = "auto_label";
             pkValue = label;
         }
+
+        if (!string.IsNullOrEmpty(breed))
+        {
+            filterParts.Add("breed = :breed");
+            filterValues[":breed"] = new() { S = breed };
+        }
+
+        var filterExpression = filterParts.Count > 0 ? string.Join(" AND ", filterParts) : null;
 
         Dictionary<string, AttributeValue>? exclusiveStartKey = null;
         if (!string.IsNullOrEmpty(nextPageKey))
@@ -165,9 +179,8 @@ public class LabelService : ILabelService
             {
                 [":val"] = new() { S = pkValue! }
             };
-            if (filterValues != null)
-                foreach (var kv in filterValues)
-                    exprValues[kv.Key] = kv.Value;
+            foreach (var kv in filterValues)
+                exprValues[kv.Key] = kv.Value;
 
             var response = await _dynamoDb.QueryAsync(new QueryRequest
             {
