@@ -9,10 +9,10 @@ namespace SnoutSpotter.Api.Controllers;
 [Authorize]
 public class LabelsController : ControllerBase
 {
-    private readonly LabelService _labelService;
-    private readonly ExportService _exportService;
+    private readonly ILabelService _labelService;
+    private readonly IExportService _exportService;
 
-    public LabelsController(LabelService labelService, ExportService exportService)
+    public LabelsController(ILabelService labelService, IExportService exportService)
     {
         _exportService = exportService;
         _labelService = labelService;

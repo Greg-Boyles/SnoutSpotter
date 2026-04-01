@@ -9,11 +9,11 @@ namespace SnoutSpotter.Api.Controllers;
 [Authorize]
 public class PiController : ControllerBase
 {
-    private readonly PiUpdateService _piUpdateService;
-    private readonly HealthService _healthService;
-    private readonly LogService _logService;
+    private readonly IPiUpdateService _piUpdateService;
+    private readonly IHealthService _healthService;
+    private readonly ILogService _logService;
 
-    public PiController(PiUpdateService piUpdateService, HealthService healthService, LogService logService)
+    public PiController(IPiUpdateService piUpdateService, IHealthService healthService, ILogService logService)
     {
         _piUpdateService = piUpdateService;
         _healthService = healthService;

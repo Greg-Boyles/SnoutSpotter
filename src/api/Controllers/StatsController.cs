@@ -10,11 +10,11 @@ namespace SnoutSpotter.Api.Controllers;
 [Authorize]
 public class StatsController : ControllerBase
 {
-    private readonly ClipService _clipService;
-    private readonly HealthService _healthService;
-    private readonly PiUpdateService _piUpdateService;
+    private readonly IClipService _clipService;
+    private readonly IHealthService _healthService;
+    private readonly IPiUpdateService _piUpdateService;
 
-    public StatsController(ClipService clipService, HealthService healthService, PiUpdateService piUpdateService)
+    public StatsController(IClipService clipService, IHealthService healthService, IPiUpdateService piUpdateService)
     {
         _clipService = clipService;
         _healthService = healthService;
