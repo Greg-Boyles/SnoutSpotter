@@ -59,7 +59,7 @@ export default function Dashboard() {
   const [recentClips, setRecentClips] = useState<Clip[]>([]);
   const [allClips, setAllClips] = useState<Clip[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [labelStats, setLabelStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; lastAutoLabelRun?: string } | null>(null);
+  const [labelStats, setLabelStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number } | null>(null);
   const [latestExport, setLatestExport] = useState<Record<string, string> | null>(null);
   const [runningAutoLabel, setRunningAutoLabel] = useState(false);
 
@@ -192,12 +192,7 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500">Unreviewed</p>
                 </div>
               </div>
-              <div className="flex items-center justify-between text-xs text-gray-400 pt-2 border-t border-gray-100">
-                <span>
-                  Last run: {labelStats.lastAutoLabelRun
-                    ? formatDistanceToNow(new Date(labelStats.lastAutoLabelRun), { addSuffix: true })
-                    : "Never"}
-                </span>
+              <div className="flex items-center justify-end text-xs pt-2 border-t border-gray-100">
                 <Link to="/labels" className="text-blue-600 hover:text-blue-700 font-medium">
                   View Labels →
                 </Link>

@@ -1,6 +1,4 @@
 using System.Text.Json;
-using Amazon.CloudWatch;
-using Amazon.CloudWatch.Model;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda;
@@ -14,14 +12,12 @@ public class LabelService : ILabelService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonS3 _s3;
-    private readonly IAmazonCloudWatch _cloudWatch;
     private readonly AppConfig _config;
 
-    public LabelService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IAmazonCloudWatch cloudWatch, IOptions<AppConfig> config)
+    public LabelService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IOptions<AppConfig> config)
     {
         _dynamoDb = dynamoDb;
         _s3 = s3;
-        _cloudWatch = cloudWatch;
         _config = config.Value;
     }
 
@@ -47,40 +43,8 @@ public class LabelService : ILabelService
         var noDogs = await CountAsync("by-label", "no_dog");
         var unreviewed = await CountAsync("by-review", "false");
         var reviewed = await CountAsync("by-review", "true");
-        var lastAutoLabelRun = await GetLastLambdaInvocationAsync(_config.AutoLabelFunction);
 
-        return new { total, dogs, noDogs, reviewed, unreviewed, lastAutoLabelRun };
-    }
-
-    private async Task<string?> GetLastLambdaInvocationAsync(string functionName)
-    {
-        try
-        {
-            var response = await _cloudWatch.GetMetricStatisticsAsync(new GetMetricStatisticsRequest
-            {
-                Namespace = "AWS/Lambda",
-                MetricName = "Invocations",
-                Dimensions = new List<Dimension>
-                {
-                    new() { Name = "FunctionName", Value = functionName }
-                },
-                StartTimeUtc = DateTime.UtcNow.AddDays(-30),
-                EndTimeUtc = DateTime.UtcNow,
-                Period = 3600,
-                Statistics = new List<string> { "Sum" }
-            });
-
-            var lastPoint = response.Datapoints
-                .Where(d => d.Sum > 0)
-                .OrderByDescending(d => d.Timestamp)
-                .FirstOrDefault();
-
-            return lastPoint?.Timestamp.ToString("O");
-        }
-        catch
-        {
-            return null;
-        }
+        return new { total, dogs, noDogs, reviewed, unreviewed };
     }
 
     private async Task<int> CountAsync(string? indexName, string? pkValue)
