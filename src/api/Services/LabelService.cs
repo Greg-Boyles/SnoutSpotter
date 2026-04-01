@@ -217,11 +217,28 @@ public class LabelService : ILabelService
         return (result, nextKey);
     }
 
-    public async Task UpdateLabelAsync(string keyframeKey, string confirmedLabel)
+    public async Task UpdateLabelAsync(string keyframeKey, string confirmedLabel, string? breed = null)
     {
         // Map confirmed label to auto_label value for GSI consistency
         // my_dog → dog, other_dog → dog (it is a dog, just not ours), no_dog → no_dog
         var autoLabelValue = confirmedLabel is "my_dog" or "other_dog" ? "dog" : "no_dog";
+
+        var updateExpr = "SET confirmed_label = :label, reviewed = :rev, reviewed_at = :at, " +
+                         "original_auto_label = if_not_exists(original_auto_label, auto_label), " +
+                         "auto_label = :auto";
+        var exprValues = new Dictionary<string, AttributeValue>
+        {
+            [":label"] = new() { S = confirmedLabel },
+            [":rev"] = new() { S = "true" },
+            [":at"] = new() { S = DateTime.UtcNow.ToString("O") },
+            [":auto"] = new() { S = autoLabelValue }
+        };
+
+        if (!string.IsNullOrEmpty(breed))
+        {
+            updateExpr += ", breed = :breed";
+            exprValues[":breed"] = new() { S = breed };
+        }
 
         await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
         {
@@ -230,23 +247,15 @@ public class LabelService : ILabelService
             {
                 ["keyframe_key"] = new() { S = keyframeKey }
             },
-            UpdateExpression = "SET confirmed_label = :label, reviewed = :rev, reviewed_at = :at, " +
-                               "original_auto_label = if_not_exists(original_auto_label, auto_label), " +
-                               "auto_label = :auto",
-            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-            {
-                [":label"] = new() { S = confirmedLabel },
-                [":rev"] = new() { S = "true" },
-                [":at"] = new() { S = DateTime.UtcNow.ToString("O") },
-                [":auto"] = new() { S = autoLabelValue }
-            }
+            UpdateExpression = updateExpr,
+            ExpressionAttributeValues = exprValues
         });
     }
 
-    public async Task BulkConfirmAsync(List<string> keyframeKeys, string confirmedLabel)
+    public async Task BulkConfirmAsync(List<string> keyframeKeys, string confirmedLabel, string? breed = null)
     {
         // DynamoDB BatchWriteItem doesn't support UpdateItem, so use individual updates
-        var tasks = keyframeKeys.Select(key => UpdateLabelAsync(key, confirmedLabel));
+        var tasks = keyframeKeys.Select(key => UpdateLabelAsync(key, confirmedLabel, breed));
         await Task.WhenAll(tasks);
     }
 
@@ -260,7 +269,7 @@ public class LabelService : ILabelService
         });
     }
 
-    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName, string confirmedLabel)
+    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName, string confirmedLabel, string? breed = null)
     {
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         if (ext is not (".jpg" or ".jpeg" or ".png"))
@@ -293,9 +302,12 @@ public class LabelService : ILabelService
             ["reviewed_at"] = new() { S = now },
         };
 
+        if (!string.IsNullOrEmpty(breed))
+            item["breed"] = new() { S = breed };
+
         await _dynamoDb.PutItemAsync(_config.LabelsTable, item);
 
-        return new Dictionary<string, string>
+        var result = new Dictionary<string, string>
         {
             ["keyframe_key"] = s3Key,
             ["auto_label"] = autoLabelValue,
@@ -303,5 +315,10 @@ public class LabelService : ILabelService
             ["reviewed"] = "true",
             ["imageUrl"] = GetPresignedUrl(s3Key)
         };
+
+        if (!string.IsNullOrEmpty(breed))
+            result["breed"] = breed;
+
+        return result;
     }
 }

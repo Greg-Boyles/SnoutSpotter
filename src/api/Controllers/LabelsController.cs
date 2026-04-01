@@ -70,7 +70,7 @@ public class LabelsController : ControllerBase
         if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
             return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
 
-        await _labelService.UpdateLabelAsync(keyframeKey, request.ConfirmedLabel);
+        await _labelService.UpdateLabelAsync(keyframeKey, request.ConfirmedLabel, request.Breed);
         return Ok(new { message = "Label updated" });
     }
 
@@ -83,13 +83,13 @@ public class LabelsController : ControllerBase
         if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
             return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
 
-        await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel);
+        await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel, request.Breed);
         return Ok(new { message = $"Updated {request.KeyframeKeys.Count} labels" });
     }
 
     [HttpPost("labels/upload")]
     [RequestSizeLimit(100 * 1024 * 1024)] // 100MB total
-    public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog")
+    public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog", [FromQuery] string? breed = null)
     {
         if (label is not ("my_dog" or "other_dog" or "no_dog"))
             return BadRequest(new { error = "label must be 'my_dog', 'other_dog', or 'no_dog'" });
@@ -119,7 +119,7 @@ public class LabelsController : ControllerBase
             try
             {
                 var result = await _labelService.UploadTrainingImageAsync(
-                    file.OpenReadStream(), file.FileName, label);
+                    file.OpenReadStream(), file.FileName, label, breed);
                 results.Add(result);
             }
             catch (Exception ex)
@@ -169,5 +169,5 @@ public class LabelsController : ControllerBase
     }
 }
 
-public record UpdateLabelRequest(string ConfirmedLabel);
-public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel);
+public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
+public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
