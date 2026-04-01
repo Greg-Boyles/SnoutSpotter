@@ -182,19 +182,44 @@ public class LabelService : ILabelService
             foreach (var kv in filterValues)
                 exprValues[kv.Key] = kv.Value;
 
-            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            // When using FilterExpression, DynamoDB Limit applies before filtering.
+            // We must loop until we collect enough results or exhaust the index.
+            if (filterExpression != null)
             {
-                TableName = _config.LabelsTable,
-                IndexName = indexName,
-                KeyConditionExpression = $"{pkField} = :val",
-                FilterExpression = filterExpression,
-                ExpressionAttributeValues = exprValues,
-                ScanIndexForward = false,
-                Limit = limit,
-                ExclusiveStartKey = exclusiveStartKey
-            });
-            items = response.Items;
-            lastKey = response.LastEvaluatedKey;
+                items = new List<Dictionary<string, AttributeValue>>();
+                lastKey = exclusiveStartKey;
+                do
+                {
+                    var response = await _dynamoDb.QueryAsync(new QueryRequest
+                    {
+                        TableName = _config.LabelsTable,
+                        IndexName = indexName,
+                        KeyConditionExpression = $"{pkField} = :val",
+                        FilterExpression = filterExpression,
+                        ExpressionAttributeValues = exprValues,
+                        ScanIndexForward = false,
+                        Limit = 100,
+                        ExclusiveStartKey = lastKey
+                    });
+                    items.AddRange(response.Items);
+                    lastKey = response.LastEvaluatedKey;
+                } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
+            }
+            else
+            {
+                var response = await _dynamoDb.QueryAsync(new QueryRequest
+                {
+                    TableName = _config.LabelsTable,
+                    IndexName = indexName,
+                    KeyConditionExpression = $"{pkField} = :val",
+                    ExpressionAttributeValues = exprValues,
+                    ScanIndexForward = false,
+                    Limit = limit,
+                    ExclusiveStartKey = exclusiveStartKey
+                });
+                items = response.Items;
+                lastKey = response.LastEvaluatedKey;
+            }
         }
         else
         {
