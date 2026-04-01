@@ -6,7 +6,7 @@ using Amazon.KinesisVideo.Model;
 
 namespace SnoutSpotter.Api.Services;
 
-public class StreamService
+public class StreamService : IStreamService
 {
     private readonly IAmazonIotData _iotData;
     private readonly IAmazonKinesisVideo _kvs;

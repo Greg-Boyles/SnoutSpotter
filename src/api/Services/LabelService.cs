@@ -4,25 +4,21 @@ using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda;
 using Amazon.Lambda.Model;
 using Amazon.S3;
+using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
-public class LabelService
+public class LabelService : ILabelService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonS3 _s3;
-    private readonly string _labelsTable;
-    private readonly string _bucketName;
-    private readonly string _autoLabelFunction;
+    private readonly AppConfig _config;
 
-    public LabelService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IConfiguration configuration)
+    public LabelService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IOptions<AppConfig> config)
     {
         _dynamoDb = dynamoDb;
         _s3 = s3;
-        _labelsTable = configuration["LABELS_TABLE"] ?? "snout-spotter-labels";
-        _bucketName = configuration["BUCKET_NAME"]
-            ?? throw new InvalidOperationException("BUCKET_NAME not configured");
-        _autoLabelFunction = configuration["AUTO_LABEL_FUNCTION"] ?? "snout-spotter-auto-label";
+        _config = config.Value;
     }
 
     public async Task<object> TriggerAutoLabelAsync(string? date)
@@ -32,7 +28,7 @@ public class LabelService
 
         var response = await client.InvokeAsync(new InvokeRequest
         {
-            FunctionName = _autoLabelFunction,
+            FunctionName = _config.AutoLabelFunction,
             InvocationType = InvocationType.Event, // Async — don't wait
             Payload = payload
         });
@@ -57,7 +53,7 @@ public class LabelService
         {
             var scan = await _dynamoDb.ScanAsync(new ScanRequest
             {
-                TableName = _labelsTable,
+                TableName = _config.LabelsTable,
                 Select = Select.COUNT
             });
             return scan.Count;
@@ -66,7 +62,7 @@ public class LabelService
         var pkField = indexName == "by-label" ? "auto_label" : "reviewed";
         var query = await _dynamoDb.QueryAsync(new QueryRequest
         {
-            TableName = _labelsTable,
+            TableName = _config.LabelsTable,
             IndexName = indexName,
             KeyConditionExpression = $"{pkField} = :val",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
@@ -113,7 +109,7 @@ public class LabelService
         {
             var response = await _dynamoDb.QueryAsync(new QueryRequest
             {
-                TableName = _labelsTable,
+                TableName = _config.LabelsTable,
                 IndexName = indexName,
                 KeyConditionExpression = $"{pkField} = :val",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
@@ -131,7 +127,7 @@ public class LabelService
         {
             var response = await _dynamoDb.ScanAsync(new ScanRequest
             {
-                TableName = _labelsTable,
+                TableName = _config.LabelsTable,
                 Limit = limit,
                 ExclusiveStartKey = exclusiveStartKey
             });
@@ -169,7 +165,7 @@ public class LabelService
 
         await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
         {
-            TableName = _labelsTable,
+            TableName = _config.LabelsTable,
             Key = new Dictionary<string, AttributeValue>
             {
                 ["keyframe_key"] = new() { S = keyframeKey }
@@ -198,7 +194,7 @@ public class LabelService
     {
         return _s3.GetPreSignedURL(new Amazon.S3.Model.GetPreSignedUrlRequest
         {
-            BucketName = _bucketName,
+            BucketName = _config.BucketName,
             Key = keyframeKey,
             Expires = DateTime.UtcNow.AddMinutes(15)
         });
@@ -216,7 +212,7 @@ public class LabelService
 
         await _s3.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest
         {
-            BucketName = _bucketName,
+            BucketName = _config.BucketName,
             Key = s3Key,
             InputStream = imageStream,
             ContentType = ext == ".png" ? "image/png" : "image/jpeg"
@@ -236,7 +232,7 @@ public class LabelService
             ["reviewed_at"] = new() { S = now },
         };
 
-        await _dynamoDb.PutItemAsync(_labelsTable, item);
+        await _dynamoDb.PutItemAsync(_config.LabelsTable, item);
 
         return new Dictionary<string, string>
         {

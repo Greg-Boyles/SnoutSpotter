@@ -4,25 +4,21 @@ using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda;
 using Amazon.Lambda.Model;
 using Amazon.S3;
+using Microsoft.Extensions.Options;
 
 namespace SnoutSpotter.Api.Services;
 
-public class ExportService
+public class ExportService : IExportService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonS3 _s3;
-    private readonly string _exportsTable;
-    private readonly string _bucketName;
-    private readonly string _exportFunctionName;
+    private readonly AppConfig _config;
 
-    public ExportService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IConfiguration configuration)
+    public ExportService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IOptions<AppConfig> config)
     {
         _dynamoDb = dynamoDb;
         _s3 = s3;
-        _exportsTable = configuration["EXPORTS_TABLE"] ?? "snout-spotter-exports";
-        _bucketName = configuration["BUCKET_NAME"]
-            ?? throw new InvalidOperationException("BUCKET_NAME not configured");
-        _exportFunctionName = configuration["EXPORT_DATASET_FUNCTION"] ?? "snout-spotter-export-dataset";
+        _config = config.Value;
     }
 
     public async Task<string> TriggerExportAsync()
@@ -31,7 +27,7 @@ public class ExportService
         var now = DateTime.UtcNow.ToString("O");
 
         // Create export row with status "running"
-        await _dynamoDb.PutItemAsync(_exportsTable, new Dictionary<string, AttributeValue>
+        await _dynamoDb.PutItemAsync(_config.ExportsTable, new Dictionary<string, AttributeValue>
         {
             ["export_id"] = new() { S = exportId },
             ["status"] = new() { S = "running" },
@@ -42,7 +38,7 @@ public class ExportService
         var client = new AmazonLambdaClient();
         await client.InvokeAsync(new InvokeRequest
         {
-            FunctionName = _exportFunctionName,
+            FunctionName = _config.ExportDatasetFunction,
             InvocationType = InvocationType.Event,
             Payload = JsonSerializer.Serialize(new { ExportId = exportId })
         });
@@ -54,7 +50,7 @@ public class ExportService
     {
         var response = await _dynamoDb.ScanAsync(new ScanRequest
         {
-            TableName = _exportsTable
+            TableName = _config.ExportsTable
         });
 
         return response.Items
@@ -74,7 +70,7 @@ public class ExportService
 
     public async Task<string?> GetDownloadUrlAsync(string exportId)
     {
-        var result = await _dynamoDb.GetItemAsync(_exportsTable,
+        var result = await _dynamoDb.GetItemAsync(_config.ExportsTable,
             new Dictionary<string, AttributeValue>
             {
                 ["export_id"] = new() { S = exportId }
@@ -87,7 +83,7 @@ public class ExportService
 
         return _s3.GetPreSignedURL(new Amazon.S3.Model.GetPreSignedUrlRequest
         {
-            BucketName = _bucketName,
+            BucketName = _config.BucketName,
             Key = s3Key,
             Expires = DateTime.UtcNow.AddHours(1)
         });
@@ -96,7 +92,7 @@ public class ExportService
     public async Task DeleteExportAsync(string exportId)
     {
         // Get S3 key first
-        var result = await _dynamoDb.GetItemAsync(_exportsTable,
+        var result = await _dynamoDb.GetItemAsync(_config.ExportsTable,
             new Dictionary<string, AttributeValue>
             {
                 ["export_id"] = new() { S = exportId }
@@ -109,13 +105,13 @@ public class ExportService
             {
                 try
                 {
-                    await _s3.DeleteObjectAsync(_bucketName, s3Key);
+                    await _s3.DeleteObjectAsync(_config.BucketName, s3Key);
                 }
                 catch { /* Best effort */ }
             }
         }
 
-        await _dynamoDb.DeleteItemAsync(_exportsTable,
+        await _dynamoDb.DeleteItemAsync(_config.ExportsTable,
             new Dictionary<string, AttributeValue>
             {
                 ["export_id"] = new() { S = exportId }

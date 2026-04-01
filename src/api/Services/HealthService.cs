@@ -3,7 +3,7 @@ using Amazon.CloudWatch.Model;
 
 namespace SnoutSpotter.Api.Services;
 
-public class HealthService
+public class HealthService : IHealthService
 {
     private readonly IAmazonCloudWatch _cloudWatchClient;
 
