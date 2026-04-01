@@ -96,8 +96,9 @@ public class Function
             {
                 var (label, confidence, boxes) = await DetectDogs(keyframeKey);
 
-                // Extract clip_id from keyframe key: keyframes/YYYY/MM/DD/timestamp_N.jpg
+                // Extract clip_id and device from keyframe key
                 var clipId = ExtractClipId(keyframeKey);
+                var device = ExtractDevice(keyframeKey);
 
                 var item = new Dictionary<string, AttributeValue>
                 {
@@ -109,6 +110,9 @@ public class Function
                     ["reviewed"] = new() { S = "false" },
                     ["labelled_at"] = new() { S = DateTime.UtcNow.ToString("O") },
                 };
+
+                if (!string.IsNullOrEmpty(device))
+                    item["device"] = new() { S = device };
 
                 await _dynamoDb.PutItemAsync(_tableName, item);
                 processed++;
@@ -205,9 +209,17 @@ public class Function
 
     private static string ExtractClipId(string keyframeKey)
     {
-        // keyframes/YYYY/MM/DD/2026-03-31T18-39-57_10s_0.jpg → 2026-03-31T18-39-57_10s
+        // keyframes/{device}/YYYY/MM/DD/filename_0.jpg or keyframes/YYYY/MM/DD/filename_0.jpg
         var filename = Path.GetFileNameWithoutExtension(keyframeKey);
         var lastUnderscore = filename.LastIndexOf('_');
         return lastUnderscore > 0 ? filename[..lastUnderscore] : filename;
+    }
+
+    private static string ExtractDevice(string keyframeKey)
+    {
+        // New format: keyframes/{device}/YYYY/MM/DD/filename.jpg (5+ parts)
+        // Old format: keyframes/YYYY/MM/DD/filename.jpg (4 parts)
+        var parts = keyframeKey.Split('/');
+        return parts.Length >= 5 ? parts[1] : "";
     }
 }
