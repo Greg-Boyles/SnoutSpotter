@@ -10,9 +10,9 @@ namespace SnoutSpotter.Api.Controllers;
 [Authorize]
 public class DetectionsController : ControllerBase
 {
-    private readonly ClipService _clipService;
+    private readonly IClipService _clipService;
 
-    public DetectionsController(ClipService clipService)
+    public DetectionsController(IClipService clipService)
     {
         _clipService = clipService;
     }

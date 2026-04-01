@@ -9,10 +9,10 @@ namespace SnoutSpotter.Api.Controllers;
 [Authorize]
 public class StreamController : ControllerBase
 {
-    private readonly StreamService _streamService;
-    private readonly PiUpdateService _piUpdateService;
+    private readonly IStreamService _streamService;
+    private readonly IPiUpdateService _piUpdateService;
 
-    public StreamController(StreamService streamService, PiUpdateService piUpdateService)
+    public StreamController(IStreamService streamService, IPiUpdateService piUpdateService)
     {
         _streamService = streamService;
         _piUpdateService = piUpdateService;
