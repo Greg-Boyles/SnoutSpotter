@@ -392,7 +392,18 @@ export default function Labels() {
               return (
                 <div
                   key={item.keyframe_key}
+                  onClick={() => {
+                    if (isReviewed) return;
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(item.keyframe_key)) next.delete(item.keyframe_key);
+                      else next.add(item.keyframe_key);
+                      return next;
+                    });
+                  }}
                   className={`bg-white rounded-lg border overflow-hidden ${
+                    !isReviewed ? "cursor-pointer" : ""
+                  } ${
                     isSelected
                       ? "border-blue-400 ring-2 ring-blue-200"
                       : isReviewed ? "border-green-200" : "border-gray-200"
@@ -408,21 +419,9 @@ export default function Labels() {
                         type={item.confirmed_label ? "confirmed" : "auto"}
                       />
                     </div>
-                    {!isReviewed && (
+                    {isSelected && (
                       <div className="absolute top-1 right-8">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            setSelected((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(item.keyframe_key);
-                              else next.delete(item.keyframe_key);
-                              return next;
-                            });
-                          }}
-                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        />
+                        <CheckCircle className="w-5 h-5 text-blue-600 drop-shadow" />
                       </div>
                     )}
                     {item.confidence && parseFloat(item.confidence) > 0 && (
@@ -432,7 +431,7 @@ export default function Labels() {
                     )}
                   </div>
                   {!isReviewed && (
-                    <div className="p-2 flex items-center gap-1">
+                    <div className="p-2 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleConfirm(item.keyframe_key, "my_dog")}
                         disabled={isUpdating}
