@@ -6,6 +6,7 @@ public record ClipSummary(
     long Timestamp,
     int DurationSeconds,
     string Date,
+    string? Device,
     int KeyframeCount,
     string DetectionType,
     int DetectionCount,
@@ -20,6 +21,7 @@ public record ClipDetail(
     long Timestamp,
     int DurationSeconds,
     string Date,
+    string? Device,
     int KeyframeCount,
     List<string> KeyframeKeys,
     string DetectionType,
@@ -44,6 +46,7 @@ public record DetectionSummary(
     int DetectionCount,
     long Timestamp,
     string Date,
+    string? Device,
     string? FirstKeyframeKey);
 
 public record DashboardStats(
