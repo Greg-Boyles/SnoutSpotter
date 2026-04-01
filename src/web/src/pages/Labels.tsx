@@ -18,8 +18,9 @@ interface LabelItem {
 
 function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed" }) {
   const isDog = label === "dog" || label === "my_dog";
+  const isOtherDog = label === "other_dog";
   const color = type === "confirmed"
-    ? isDog ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-700"
+    ? isDog ? "bg-green-100 text-green-800" : isOtherDog ? "bg-orange-100 text-orange-800" : "bg-gray-100 text-gray-700"
     : isDog ? "bg-amber-50 text-amber-700" : "bg-gray-50 text-gray-500";
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${color}`}>
@@ -131,7 +132,7 @@ export default function Labels() {
       setLabels((prev) =>
         prev.map((l) =>
           l.keyframe_key === keyframeKey
-            ? { ...l, confirmed_label: confirmedLabel, auto_label: confirmedLabel === "my_dog" ? "dog" : "no_dog", reviewed: "true" }
+            ? { ...l, confirmed_label: confirmedLabel, auto_label: confirmedLabel === "my_dog" || confirmedLabel === "other_dog" ? "dog" : "no_dog", reviewed: "true" }
             : l
         )
       );
@@ -163,7 +164,7 @@ export default function Labels() {
     }
   };
 
-  const handleBulkConfirmSelected = async (label: "my_dog" | "no_dog") => {
+  const handleBulkConfirmSelected = async (label: "my_dog" | "other_dog" | "no_dog") => {
     const keys = Array.from(selected);
     if (keys.length === 0) return;
     if (!window.confirm(`Confirm ${keys.length} item${keys.length > 1 ? "s" : ""} as "${label}"?`)) return;
@@ -354,6 +355,14 @@ export default function Labels() {
               Confirm as My Dog
             </button>
             <button
+              onClick={() => handleBulkConfirmSelected("other_dog")}
+              disabled={bulkActioning}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded disabled:opacity-50"
+            >
+              {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Dog className="w-3 h-3" />}
+              Confirm as Other Dog
+            </button>
+            <button
               onClick={() => handleBulkConfirmSelected("no_dog")}
               disabled={bulkActioning}
               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-gray-600 hover:bg-gray-700 rounded disabled:opacity-50"
@@ -438,6 +447,13 @@ export default function Labels() {
                         className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded disabled:opacity-50"
                       >
                         <Dog className="w-3 h-3" /> My Dog
+                      </button>
+                      <button
+                        onClick={() => handleConfirm(item.keyframe_key, "other_dog")}
+                        disabled={isUpdating}
+                        className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded disabled:opacity-50"
+                      >
+                        <Dog className="w-3 h-3" /> Other Dog
                       </button>
                       <button
                         onClick={() => handleConfirm(item.keyframe_key, "no_dog")}
