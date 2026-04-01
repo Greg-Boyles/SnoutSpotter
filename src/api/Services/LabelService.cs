@@ -240,7 +240,7 @@ public class LabelService : ILabelService
         });
     }
 
-    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName)
+    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName, string confirmedLabel)
     {
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         if (ext is not (".jpg" or ".jpeg" or ".png"))
@@ -258,13 +258,14 @@ public class LabelService : ILabelService
             ContentType = ext == ".png" ? "image/png" : "image/jpeg"
         });
 
+        var autoLabelValue = confirmedLabel is "my_dog" or "other_dog" ? "dog" : "no_dog";
         var now = DateTime.UtcNow.ToString("O");
         var item = new Dictionary<string, AttributeValue>
         {
             ["keyframe_key"] = new() { S = s3Key },
             ["clip_id"] = new() { S = "uploaded" },
-            ["auto_label"] = new() { S = "dog" },
-            ["confirmed_label"] = new() { S = "my_dog" },
+            ["auto_label"] = new() { S = autoLabelValue },
+            ["confirmed_label"] = new() { S = confirmedLabel },
             ["confidence"] = new() { N = "1" },
             ["bounding_boxes"] = new() { S = "[]" },
             ["reviewed"] = new() { S = "true" },
@@ -277,8 +278,8 @@ public class LabelService : ILabelService
         return new Dictionary<string, string>
         {
             ["keyframe_key"] = s3Key,
-            ["auto_label"] = "dog",
-            ["confirmed_label"] = "my_dog",
+            ["auto_label"] = autoLabelValue,
+            ["confirmed_label"] = confirmedLabel,
             ["reviewed"] = "true",
             ["imageUrl"] = GetPresignedUrl(s3Key)
         };

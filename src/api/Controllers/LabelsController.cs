@@ -88,8 +88,11 @@ public class LabelsController : ControllerBase
 
     [HttpPost("labels/upload")]
     [RequestSizeLimit(100 * 1024 * 1024)] // 100MB total
-    public async Task<ActionResult> UploadTrainingImages()
+    public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog")
     {
+        if (label is not ("my_dog" or "other_dog" or "no_dog"))
+            return BadRequest(new { error = "label must be 'my_dog', 'other_dog', or 'no_dog'" });
+
         var files = Request.Form.Files;
         if (files.Count == 0)
             return BadRequest(new { error = "No files uploaded" });
@@ -114,9 +117,9 @@ public class LabelsController : ControllerBase
 
             try
             {
-                var label = await _labelService.UploadTrainingImageAsync(
-                    file.OpenReadStream(), file.FileName);
-                results.Add(label);
+                var result = await _labelService.UploadTrainingImageAsync(
+                    file.OpenReadStream(), file.FileName, label);
+                results.Add(result);
             }
             catch (Exception ex)
             {
