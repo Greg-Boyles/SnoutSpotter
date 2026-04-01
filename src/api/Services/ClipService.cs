@@ -137,6 +137,7 @@ public class ClipService : IClipService
             Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
             DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
             Date: item.GetValueOrDefault("date")?.S ?? "",
+            Device: item.GetValueOrDefault("device")?.S,
             KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
             DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
             DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
@@ -160,6 +161,7 @@ public class ClipService : IClipService
             Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
             DurationSeconds: int.TryParse(item.GetValueOrDefault("duration_s")?.N, out var dur) ? dur : 0,
             Date: item.GetValueOrDefault("date")?.S ?? "",
+            Device: item.GetValueOrDefault("device")?.S,
             KeyframeCount: int.TryParse(item.GetValueOrDefault("keyframe_count")?.N, out var kc) ? kc : 0,
             KeyframeKeys: keyframeKeys,
             DetectionType: item.GetValueOrDefault("detection_type")?.S ?? "pending",
@@ -180,5 +182,6 @@ public class ClipService : IClipService
         DetectionCount: int.TryParse(item.GetValueOrDefault("detection_count")?.N, out var dc) ? dc : 0,
         Timestamp: long.TryParse(item.GetValueOrDefault("timestamp")?.N, out var ts) ? ts : 0,
         Date: item.GetValueOrDefault("date")?.S ?? "",
+        Device: item.GetValueOrDefault("device")?.S,
         FirstKeyframeKey: item.GetValueOrDefault("keyframe_keys")?.SS?.FirstOrDefault());
 }
