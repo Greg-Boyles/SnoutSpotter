@@ -31,7 +31,7 @@ function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed"
 }
 
 export default function Labels() {
-  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number } | null>(null);
+  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number } | null>(null);
   const [labels, setLabels] = useState<LabelItem[]>([]);
   const [filter, setFilter] = useState<Filter>("unreviewed");
   const [loading, setLoading] = useState(true);
@@ -41,6 +41,8 @@ export default function Labels() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [showUploadPicker, setShowUploadPicker] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState<"my_dog" | "other_dog" | "no_dog">("my_dog");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Confidence filter & sort
@@ -110,7 +112,7 @@ export default function Labels() {
     for (let i = 0; i < files.length; i++) {
       setUploadProgress(`Uploading ${i + 1} of ${files.length}...`);
       try {
-        await api.uploadTrainingImage(files[i]);
+        await api.uploadTrainingImage(files[i], uploadLabel);
         uploaded++;
       } catch {
         failed++;
@@ -201,14 +203,37 @@ export default function Labels() {
             onChange={handleUpload}
             className="hidden"
           />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50"
-          >
-            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {uploading ? "Uploading..." : "Upload Photos"}
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowUploadPicker((v) => !v)}
+              disabled={uploading}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50"
+            >
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {uploading ? "Uploading..." : "Upload Photos"}
+            </button>
+            {showUploadPicker && (
+              <div className="absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                {([
+                  { value: "my_dog" as const, label: "My Dog", color: "text-green-700 hover:bg-green-50" },
+                  { value: "other_dog" as const, label: "Other Dog", color: "text-orange-700 hover:bg-orange-50" },
+                  { value: "no_dog" as const, label: "No Dog", color: "text-gray-700 hover:bg-gray-50" },
+                ]).map(({ value, label, color }) => (
+                  <button
+                    key={value}
+                    onClick={() => {
+                      setUploadLabel(value);
+                      setShowUploadPicker(false);
+                      fileInputRef.current?.click();
+                    }}
+                    className={`w-full text-left px-4 py-2 text-sm font-medium ${color} first:rounded-t-lg last:rounded-b-lg`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             onClick={handleAutoLabel}
             disabled={labelling}
@@ -246,20 +271,33 @@ export default function Labels() {
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-5 gap-3 mb-6">
-          {[
-            { label: "Total", value: stats.total },
-            { label: "Dogs", value: stats.dogs },
-            { label: "No Dog", value: stats.noDogs },
-            { label: "Reviewed", value: stats.reviewed },
-            { label: "Unreviewed", value: stats.unreviewed },
-          ].map(({ label, value }) => (
-            <div key={label} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
-              <p className="text-2xl font-bold text-gray-900">{value}</p>
-              <p className="text-xs text-gray-500">{label}</p>
-            </div>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            {[
+              { label: "Total", value: stats.total },
+              { label: "Dogs", value: stats.dogs },
+              { label: "No Dog", value: stats.noDogs },
+              { label: "Unreviewed", value: stats.unreviewed },
+            ].map(({ label, value }) => (
+              <div key={label} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <p className="text-2xl font-bold text-gray-900">{value}</p>
+                <p className="text-xs text-gray-500">{label}</p>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            {[
+              { label: "Confirmed My Dog", value: stats.myDog, color: "text-green-600" },
+              { label: "Confirmed Other Dog", value: stats.otherDog, color: "text-orange-600" },
+              { label: "Confirmed No Dog", value: stats.confirmedNoDog, color: "text-gray-600" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                <p className="text-xs text-gray-500">{label}</p>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Filter tabs */}

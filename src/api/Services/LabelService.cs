@@ -43,8 +43,48 @@ public class LabelService : ILabelService
         var noDogs = await CountAsync("by-label", "no_dog");
         var unreviewed = await CountAsync("by-review", "false");
         var reviewed = await CountAsync("by-review", "true");
+        var confirmedCounts = await CountConfirmedLabelsAsync();
 
-        return new { total, dogs, noDogs, reviewed, unreviewed };
+        return new
+        {
+            total, dogs, noDogs, reviewed, unreviewed,
+            myDog = confirmedCounts.GetValueOrDefault("my_dog"),
+            otherDog = confirmedCounts.GetValueOrDefault("other_dog"),
+            confirmedNoDog = confirmedCounts.GetValueOrDefault("no_dog"),
+        };
+    }
+
+    private async Task<Dictionary<string, int>> CountConfirmedLabelsAsync()
+    {
+        var counts = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0, ["no_dog"] = 0 };
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _config.LabelsTable,
+                IndexName = "by-review",
+                KeyConditionExpression = "reviewed = :rev",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":rev"] = new() { S = "true" }
+                },
+                ProjectionExpression = "confirmed_label",
+                ExclusiveStartKey = lastKey
+            });
+
+            foreach (var item in response.Items)
+            {
+                var label = item.GetValueOrDefault("confirmed_label")?.S ?? "";
+                if (counts.ContainsKey(label))
+                    counts[label]++;
+            }
+
+            lastKey = response.LastEvaluatedKey;
+        } while (lastKey != null && lastKey.Count > 0);
+
+        return counts;
     }
 
     private async Task<int> CountAsync(string? indexName, string? pkValue)
@@ -200,7 +240,7 @@ public class LabelService : ILabelService
         });
     }
 
-    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName)
+    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName, string confirmedLabel)
     {
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         if (ext is not (".jpg" or ".jpeg" or ".png"))
@@ -218,13 +258,14 @@ public class LabelService : ILabelService
             ContentType = ext == ".png" ? "image/png" : "image/jpeg"
         });
 
+        var autoLabelValue = confirmedLabel is "my_dog" or "other_dog" ? "dog" : "no_dog";
         var now = DateTime.UtcNow.ToString("O");
         var item = new Dictionary<string, AttributeValue>
         {
             ["keyframe_key"] = new() { S = s3Key },
             ["clip_id"] = new() { S = "uploaded" },
-            ["auto_label"] = new() { S = "dog" },
-            ["confirmed_label"] = new() { S = "my_dog" },
+            ["auto_label"] = new() { S = autoLabelValue },
+            ["confirmed_label"] = new() { S = confirmedLabel },
             ["confidence"] = new() { N = "1" },
             ["bounding_boxes"] = new() { S = "[]" },
             ["reviewed"] = new() { S = "true" },
@@ -237,8 +278,8 @@ public class LabelService : ILabelService
         return new Dictionary<string, string>
         {
             ["keyframe_key"] = s3Key,
-            ["auto_label"] = "dog",
-            ["confirmed_label"] = "my_dog",
+            ["auto_label"] = autoLabelValue,
+            ["confirmed_label"] = confirmedLabel,
             ["reviewed"] = "true",
             ["imageUrl"] = GetPresignedUrl(s3Key)
         };
