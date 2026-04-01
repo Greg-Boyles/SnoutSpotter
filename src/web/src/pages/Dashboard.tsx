@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Video, Search, Dog, HardDrive, Clock, ChevronRight } from "lucide-react";
+import { Video, Search, Dog, HardDrive, Clock, ChevronRight, Tag, Package, Play, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { api } from "../api";
@@ -59,11 +59,16 @@ export default function Dashboard() {
   const [recentClips, setRecentClips] = useState<Clip[]>([]);
   const [allClips, setAllClips] = useState<Clip[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [labelStats, setLabelStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; lastAutoLabelRun?: string } | null>(null);
+  const [latestExport, setLatestExport] = useState<Record<string, string> | null>(null);
+  const [runningAutoLabel, setRunningAutoLabel] = useState(false);
 
   const loadData = () => {
     api.getStats().then(setStats).catch((e: Error) => setError(e.message));
     api.getClips(8).then((data) => setRecentClips(data.clips)).catch(console.error);
     api.getClips(500).then((data) => setAllClips(data.clips)).catch(console.error);
+    api.getLabelStats().then(setLabelStats).catch(console.error);
+    api.listExports().then((data) => setLatestExport(data.exports[0] || null)).catch(console.error);
   };
 
   useEffect(() => {
@@ -148,6 +153,116 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </div>
       )}
+
+      {/* ML Pipeline */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        {/* Auto-Label */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Tag className="w-5 h-5 text-blue-500" />
+              <h2 className="text-sm font-semibold text-gray-900">Auto-Label</h2>
+            </div>
+            <button
+              onClick={async () => {
+                setRunningAutoLabel(true);
+                try { await api.triggerAutoLabel(); } catch (e) { console.error(e); }
+                setRunningAutoLabel(false);
+              }}
+              disabled={runningAutoLabel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+            >
+              {runningAutoLabel ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+              {runningAutoLabel ? "Running..." : "Run"}
+            </button>
+          </div>
+          {labelStats ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{labelStats.total}</p>
+                  <p className="text-xs text-gray-500">Labelled</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-green-600">{labelStats.dogs}</p>
+                  <p className="text-xs text-gray-500">Dogs</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-amber-600">{labelStats.unreviewed}</p>
+                  <p className="text-xs text-gray-500">Unreviewed</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs text-gray-400 pt-2 border-t border-gray-100">
+                <span>
+                  Last run: {labelStats.lastAutoLabelRun
+                    ? formatDistanceToNow(new Date(labelStats.lastAutoLabelRun), { addSuffix: true })
+                    : "Never"}
+                </span>
+                <Link to="/labels" className="text-blue-600 hover:text-blue-700 font-medium">
+                  View Labels →
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">Loading...</p>
+          )}
+        </div>
+
+        {/* Latest Export */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Package className="w-5 h-5 text-amber-500" />
+              <h2 className="text-sm font-semibold text-gray-900">Training Export</h2>
+            </div>
+            <Link
+              to="/exports"
+              className="text-xs font-medium text-blue-600 hover:text-blue-700"
+            >
+              View All →
+            </Link>
+          </div>
+          {latestExport ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{latestExport.total_images || "—"}</p>
+                  <p className="text-xs text-gray-500">Images</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-green-600">{latestExport.my_dog_count || "—"}</p>
+                  <p className="text-xs text-gray-500">My Dog</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-600">{latestExport.size_mb ? `${latestExport.size_mb} MB` : "—"}</p>
+                  <p className="text-xs text-gray-500">Size</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs pt-2 border-t border-gray-100">
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${
+                  latestExport.status === "complete" ? "bg-green-50 text-green-700" :
+                  latestExport.status === "running" ? "bg-blue-50 text-blue-700" :
+                  "bg-red-50 text-red-700"
+                }`}>
+                  {latestExport.status}
+                </span>
+                <span className="text-gray-400">
+                  {latestExport.created_at
+                    ? formatDistanceToNow(new Date(latestExport.created_at), { addSuffix: true })
+                    : ""}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <p className="text-xs text-gray-400">No exports yet</p>
+              <Link to="/labels" className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                Go to Labels →
+              </Link>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Recent clips */}
       {recentClips.length > 0 && (
