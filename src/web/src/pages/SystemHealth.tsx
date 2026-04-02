@@ -137,8 +137,9 @@ export default function SystemHealthPage() {
                 <p className="text-xs text-gray-400">{device.thingName}</p>
               </div>
               <StatusBadge ok={device.online} label={device.online ? "Online" : "Offline"} />
-              <span className="text-sm font-medium text-gray-600 w-16 text-right">
+              <span className={`text-sm font-medium w-16 text-right ${device.updateAvailable ? "text-amber-600" : "text-gray-600"}`}>
                 {device.version ? `v${device.version}` : "—"}
+                {device.updateAvailable && " *"}
               </span>
               <span className="text-xs text-gray-400 w-28 text-right">
                 {device.lastHeartbeat
