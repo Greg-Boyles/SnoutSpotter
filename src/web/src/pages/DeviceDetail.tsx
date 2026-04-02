@@ -303,7 +303,7 @@ export default function DeviceDetail() {
               )}
               {device.uploadStats && (
                 <div className="flex items-center gap-4 text-sm text-gray-500 pt-2 border-t border-gray-100">
-                  <span>{device.uploadStats.uploadsToday} today</span>
+                  <span>{device.uploadStats.uploadsToday} clips today</span>
                   {device.uploadStats.failedToday > 0 && (
                     <span className="text-red-600">{device.uploadStats.failedToday} failed</span>
                   )}
