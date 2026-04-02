@@ -67,6 +67,7 @@ export interface PiDevice {
   version?: string;
   hostname?: string;
   lastHeartbeat?: string;
+  deviceTime?: string;
   updateStatus?: string;
   services?: Record<string, string>;
   camera?: CameraStatus;

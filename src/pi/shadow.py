@@ -26,6 +26,7 @@ def build_shadow_state(version: str, config: dict, streaming: bool = False) -> d
                 "hostname": socket.gethostname(),
                 "services": services,
                 "lastHeartbeat": datetime.now(timezone.utc).isoformat(),
+                "deviceTime": datetime.now(timezone.utc).isoformat(),
                 "updateStatus": "idle",
                 "camera": get_camera_status(config),
                 "lastMotionAt": get_last_motion_time(),

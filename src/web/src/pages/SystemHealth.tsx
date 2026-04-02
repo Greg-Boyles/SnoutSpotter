@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { Server, WifiOff, Plus, RefreshCw, ChevronRight, Wifi } from "lucide-react";
+import { Server, WifiOff, Plus, RefreshCw, ChevronRight, Wifi, AlertTriangle } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
 import StatusBadge from "../components/health/StatusBadge";
@@ -146,7 +146,11 @@ export default function SystemHealthPage() {
                   ? formatDistanceToNow(new Date(device.lastHeartbeat), { addSuffix: true })
                   : "Never"}
               </span>
-              <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+              {device.deviceTime && Math.abs(Date.now() - new Date(device.deviceTime).getTime()) > 60000 ? (
+                <span className="shrink-0" aria-label="Clock out of sync"><AlertTriangle className="w-4 h-4 text-red-500" /></span>
+              ) : (
+                <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+              )}
             </Link>
           ))}
         </div>
