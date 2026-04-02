@@ -11,6 +11,7 @@ import DeviceConfig from "./pages/DeviceConfig";
 import DeviceLogs from "./pages/DeviceLogs";
 import LiveView from "./pages/LiveView";
 import CommandHistory from "./pages/CommandHistory";
+import DeviceDetail from "./pages/DeviceDetail";
 import Labels from "./pages/Labels";
 import TrainingExports from "./pages/TrainingExports";
 import { setAuthGetter } from "./api";
@@ -105,6 +106,7 @@ export default function App() {
                   <Route path="/labels" element={<Labels />} />
                   <Route path="/exports" element={<TrainingExports />} />
                   <Route path="/health" element={<SystemHealthPage />} />
+                  <Route path="/device/:thingName" element={<DeviceDetail />} />
                   <Route path="/device/:thingName/config" element={<DeviceConfig />} />
                   <Route path="/device/:thingName/logs" element={<DeviceLogs />} />
                   <Route path="/device/:thingName/commands" element={<CommandHistory />} />
