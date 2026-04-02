@@ -99,6 +99,10 @@ export default function Labels() {
   // Breed sub-filter for Other Dog tab
   const [breedFilter, setBreedFilter] = useState("");
 
+  // Device filter
+  const [deviceFilter, setDeviceFilter] = useState("");
+  const [devices, setDevices] = useState<string[]>([]);
+
   const filteredLabels = useMemo(() => {
     let items = labels.filter((item) => {
       const conf = item.confidence ? parseFloat(item.confidence) : 0;
@@ -116,7 +120,7 @@ export default function Labels() {
 
   const loadLabels = (pageKey?: string) => {
     setLoading(true);
-    const params: { reviewed?: string; label?: string; confirmedLabel?: string; breed?: string; limit?: number; nextPageKey?: string } = { limit: 30 };
+    const params: { reviewed?: string; label?: string; confirmedLabel?: string; breed?: string; device?: string; limit?: number; nextPageKey?: string } = { limit: 30 };
     if (filter === "unreviewed") params.reviewed = "false";
     else if (filter === "dog") params.label = "dog";
     else if (filter === "no_dog") params.label = "no_dog";
@@ -124,6 +128,7 @@ export default function Labels() {
     else if (filter === "confirmed_other_dog") params.confirmedLabel = "other_dog";
     else if (filter === "confirmed_no_dog") params.confirmedLabel = "no_dog";
     if (breedFilter) params.breed = breedFilter;
+    if (deviceFilter) params.device = deviceFilter;
     if (pageKey) params.nextPageKey = pageKey;
 
     api.getLabels(params)
@@ -137,9 +142,13 @@ export default function Labels() {
   };
 
   useEffect(() => {
+    api.getDevices().then((data) => setDevices(data.devices.map((d: any) => d.thingName))).catch(console.error);
+  }, []);
+
+  useEffect(() => {
     loadStats();
     loadLabels();
-  }, [filter, breedFilter]);
+  }, [filter, breedFilter, deviceFilter]);
 
   const handleAutoLabel = async () => {
     setLabelling(true);
@@ -464,6 +473,20 @@ export default function Labels() {
             >
               <option value="">All breeds</option>
               {DOG_BREEDS.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </label>
+        )}
+
+        {devices.length > 1 && (
+          <label className="flex items-center gap-2 text-gray-600">
+            <span>Device:</span>
+            <select
+              value={deviceFilter}
+              onChange={(e) => { setDeviceFilter(e.target.value); setLabels([]); setNextPageKey(null); }}
+              className="text-xs border border-gray-300 rounded px-2 py-1"
+            >
+              <option value="">All devices</option>
+              {devices.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
         )}

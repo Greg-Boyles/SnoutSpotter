@@ -63,9 +63,9 @@ async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T> {
 export const api = {
   getStats: () => fetchJson<StatsOverview>("/stats"),
 
-  getClips: (limit = 20, nextPageKey?: string) =>
+  getClips: (limit = 20, nextPageKey?: string, device?: string) =>
     fetchJson<{ clips: Clip[]; nextPageKey: string | null; totalCount: number }>(
-      `/clips?limit=${limit}${nextPageKey ? `&nextPageKey=${encodeURIComponent(nextPageKey)}` : ""}`,
+      `/clips?limit=${limit}${nextPageKey ? `&nextPageKey=${encodeURIComponent(nextPageKey)}` : ""}${device ? `&device=${encodeURIComponent(device)}` : ""}`,
     ),
 
   getClip: (id: string) => fetchJson<Clip>(`/clips/${id}`),
@@ -121,12 +121,13 @@ export const api = {
   getLabelStats: () =>
     fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> }>("/ml/labels/stats"),
 
-  getLabels: (params: { reviewed?: string; label?: string; confirmedLabel?: string; breed?: string; limit?: number; nextPageKey?: string } = {}) => {
+  getLabels: (params: { reviewed?: string; label?: string; confirmedLabel?: string; breed?: string; device?: string; limit?: number; nextPageKey?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.reviewed) qs.set("reviewed", params.reviewed);
     if (params.label) qs.set("label", params.label);
     if (params.confirmedLabel) qs.set("confirmedLabel", params.confirmedLabel);
     if (params.breed) qs.set("breed", params.breed);
+    if (params.device) qs.set("device", params.device);
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.nextPageKey) qs.set("nextPageKey", params.nextPageKey);
     return fetchJson<{ labels: Record<string, string | null>[]; nextPageKey: string | null }>(`/ml/labels?${qs}`);

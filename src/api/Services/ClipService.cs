@@ -16,29 +16,28 @@ public class ClipService : IClipService
         _s3UrlService = s3UrlService;
     }
 
-    public async Task<ClipListResponse> GetClipsAsync(string? date = null, int limit = 20, string? nextPageKey = null)
+    public async Task<ClipListResponse> GetClipsAsync(string? date = null, string? device = null, int limit = 20, string? nextPageKey = null)
     {
         if (date != null)
         {
-            return await QueryByDateAsync(date, limit, nextPageKey);
+            return await QueryByDateAsync(date, device, limit, nextPageKey);
         }
 
-        var request = new QueryRequest
+        string? filterExpression = null;
+        var exprValues = new Dictionary<string, AttributeValue>
         {
-            TableName = TableName,
-            IndexName = "all-by-time",
-            KeyConditionExpression = "pk = :pk",
-            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-            {
-                [":pk"] = new() { S = "CLIP" }
-            },
-            ScanIndexForward = false, // newest first
-            Limit = limit
+            [":pk"] = new() { S = "CLIP" }
         };
 
+        if (!string.IsNullOrEmpty(device))
+        {
+            filterExpression = "device = :device";
+            exprValues[":device"] = new() { S = device };
+        }
+
+        Dictionary<string, AttributeValue>? exclusiveStartKey = null;
         if (nextPageKey != null)
         {
-            // GSI pagination requires PK + SK + table PK
             var keyItem = await _dynamoClient.GetItemAsync(TableName, new Dictionary<string, AttributeValue>
             {
                 ["clip_id"] = new() { S = nextPageKey }
@@ -46,7 +45,7 @@ public class ClipService : IClipService
 
             if (keyItem.IsItemSet)
             {
-                request.ExclusiveStartKey = new Dictionary<string, AttributeValue>
+                exclusiveStartKey = new Dictionary<string, AttributeValue>
                 {
                     ["pk"] = new() { S = "CLIP" },
                     ["timestamp"] = keyItem.Item["timestamp"],
@@ -55,11 +54,49 @@ public class ClipService : IClipService
             }
         }
 
-        var response = await _dynamoClient.QueryAsync(request);
-        var clips = response.Items.Select(MapToClipSummary).ToList();
-        var lastKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
+        // When using FilterExpression, loop until we have enough results
+        if (filterExpression != null)
+        {
+            var items = new List<Dictionary<string, AttributeValue>>();
+            var lastKey = exclusiveStartKey;
+            do
+            {
+                var resp = await _dynamoClient.QueryAsync(new QueryRequest
+                {
+                    TableName = TableName,
+                    IndexName = "all-by-time",
+                    KeyConditionExpression = "pk = :pk",
+                    FilterExpression = filterExpression,
+                    ExpressionAttributeValues = exprValues,
+                    ScanIndexForward = false,
+                    Limit = 100,
+                    ExclusiveStartKey = lastKey
+                });
+                items.AddRange(resp.Items);
+                lastKey = resp.LastEvaluatedKey;
+            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
 
-        return new ClipListResponse(clips, lastKey, response.Count);
+            var clips = items.Take(limit).Select(MapToClipSummary).ToList();
+            var nextKey = lastKey?.GetValueOrDefault("clip_id")?.S;
+            if (items.Count > limit)
+                nextKey = items[limit - 1].GetValueOrDefault("clip_id")?.S;
+            return new ClipListResponse(clips, nextKey, clips.Count);
+        }
+
+        var response = await _dynamoClient.QueryAsync(new QueryRequest
+        {
+            TableName = TableName,
+            IndexName = "all-by-time",
+            KeyConditionExpression = "pk = :pk",
+            ExpressionAttributeValues = exprValues,
+            ScanIndexForward = false,
+            Limit = limit,
+            ExclusiveStartKey = exclusiveStartKey
+        });
+        var result = response.Items.Select(MapToClipSummary).ToList();
+        var resultKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
+
+        return new ClipListResponse(result, resultKey, response.Count);
     }
 
     public async Task<ClipDetail?> GetClipByIdAsync(string clipId)
@@ -103,27 +140,60 @@ public class ClipService : IClipService
         return response.Items.Select(MapToDetectionSummary).ToList();
     }
 
-    private async Task<ClipListResponse> QueryByDateAsync(string date, int limit, string? nextPageKey)
+    private async Task<ClipListResponse> QueryByDateAsync(string date, string? device, int limit, string? nextPageKey)
     {
-        var request = new QueryRequest
+        string? filterExpression = null;
+        var exprValues = new Dictionary<string, AttributeValue>
+        {
+            [":date"] = new() { S = date }
+        };
+
+        if (!string.IsNullOrEmpty(device))
+        {
+            filterExpression = "device = :device";
+            exprValues[":device"] = new() { S = device };
+        }
+
+        if (filterExpression != null)
+        {
+            var items = new List<Dictionary<string, AttributeValue>>();
+            Dictionary<string, AttributeValue>? lastKey = null;
+            do
+            {
+                var resp = await _dynamoClient.QueryAsync(new QueryRequest
+                {
+                    TableName = TableName,
+                    IndexName = "by-date",
+                    KeyConditionExpression = "#d = :date",
+                    FilterExpression = filterExpression,
+                    ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
+                    ExpressionAttributeValues = exprValues,
+                    ScanIndexForward = false,
+                    Limit = 100,
+                    ExclusiveStartKey = lastKey
+                });
+                items.AddRange(resp.Items);
+                lastKey = resp.LastEvaluatedKey;
+            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
+
+            var clips = items.Take(limit).Select(MapToClipSummary).ToList();
+            return new ClipListResponse(clips, null, clips.Count);
+        }
+
+        var response = await _dynamoClient.QueryAsync(new QueryRequest
         {
             TableName = TableName,
             IndexName = "by-date",
             KeyConditionExpression = "#d = :date",
             ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
-            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-            {
-                [":date"] = new() { S = date }
-            },
-            ScanIndexForward = false, // newest first
+            ExpressionAttributeValues = exprValues,
+            ScanIndexForward = false,
             Limit = limit
-        };
+        });
+        var clips2 = response.Items.Select(MapToClipSummary).ToList();
+        var lastKey2 = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
 
-        var response = await _dynamoClient.QueryAsync(request);
-        var clips = response.Items.Select(MapToClipSummary).ToList();
-        var lastKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
-
-        return new ClipListResponse(clips, lastKey, response.Count);
+        return new ClipListResponse(clips2, lastKey2, response.Count);
     }
 
     private ClipSummary MapToClipSummary(Dictionary<string, AttributeValue> item)
