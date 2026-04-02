@@ -6,6 +6,7 @@ public interface IPiUpdateService
 {
     Task<List<string>> ListPisAsync();
     Task<PiShadowState?> GetPiShadowAsync(string thingName);
+    Task<string?> GetRawShadowAsync(string thingName);
     Task<string?> GetLatestVersionAsync();
     Task<Dictionary<string, string>> UpdateConfigAsync(string thingName, Dictionary<string, JsonElement> changes);
     Task TriggerUpdateAsync(string thingName, string? version = null);

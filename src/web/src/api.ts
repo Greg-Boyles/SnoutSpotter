@@ -79,6 +79,10 @@ export const api = {
 
   getDevices: () => fetchJson<SystemHealth>("/pi/devices"),
 
+  getRawShadow: (thingName: string) =>
+    fetch(`${BASE}/pi/${thingName}/shadow`, { headers: { ...authHeaders() } })
+      .then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); }),
+
   triggerPiUpdate: (thingName: string, version?: string) =>
     postJson<{ message: string; version: string }>(`/pi/${thingName}/update`, version ? { version } : {}),
 

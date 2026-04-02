@@ -4,7 +4,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Wifi, WifiOff, ArrowLeft, Trash2, RefreshCw, Camera, CameraOff, Upload,
   HardDrive, Cpu, Thermometer, Settings, FileText, RotateCw, Power,
-  FolderX, Terminal, Check, X,
+  FolderX, Terminal, Check, X, Code,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth, PiDevice } from "../types";
@@ -171,6 +171,7 @@ export default function DeviceDetail() {
           { to: `/device/${thingName}/config`, icon: Settings, label: "Settings" },
           { to: `/device/${thingName}/logs`, icon: FileText, label: "Logs" },
           { to: `/device/${thingName}/commands`, icon: Terminal, label: "Commands" },
+          { to: `/device/${thingName}/shadow`, icon: Code, label: "Shadow" },
         ].map(({ to, icon: Icon, label }) => (
           <Link
             key={to}
