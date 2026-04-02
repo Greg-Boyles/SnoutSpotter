@@ -70,6 +70,13 @@ class UploadLedger:
             """, (filename, s3_key, now, now))
         self.conn.commit()
 
+    def is_uploaded(self, filename: str) -> bool:
+        cursor = self.conn.execute(
+            "SELECT 1 FROM uploads WHERE filename = ? AND status = 'uploaded'",
+            (filename,),
+        )
+        return cursor.fetchone() is not None
+
     def get_failed(self, max_attempts: int = 5) -> list:
         cursor = self.conn.execute(
             "SELECT filename, s3_key FROM uploads WHERE status = 'failed' AND attempts < ?",
@@ -184,7 +191,7 @@ class Uploader:
                 # Find completed clips (files that haven't been modified in 5 seconds)
                 for filepath in sorted(self.clips_dir.glob("*.mp4")):
                     age = time.time() - filepath.stat().st_mtime
-                    if age > 5:  # File is at least 5 seconds old (recording likely complete)
+                    if age > 5 and not self.ledger.is_uploaded(filepath.name):
                         self.upload_file(filepath)
 
                 # Retry any previously failed uploads
