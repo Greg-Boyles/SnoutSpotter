@@ -124,7 +124,7 @@ public class LabelService : ILabelService
     }
 
     public async Task<(List<Dictionary<string, string>> items, string? nextPageKey)> GetLabelsAsync(
-        string? reviewed, string? label, string? confirmedLabel, string? breed, int limit, string? nextPageKey)
+        string? reviewed, string? label, string? confirmedLabel, string? breed, string? device, int limit, string? nextPageKey)
     {
         string? indexName = null;
         string? pkField = null;
@@ -156,6 +156,12 @@ public class LabelService : ILabelService
         {
             filterParts.Add("breed = :breed");
             filterValues[":breed"] = new() { S = breed };
+        }
+
+        if (!string.IsNullOrEmpty(device))
+        {
+            filterParts.Add("device = :device");
+            filterValues[":device"] = new() { S = device };
         }
 
         var filterExpression = filterParts.Count > 0 ? string.Join(" AND ", filterParts) : null;

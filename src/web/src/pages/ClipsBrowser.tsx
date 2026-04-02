@@ -12,18 +12,24 @@ export default function ClipsBrowser() {
   const [pageKeys, setPageKeys] = useState<(string | undefined)[]>([undefined]);
   const [pageIndex, setPageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [deviceFilter, setDeviceFilter] = useState("");
+  const [devices, setDevices] = useState<string[]>([]);
   const pageSize = 20;
 
   useEffect(() => {
+    api.getDevices().then((data) => setDevices(data.devices.map((d) => d.thingName))).catch(console.error);
+  }, []);
+
+  useEffect(() => {
     api
-      .getClips(pageSize, pageKeys[pageIndex])
+      .getClips(pageSize, pageKeys[pageIndex], deviceFilter || undefined)
       .then((data) => {
         setClips(data.clips);
         setTotal(data.totalCount);
         setNextPageKey(data.nextPageKey);
       })
       .catch((e: Error) => setError(e.message));
-  }, [pageIndex]);
+  }, [pageIndex, deviceFilter]);
 
   if (error) {
     return (
@@ -37,7 +43,19 @@ export default function ClipsBrowser() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Clips</h1>
-        <span className="text-sm text-gray-500">{total} total</span>
+        <div className="flex items-center gap-3">
+          {devices.length > 1 && (
+            <select
+              value={deviceFilter}
+              onChange={(e) => { setDeviceFilter(e.target.value); setPageIndex(0); setPageKeys([undefined]); }}
+              className="text-sm border border-gray-300 rounded-lg px-3 py-1.5"
+            >
+              <option value="">All devices</option>
+              {devices.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          )}
+          <span className="text-sm text-gray-500">{total} total</span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

@@ -4,6 +4,7 @@ export interface Clip {
   timestamp: number;
   durationSeconds: number;
   date: string;
+  device?: string;
   keyframeCount: number;
   detectionType: string;
   detectionCount: number;

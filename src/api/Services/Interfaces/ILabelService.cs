@@ -5,7 +5,7 @@ public interface ILabelService
     Task<object> TriggerAutoLabelAsync(string? date);
     Task<object> GetStatsAsync();
     Task<(List<Dictionary<string, string>> items, string? nextPageKey)> GetLabelsAsync(
-        string? reviewed, string? label, string? confirmedLabel, string? breed, int limit, string? nextPageKey);
+        string? reviewed, string? label, string? confirmedLabel, string? breed, string? device, int limit, string? nextPageKey);
     Task UpdateLabelAsync(string keyframeKey, string confirmedLabel, string? breed = null);
     Task BulkConfirmAsync(List<string> keyframeKeys, string confirmedLabel, string? breed = null);
     string GetPresignedUrl(string keyframeKey);

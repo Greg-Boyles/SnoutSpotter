@@ -22,10 +22,11 @@ public class ClipsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ClipListResponse>> GetClips(
         [FromQuery] string? date = null,
+        [FromQuery] string? device = null,
         [FromQuery] int limit = 20,
         [FromQuery] string? nextPageKey = null)
     {
-        var result = await _clipService.GetClipsAsync(date, limit, nextPageKey);
+        var result = await _clipService.GetClipsAsync(date, device, limit, nextPageKey);
         return Ok(result);
     }
 

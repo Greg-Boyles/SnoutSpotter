@@ -45,10 +45,11 @@ public class LabelsController : ControllerBase
         [FromQuery] string? label = null,
         [FromQuery] string? confirmedLabel = null,
         [FromQuery] string? breed = null,
+        [FromQuery] string? device = null,
         [FromQuery] int limit = 50,
         [FromQuery] string? nextPageKey = null)
     {
-        var (items, nextKey) = await _labelService.GetLabelsAsync(reviewed, label, confirmedLabel, breed, limit, nextPageKey);
+        var (items, nextKey) = await _labelService.GetLabelsAsync(reviewed, label, confirmedLabel, breed, device, limit, nextPageKey);
 
         // Add presigned URLs for each keyframe
         var enriched = items.Select(item =>
