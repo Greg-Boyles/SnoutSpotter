@@ -196,6 +196,14 @@ export default function DeviceDetail() {
                 </span>
               </div>
             )}
+            {device.deviceTime && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">Device time</span>
+                <span className="text-sm text-gray-700 font-mono">
+                  {new Date(device.deviceTime).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC")}
+                </span>
+              </div>
+            )}
             {device.deviceTime && (() => {
               const drift = Math.abs(Date.now() - new Date(device.deviceTime).getTime()) / 1000;
               if (drift <= 60) return null;
