@@ -199,7 +199,7 @@ export default function DeviceDetail() {
             {device.deviceTime && (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">Device time</span>
-                <span className="text-sm text-gray-700 font-mono">
+                <span className="text-sm text-gray-700">
                   {new Date(device.deviceTime).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC")}
                 </span>
               </div>
