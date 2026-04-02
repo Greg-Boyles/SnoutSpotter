@@ -29,13 +29,16 @@ SnoutSpotter/
 │   │   ├── Controllers/
 │   │   │   ├── ClipsController.cs     # GET /api/clips, GET /api/clips/{id}
 │   │   │   ├── DetectionsController.cs# GET /api/detections
+│   │   │   ├── LabelsController.cs    # ML labeling: auto-label, review, bulk confirm, upload, export
 │   │   │   ├── PiController.cs        # GET /api/pi/devices, POST /api/pi/{thingName}/update
 │   │   │   └── StatsController.cs     # GET /api/stats, GET /api/stats/health
 │   │   ├── Models/ClipModels.cs       # Record types for API responses
 │   │   ├── Services/
 │   │   │   ├── ClipService.cs         # DynamoDB queries for clips
+│   │   │   ├── ExportService.cs       # Training dataset export trigger and management
 │   │   │   ├── HealthService.cs       # CloudWatch heartbeat checks
-│   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, health deserialization
+│   │   │   ├── LabelService.cs        # Label CRUD, breed, stats, upload, backfill
+│   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, config validation
 │   │   │   ├── S3PresignService.cs    # Presigned URL generation
 │   │   │   └── S3UrlService.cs        # S3 URL helpers
 │   │   ├── Program.cs                 # DI setup, JWT Bearer auth, AWS client registration
@@ -62,6 +65,12 @@ SnoutSpotter/
 │   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload
 │   │   │   ├── Function.cs                    # ONNX inference (YOLOv8 + MobileNetV3)
 │   │   │   └── Dockerfile
+│   │   ├── SnoutSpotter.Lambda.AutoLabel/     # YOLOv8 dog detection on keyframes
+│   │   │   ├── Function.cs                    # ONNX inference, writes labels to DynamoDB
+│   │   │   └── Dockerfile
+│   │   ├── SnoutSpotter.Lambda.ExportDataset/ # Training dataset packaging
+│   │   │   ├── Function.cs                    # Queries labels, downloads images, creates zip + labels.csv
+│   │   │   └── Dockerfile
 │   │   └── SnoutSpotter.Lambda.PiMgmt/        # Pi device registration API (no Okta auth)
 │   │       ├── Controllers/DevicesController.cs
 │   │       ├── Services/DeviceProvisioningService.cs
@@ -80,9 +89,17 @@ SnoutSpotter/
 │   │   │   │   ├── ClipsBrowser.tsx   # Paginated clip grid
 │   │   │   │   ├── ClipDetail.tsx     # Video player + keyframes + detections
 │   │   │   │   ├── Detections.tsx     # Detection results list
-│   │   │   │   └── SystemHealth.tsx   # Pi device status, camera health, system metrics, OTA
+│   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions
+│   │   │   │   ├── TrainingExports.tsx# Training dataset export list and download
+│   │   │   │   ├── SystemHealth.tsx   # Landing page: API health + device summary table
+│   │   │   │   ├── DeviceDetail.tsx   # Per-device detail: status, services, camera, system, actions
+│   │   │   │   ├── DeviceConfig.tsx   # Per-device remote config editor (24 settings)
+│   │   │   │   ├── DeviceLogs.tsx     # Per-device log viewer with filters
+│   │   │   │   ├── DeviceShadow.tsx   # Raw IoT device shadow JSON viewer
+│   │   │   │   └── CommandHistory.tsx # Per-device command history
 │   │   │   └── components/
-│   │   │       └── BoundingBoxOverlay.tsx
+│   │   │       ├── BoundingBoxOverlay.tsx
+│   │   │       └── health/            # Shared: StatusBadge, UsageBar, AddDeviceDialog, formatUptime
 │   │   ├── vite.config.ts
 │   │   └── package.json
 │   │
@@ -229,13 +246,15 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips`, 5 ECR repos |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports`, 7 ECR repos |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
 | InferenceStack | Docker Lambda triggered by S3 `keyframes/` events |
 | WebStack | S3 static site bucket, CloudFront distribution |
+| AutoLabelStack | Docker Lambda triggered by auto-label API call |
+| ExportDatasetStack | Docker Lambda for training dataset packaging |
 | CiCdStack | GitHub Actions OIDC role with S3, ECR, Lambda, CloudFront, CFn permissions |
 
 ---
@@ -257,11 +276,30 @@ All main API endpoints require a valid Okta JWT Bearer token.
 **Detections:**
 - `GET /api/detections?type=my_dog&limit=50` — list detection results
 
-**Pi Management (OTA):**
+**ML Labels & Training:**
+- `POST /api/ml/auto-label` — trigger auto-labeling for keyframes
+- `GET /api/ml/labels/stats` — label counts + breed distribution
+- `GET /api/ml/labels?reviewed=false&confirmedLabel=my_dog&breed=Labrador+Retriever` — paginated labels (filterable)
+- `PUT /api/ml/labels/{keyframeKey}` — update label (`confirmedLabel`, optional `breed`)
+- `POST /api/ml/labels/bulk-confirm` — bulk confirm labels with breed
+- `POST /api/ml/labels/upload?label=other_dog&breed=Chihuahua` — upload training images
+- `POST /api/ml/labels/backfill-breed` — set breed on existing labels missing it
+- `POST /api/ml/export` — trigger training dataset export
+- `GET /api/ml/exports` — list exports
+- `GET /api/ml/exports/{exportId}/download` — presigned download URL
+- `DELETE /api/ml/exports/{exportId}` — delete export
+
+**Pi Management (OTA + Config + Commands):**
 - `GET /api/pi/devices` — list all Pi devices with full shadow state
 - `GET /api/pi/{thingName}/status` — single device status
+- `GET /api/pi/{thingName}/shadow` — raw IoT device shadow JSON
+- `GET /api/pi/{thingName}/config` — current configurable settings
+- `POST /api/pi/{thingName}/config` — update device config (validated API-side + Pi-side)
 - `POST /api/pi/{thingName}/update` — trigger OTA update for one device
 - `POST /api/pi/update-all` — trigger OTA update for all devices
+- `POST /api/pi/{thingName}/command` — send command (reboot, restart-*, clear-clips, clear-backups)
+- `GET /api/pi/{thingName}/command/{commandId}` — poll command result
+- `GET /api/pi/{thingName}/commands` — command history
 - `GET /api/pi/{thingName}/logs?minutes=60&level=INFO&service=motion&limit=200` — query device logs from CloudWatch
 
 ### Pi Management API (`snout-spotter-pi-mgmt` Lambda — no auth)
@@ -294,6 +332,44 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `all-by-time` — PK: fixed value, SK: `timestamp` (server-side ordering across all clips)
 - `by-date` — PK: `date`, SK: `timestamp`
 - `by-detection` — PK: `detection_type`, SK: `timestamp`
+
+### Labels Table
+
+**Table:** `snout-spotter-labels` | **Billing:** Pay-per-request
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `keyframe_key` (PK) | String | S3 key for the keyframe image |
+| `clip_id` | String | Source clip reference (or "uploaded" for manual uploads) |
+| `auto_label` | String | `dog`, `no_dog` (ML detection result) |
+| `confirmed_label` | String | `my_dog`, `other_dog`, `no_dog` (human review) |
+| `breed` | String | Dog breed (e.g., "Labrador Retriever", "Chihuahua") |
+| `confidence` | Number | ML detection confidence score |
+| `bounding_boxes` | String | JSON array of detection boxes |
+| `reviewed` | String | `"true"` or `"false"` |
+| `labelled_at` | String | ISO 8601 timestamp |
+| `reviewed_at` | String | ISO 8601 timestamp |
+
+**GSIs:**
+- `by-review` — PK: `reviewed`, SK: `labelled_at`
+- `by-label` — PK: `auto_label`, SK: `labelled_at`
+- `by-confirmed-label` — PK: `confirmed_label`, SK: `labelled_at`
+
+### Exports Table
+
+**Table:** `snout-spotter-exports` | **Billing:** Pay-per-request
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `export_id` (PK) | String | Unique export identifier |
+| `status` | String | `running`, `complete`, `failed` |
+| `s3_key` | String | S3 key for the exported zip |
+| `total_images` | Number | Total image count |
+| `my_dog_count` | Number | Count of my_dog labels |
+| `not_my_dog_count` | Number | Count of other_dog + no_dog labels |
+| `train_count` | Number | Training split count |
+| `val_count` | Number | Validation split count |
+| `size_mb` | Number | Zip file size |
 
 ---
 
@@ -370,6 +446,23 @@ All main API endpoints require a valid Okta JWT Bearer token.
 
 **Pi version bumping:** `package-pi.yml` reads the current version from the S3 manifest and increments the patch number — guarantees a unique version every run.
 
+### Remote Config (24 settings)
+
+Settings are validated in two places: API-side (`PiUpdateService.ConfigurableKeys`) and Pi-side (`config_schema.CONFIGURABLE_KEYS`). Both must match.
+
+| Section | Settings |
+|---------|----------|
+| Motion | `threshold`, `blur_kernel`, `min_area` |
+| Camera | `detection_fps`, `preview_resolution`, `record_resolution`, `record_fps` |
+| Recording | `max_clip_length`, `pre_buffer`, `pre_buffer_enabled`, `post_motion_buffer` |
+| Upload | `max_retries`, `retry_delay`, `delete_after_upload` |
+| Health | `interval_seconds` |
+| Log Shipping | `enabled`, `batch_interval_seconds`, `max_lines_per_batch`, `min_level` |
+| Streaming | `timeout_seconds`, `resolution`, `framerate`, `bitrate` |
+| Credentials | `credentials_provider.endpoint` |
+
+Config changes are written to the IoT shadow desired state, picked up by the Pi agent via delta, validated, applied to `config.yaml`, and signalled to affected services via touch-files.
+
 ---
 
 ## CI/CD
@@ -417,7 +510,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - **Pi Management API has no auth** — Pi devices connect directly, cannot use Okta
 - **CORS** is locked to `allowedOrigin` on main API; open on Pi Management
 - **Naming:** IoT things prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
-- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `models/`, `releases/pi/`, `terraform/`
+- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/`, `releases/pi/`, `terraform/`
 
 ---
 
@@ -446,3 +539,13 @@ All main API endpoints require a valid Okta JWT Bearer token.
 11. **ECR repos are created in CoreStack** — must exist before any image build. Deploy CoreStack first.
 
 12. **IoT Credentials Provider endpoint cannot be derived from the data endpoint** — they have different prefixes. The credential provider endpoint must be obtained via `aws iot describe-endpoint --endpoint-type iot:CredentialProvider` or from the PiMgmt registration response. It is stored in `config.yaml` under `credentials_provider.endpoint`.
+
+13. **Config validation exists in TWO places** — both `PiUpdateService.cs` (`ConfigurableKeys` dict) and `config_schema.py` (`CONFIGURABLE_KEYS` dict) validate config changes. The API validates before writing to the shadow; the Pi validates again when it receives the delta. Both must be updated when adding new configurable settings.
+
+14. **DynamoDB `FilterExpression` with `Limit`** — `Limit` applies *before* `FilterExpression`. A query with `Limit=30` and a filter may return 0 results even when matching items exist. Use the `by-confirmed-label` GSI for direct queries instead of filtering on the `by-review` GSI.
+
+15. **Training label types** — Three confirmed labels: `my_dog`, `other_dog`, `no_dog`. The `auto_label` field uses `dog`/`no_dog` (binary). `my_dog` and `other_dog` both map to `auto_label=dog`. The classifier trains on `my_dog` vs `not_my_dog` (other_dog + no_dog combined).
+
+16. **Breed data on labels** — Breed is required when confirming dog labels (my_dog/other_dog). My dog defaults to "Labrador Retriever". 120 breeds from ImageNet/Stanford Dogs dataset are supported. Breed is stored in DynamoDB and included in training exports via `labels.csv`.
+
+17. **System Health is split across two pages** — `/health` is a clean landing page with device summary table. `/device/:thingName` is the full device detail page. Sub-pages (config, logs, commands, shadow) link back to the detail page, not `/health`.
