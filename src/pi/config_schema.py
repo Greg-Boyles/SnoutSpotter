@@ -3,8 +3,7 @@ Allow-list of remotely configurable Pi settings and helpers for validation,
 applying changes to config dicts, and reading current values.
 
 Keys use dot-notation: "section.field" maps to config["section"]["field"].
-Camera resolution keys are intentionally excluded — changing them requires
-a Picamera2 pipeline restart which is outside the scope of hot-reload.
+Camera resolution/fps changes will trigger a motion service restart.
 """
 
 from typing import Any
@@ -18,8 +17,24 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": int, "min": 3, "max": 51, "odd": True,
         "affects": "motion",
     },
+    "motion.min_area": {
+        "type": int, "min": 100, "max": 10000,
+        "affects": "motion",
+    },
     "camera.detection_fps": {
         "type": int, "min": 1, "max": 15,
+        "affects": "motion",
+    },
+    "camera.preview_resolution": {
+        "type": str, "choices": ["640x480", "1280x720"],
+        "affects": "motion",
+    },
+    "camera.record_resolution": {
+        "type": str, "choices": ["1280x720", "1920x1080"],
+        "affects": "motion",
+    },
+    "camera.record_fps": {
+        "type": int, "min": 15, "max": 60,
         "affects": "motion",
     },
     "recording.max_clip_length": {
@@ -40,6 +55,10 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
     },
     "upload.max_retries": {
         "type": int, "min": 1, "max": 20,
+        "affects": "uploader",
+    },
+    "upload.retry_delay": {
+        "type": int, "min": 1, "max": 60,
         "affects": "uploader",
     },
     "upload.delete_after_upload": {
@@ -68,6 +87,22 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
     },
     "credentials_provider.endpoint": {
         "type": str,
+        "affects": "agent",
+    },
+    "streaming.timeout_seconds": {
+        "type": int, "min": 60, "max": 3600,
+        "affects": "agent",
+    },
+    "streaming.resolution": {
+        "type": str, "choices": ["640x480", "1280x720", "1920x1080"],
+        "affects": "agent",
+    },
+    "streaming.framerate": {
+        "type": int, "min": 5, "max": 30,
+        "affects": "agent",
+    },
+    "streaming.bitrate": {
+        "type": int, "min": 200, "max": 5000,
         "affects": "agent",
     },
 }
