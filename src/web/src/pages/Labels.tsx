@@ -477,7 +477,7 @@ export default function Labels() {
           </label>
         )}
 
-        {devices.length > 1 && (
+        {devices.length > 0 && (
           <label className="flex items-center gap-2 text-gray-600">
             <span>Device:</span>
             <select

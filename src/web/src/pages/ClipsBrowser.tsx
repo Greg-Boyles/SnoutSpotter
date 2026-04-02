@@ -44,7 +44,7 @@ export default function ClipsBrowser() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Clips</h1>
         <div className="flex items-center gap-3">
-          {devices.length > 1 && (
+          {devices.length > 0 && (
             <select
               value={deviceFilter}
               onChange={(e) => { setDeviceFilter(e.target.value); setPageIndex(0); setPageKeys([undefined]); }}
