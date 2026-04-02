@@ -91,7 +91,7 @@ export default function DeviceLogs() {
     <div>
       <div className="flex items-center gap-3 mb-4">
         <Link
-          to="/health"
+          to={`/device/${thingName}`}
           className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
         >
           <ArrowLeft className="w-5 h-5" />

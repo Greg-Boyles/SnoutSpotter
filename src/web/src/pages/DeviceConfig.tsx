@@ -133,8 +133,8 @@ export default function DeviceConfig() {
   if (error) {
     return (
       <div>
-        <Link to="/health" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
-          <ArrowLeft className="w-4 h-4" /> System Health
+        <Link to={`/device/${thingName}`} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+          <ArrowLeft className="w-4 h-4" /> {thingName}
         </Link>
         <div className="text-red-600 bg-red-50 p-4 rounded-lg">{error}</div>
       </div>
