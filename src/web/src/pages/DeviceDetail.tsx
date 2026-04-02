@@ -4,7 +4,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Wifi, WifiOff, ArrowLeft, Trash2, RefreshCw, Camera, CameraOff, Upload,
   HardDrive, Cpu, Thermometer, Settings, FileText, RotateCw, Power,
-  FolderX, Terminal, Check, X,
+  FolderX, Terminal, Check, X, Code,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth, PiDevice } from "../types";
@@ -171,6 +171,7 @@ export default function DeviceDetail() {
           { to: `/device/${thingName}/config`, icon: Settings, label: "Settings" },
           { to: `/device/${thingName}/logs`, icon: FileText, label: "Logs" },
           { to: `/device/${thingName}/commands`, icon: Terminal, label: "Commands" },
+          { to: `/device/${thingName}/shadow`, icon: Code, label: "Shadow" },
         ].map(({ to, icon: Icon, label }) => (
           <Link
             key={to}
@@ -303,11 +304,11 @@ export default function DeviceDetail() {
               )}
               {device.uploadStats && (
                 <div className="flex items-center gap-4 text-sm text-gray-500 pt-2 border-t border-gray-100">
-                  <span>{device.uploadStats.uploadsToday} today</span>
+                  <span>{device.uploadStats.uploadsToday} clips today</span>
                   {device.uploadStats.failedToday > 0 && (
                     <span className="text-red-600">{device.uploadStats.failedToday} failed</span>
                   )}
-                  <span>{device.uploadStats.totalUploaded} total</span>
+                  <span>{device.uploadStats.totalUploaded} clips total</span>
                 </div>
               )}
               {device.clipsPending != null && device.clipsPending > 0 && (

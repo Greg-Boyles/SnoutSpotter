@@ -144,6 +144,24 @@ public class PiUpdateService : IPiUpdateService
         }
     }
 
+    public async Task<string?> GetRawShadowAsync(string thingName)
+    {
+        try
+        {
+            var response = await _iotData.GetThingShadowAsync(new GetThingShadowRequest
+            {
+                ThingName = thingName
+            });
+
+            using var reader = new StreamReader(response.Payload);
+            return await reader.ReadToEndAsync();
+        }
+        catch (Amazon.IotData.Model.ResourceNotFoundException)
+        {
+            return null;
+        }
+    }
+
     public async Task<string?> GetLatestVersionAsync()
     {
         if (_cachedLatestVersion != null && DateTime.UtcNow < _cacheExpiry)

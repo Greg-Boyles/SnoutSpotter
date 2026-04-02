@@ -61,6 +61,14 @@ public class PiController : ControllerBase
         return Ok(new { devices, latestVersion });
     }
 
+    [HttpGet("{thingName}/shadow")]
+    public async Task<ActionResult> GetRawShadow(string thingName)
+    {
+        var json = await _piUpdateService.GetRawShadowAsync(thingName);
+        if (json == null) return NotFound(new { error = "Device shadow not found" });
+        return Content(json, "application/json");
+    }
+
     [HttpGet("{thingName}/status")]
     public async Task<ActionResult> GetStatus(string thingName)
     {
