@@ -70,6 +70,7 @@ public class PiUpdateService : IPiUpdateService
                 Version = reported.TryGetProperty("version", out var v) ? v.GetString() : null,
                 Hostname = reported.TryGetProperty("hostname", out var h) ? h.GetString() : null,
                 LastHeartbeat = reported.TryGetProperty("lastHeartbeat", out var lb) ? lb.GetString() : null,
+                DeviceTime = reported.TryGetProperty("deviceTime", out var dt) ? dt.GetString() : null,
                 UpdateStatus = reported.TryGetProperty("updateStatus", out var us) ? us.GetString() : "idle",
                 Services = reported.TryGetProperty("services", out var svc)
                     ? JsonSerializer.Deserialize<Dictionary<string, string>>(svc.GetRawText())
@@ -427,6 +428,7 @@ public class PiShadowState
     public string? Version { get; set; }
     public string? Hostname { get; set; }
     public string? LastHeartbeat { get; set; }
+    public string? DeviceTime { get; set; }
     public string? UpdateStatus { get; set; }
     public Dictionary<string, string>? Services { get; set; }
     public CameraStatus? Camera { get; set; }

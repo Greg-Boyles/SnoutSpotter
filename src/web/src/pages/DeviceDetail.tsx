@@ -4,7 +4,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Wifi, WifiOff, ArrowLeft, Trash2, RefreshCw, Camera, CameraOff, Upload,
   HardDrive, Cpu, Thermometer, Settings, FileText, RotateCw, Power,
-  FolderX, Terminal, Check, X, Code,
+  FolderX, Terminal, Check, X, Code, AlertTriangle,
 } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth, PiDevice } from "../types";
@@ -196,6 +196,20 @@ export default function DeviceDetail() {
                 </span>
               </div>
             )}
+            {device.deviceTime && (() => {
+              const drift = Math.abs(Date.now() - new Date(device.deviceTime).getTime()) / 1000;
+              if (drift <= 60) return null;
+              const mins = Math.floor(drift / 60);
+              const secs = Math.floor(drift % 60);
+              return (
+                <div className="flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                  <span className="text-sm text-red-700">
+                    Clock out of sync by {mins > 0 ? `${mins}m ` : ""}{secs}s
+                  </span>
+                </div>
+              );
+            })()}
             {device.updateStatus && device.updateStatus !== "idle" && (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">Update Status</span>
