@@ -307,7 +307,7 @@ export default function DeviceDetail() {
                   {device.uploadStats.failedToday > 0 && (
                     <span className="text-red-600">{device.uploadStats.failedToday} failed</span>
                   )}
-                  <span>{device.uploadStats.totalUploaded} total</span>
+                  <span>{device.uploadStats.totalUploaded} clips total</span>
                 </div>
               )}
               {device.clipsPending != null && device.clipsPending > 0 && (
