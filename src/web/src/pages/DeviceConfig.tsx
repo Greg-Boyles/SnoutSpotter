@@ -12,12 +12,16 @@ const CONFIG_SECTIONS: {
     keys: [
       { key: "motion.threshold", label: "Threshold", type: "int", min: 500, max: 50000, unit: "px", description: "Number of changed pixels to trigger recording" },
       { key: "motion.blur_kernel", label: "Blur kernel", type: "int", min: 3, max: 51, description: "Gaussian blur kernel size (must be odd)" },
+      { key: "motion.min_area", label: "Min area", type: "int", min: 100, max: 10000, unit: "px", description: "Minimum contour area to trigger recording (filters small movements)" },
     ],
   },
   {
     title: "Camera",
     keys: [
       { key: "camera.detection_fps", label: "Detection FPS", type: "int", min: 1, max: 15, unit: "fps", description: "Frame rate for motion detection preview" },
+      { key: "camera.preview_resolution", label: "Preview resolution", type: "str", choices: ["640x480", "1280x720"], description: "Resolution for motion detection preview (restarts motion service)" },
+      { key: "camera.record_resolution", label: "Record resolution", type: "str", choices: ["1280x720", "1920x1080"], description: "Resolution for recorded clips (restarts motion service)" },
+      { key: "camera.record_fps", label: "Record FPS", type: "int", min: 15, max: 60, unit: "fps", description: "Frame rate for recorded clips (restarts motion service)" },
     ],
   },
   {
@@ -33,6 +37,7 @@ const CONFIG_SECTIONS: {
     title: "Upload",
     keys: [
       { key: "upload.max_retries", label: "Max retries", type: "int", min: 1, max: 20, description: "Retry count for failed uploads" },
+      { key: "upload.retry_delay", label: "Retry delay", type: "int", min: 1, max: 60, unit: "s", description: "Seconds between upload retry attempts" },
       { key: "upload.delete_after_upload", label: "Delete after upload", type: "bool", description: "Remove local clip file after successful upload" },
     ],
   },
@@ -49,6 +54,15 @@ const CONFIG_SECTIONS: {
       { key: "log_shipping.batch_interval_seconds", label: "Batch interval", type: "int", min: 30, max: 600, unit: "s", description: "How often logs are batched and sent" },
       { key: "log_shipping.max_lines_per_batch", label: "Max lines per batch", type: "int", min: 10, max: 200, description: "Maximum number of log lines sent per batch" },
       { key: "log_shipping.min_level", label: "Minimum level", type: "str", choices: ["DEBUG", "INFO", "WARNING", "ERROR"], description: "Only ship logs at or above this severity" },
+    ],
+  },
+  {
+    title: "Streaming",
+    keys: [
+      { key: "streaming.timeout_seconds", label: "Timeout", type: "int", min: 60, max: 3600, unit: "s", description: "Max duration for a live stream session" },
+      { key: "streaming.resolution", label: "Resolution", type: "str", choices: ["640x480", "1280x720", "1920x1080"], description: "Live stream video resolution" },
+      { key: "streaming.framerate", label: "Frame rate", type: "int", min: 5, max: 30, unit: "fps", description: "Live stream frame rate" },
+      { key: "streaming.bitrate", label: "Bitrate", type: "int", min: 200, max: 5000, unit: "kbps", description: "Live stream video bitrate" },
     ],
   },
 ];
