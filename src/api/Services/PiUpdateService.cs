@@ -195,12 +195,17 @@ public class PiUpdateService : IPiUpdateService
     {
         ["motion.threshold"]                    = new("int", Min: 500,  Max: 50000),
         ["motion.blur_kernel"]                  = new("int", Min: 3,    Max: 51,   Odd: true),
+        ["motion.min_area"]                     = new("int", Min: 100,  Max: 10000),
         ["camera.detection_fps"]                = new("int", Min: 1,    Max: 15),
+        ["camera.preview_resolution"]           = new("str", Choices: ["640x480", "1280x720"]),
+        ["camera.record_resolution"]            = new("str", Choices: ["1280x720", "1920x1080"]),
+        ["camera.record_fps"]                   = new("int", Min: 15,   Max: 60),
         ["recording.max_clip_length"]           = new("int", Min: 10,   Max: 300),
         ["recording.pre_buffer"]                = new("int", Min: 1,    Max: 10),
         ["recording.pre_buffer_enabled"]        = new("bool"),
         ["recording.post_motion_buffer"]        = new("int", Min: 3,    Max: 60),
         ["upload.max_retries"]                  = new("int", Min: 1,    Max: 20),
+        ["upload.retry_delay"]                  = new("int", Min: 1,    Max: 60),
         ["upload.delete_after_upload"]          = new("bool"),
         ["health.interval_seconds"]             = new("int", Min: 60,   Max: 3600),
         ["log_shipping.enabled"]                = new("bool"),
@@ -208,6 +213,10 @@ public class PiUpdateService : IPiUpdateService
         ["log_shipping.max_lines_per_batch"]    = new("int", Min: 10,   Max: 200),
         ["log_shipping.min_level"]              = new("str", Choices: ["DEBUG", "INFO", "WARNING", "ERROR"]),
         ["credentials_provider.endpoint"]       = new("str"),
+        ["streaming.timeout_seconds"]           = new("int", Min: 60,   Max: 3600),
+        ["streaming.resolution"]                = new("str", Choices: ["640x480", "1280x720", "1920x1080"]),
+        ["streaming.framerate"]                 = new("int", Min: 5,    Max: 30),
+        ["streaming.bitrate"]                   = new("int", Min: 200,  Max: 5000),
     };
 
     public async Task<Dictionary<string, string>> UpdateConfigAsync(
