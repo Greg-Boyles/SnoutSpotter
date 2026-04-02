@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock } from "lucide-react";
+import { ArrowLeft, Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban } from "lucide-react";
 import { api } from "../api";
 
 interface ExportItem {
@@ -41,6 +41,7 @@ export default function TrainingExports() {
   const [exports, setExports] = useState<ExportItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [labelStats, setLabelStats] = useState<{ myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
 
   const loadExports = () => {
     api.listExports()
@@ -51,7 +52,7 @@ export default function TrainingExports() {
 
   useEffect(() => {
     loadExports();
-    // Poll for running exports
+    api.getLabelStats().then(setLabelStats).catch(console.error);
     const interval = setInterval(loadExports, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -91,6 +92,50 @@ export default function TrainingExports() {
       </Link>
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Training Exports</h1>
+
+      {/* Label Summary */}
+      {labelStats && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-4">Training Data Summary</h2>
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-1.5 mb-1">
+                <Dog className="w-4 h-4 text-green-500" />
+                <span className="text-xs text-gray-500">My Dog</span>
+              </div>
+              <p className="text-2xl font-bold text-green-600">{labelStats.myDog}</p>
+            </div>
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-1.5 mb-1">
+                <Dog className="w-4 h-4 text-orange-500" />
+                <span className="text-xs text-gray-500">Other Dog</span>
+              </div>
+              <p className="text-2xl font-bold text-orange-600">{labelStats.otherDog}</p>
+            </div>
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-1.5 mb-1">
+                <Ban className="w-4 h-4 text-gray-400" />
+                <span className="text-xs text-gray-500">No Dog</span>
+              </div>
+              <p className="text-2xl font-bold text-gray-500">{labelStats.confirmedNoDog}</p>
+            </div>
+          </div>
+          {Object.keys(labelStats.breeds).length > 0 && (
+            <div className="pt-3 border-t border-gray-100">
+              <p className="text-xs font-medium text-gray-500 mb-2">Breeds</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(labelStats.breeds)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([breed, count]) => (
+                    <span key={breed} className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-50 border border-gray-100 text-xs text-gray-600 rounded-full">
+                      {breed} <span className="font-semibold text-gray-900">{count}</span>
+                    </span>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {exports.length === 0 ? (
         <div className="bg-gray-50 rounded-xl border border-gray-200 p-8 text-center">

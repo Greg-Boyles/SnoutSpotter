@@ -59,7 +59,7 @@ export default function Dashboard() {
   const [recentClips, setRecentClips] = useState<Clip[]>([]);
   const [allClips, setAllClips] = useState<Clip[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [labelStats, setLabelStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
+  const [labelStats, setLabelStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number } | null>(null);
   const [latestExport, setLatestExport] = useState<Record<string, string> | null>(null);
   const [runningAutoLabel, setRunningAutoLabel] = useState(false);
 
@@ -177,42 +177,21 @@ export default function Dashboard() {
             </button>
           </div>
           {labelStats ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
                   <p className="text-lg font-bold text-gray-900">{labelStats.total}</p>
-                  <p className="text-xs text-gray-500">Total</p>
+                  <p className="text-xs text-gray-500">Labelled</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-green-600">{labelStats.myDog}</p>
-                  <p className="text-xs text-gray-500">My Dog</p>
+                  <p className="text-lg font-bold text-green-600">{labelStats.dogs}</p>
+                  <p className="text-xs text-gray-500">Dogs</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-orange-600">{labelStats.otherDog}</p>
-                  <p className="text-xs text-gray-500">Other Dog</p>
-                </div>
-                <div>
-                  <p className="text-lg font-bold text-gray-500">{labelStats.confirmedNoDog}</p>
-                  <p className="text-xs text-gray-500">No Dog</p>
+                  <p className="text-lg font-bold text-amber-600">{labelStats.unreviewed}</p>
+                  <p className="text-xs text-gray-500">Unreviewed</p>
                 </div>
               </div>
-              {labelStats.unreviewed > 0 && (
-                <p className="text-xs text-amber-600">{labelStats.unreviewed} unreviewed</p>
-              )}
-              {Object.keys(labelStats.breeds).length > 0 && (
-                <div className="pt-2 border-t border-gray-100">
-                  <p className="text-xs font-medium text-gray-500 mb-1.5">Breeds</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {Object.entries(labelStats.breeds)
-                      .sort(([, a], [, b]) => b - a)
-                      .map(([breed, count]) => (
-                        <span key={breed} className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-xs text-gray-600 rounded-full">
-                          {breed} <span className="font-medium text-gray-900">{count}</span>
-                        </span>
-                      ))}
-                  </div>
-                </div>
-              )}
               <div className="flex items-center justify-end text-xs pt-2 border-t border-gray-100">
                 <Link to="/labels" className="text-blue-600 hover:text-blue-700 font-medium">
                   View Labels →
