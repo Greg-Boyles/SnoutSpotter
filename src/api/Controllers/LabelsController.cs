@@ -18,11 +18,9 @@ public class LabelsController : ControllerBase
     private readonly IAmazonS3 _s3;
     private readonly string _bucketName;
 
-    private static readonly Dictionary<string, string> KnownModels = new()
-    {
-        ["dog-detector"] = "models/dog-detector/best.onnx",
-        ["dog-classifier"] = "models/dog-classifier/best.onnx",
-    };
+    private const string ClassifierPrefix = "models/dog-classifier/versions/";
+    private const string ClassifierActiveKey = "models/dog-classifier/best.onnx";
+    private const string ClassifierActiveVersionKey = "models/dog-classifier/active.json";
 
     public LabelsController(
         ILabelService labelService,
@@ -205,47 +203,88 @@ public class LabelsController : ControllerBase
     [HttpGet("models")]
     public async Task<ActionResult> ListModels()
     {
-        var models = new List<object>();
-
-        foreach (var (modelType, s3Key) in KnownModels)
+        // Get active version
+        string? activeVersion = null;
+        try
         {
-            try
+            var activeObj = await _s3.GetObjectAsync(_bucketName, ClassifierActiveVersionKey);
+            using var reader = new StreamReader(activeObj.ResponseStream);
+            var json = await reader.ReadToEndAsync();
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            activeVersion = doc.RootElement.GetProperty("version").GetString();
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) { }
+
+        // List all versions
+        var versions = new List<object>();
+        var listResponse = await _s3.ListObjectsV2Async(new ListObjectsV2Request
+        {
+            BucketName = _bucketName,
+            Prefix = ClassifierPrefix
+        });
+
+        foreach (var obj in listResponse.S3Objects)
+        {
+            var fileName = obj.Key[ClassifierPrefix.Length..];
+            if (!fileName.EndsWith(".onnx")) continue;
+            var version = fileName[..^5]; // strip .onnx
+
+            versions.Add(new
             {
-                var metadata = await _s3.GetObjectMetadataAsync(_bucketName, s3Key);
-                models.Add(new
-                {
-                    modelType,
-                    s3Key,
-                    lastModified = metadata.LastModified.ToString("O"),
-                    sizeBytes = metadata.ContentLength,
-                    deployed = true
-                });
-            }
-            catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                models.Add(new
-                {
-                    modelType,
-                    s3Key,
-                    lastModified = (string?)null,
-                    sizeBytes = 0L,
-                    deployed = false
-                });
-            }
+                version,
+                s3Key = obj.Key,
+                sizeBytes = obj.Size,
+                lastModified = obj.LastModified.ToString("O"),
+                active = version == activeVersion
+            });
         }
 
-        return Ok(new { models });
+        return Ok(new { activeVersion, versions });
     }
 
     [HttpPost("models/upload-url")]
-    public ActionResult GetModelUploadUrl([FromQuery] string modelType)
+    public ActionResult GetModelUploadUrl([FromQuery] string version)
     {
-        if (!KnownModels.TryGetValue(modelType, out var s3Key))
-            return BadRequest(new { error = $"Unknown model type '{modelType}'. Valid types: {string.Join(", ", KnownModels.Keys)}" });
+        if (string.IsNullOrWhiteSpace(version))
+            return BadRequest(new { error = "version is required" });
 
+        var s3Key = $"{ClassifierPrefix}{version}.onnx";
         var uploadUrl = _presignService.GeneratePresignedPutUrl(s3Key, "application/octet-stream");
 
-        return Ok(new { uploadUrl, s3Key, expiresIn = 3600 });
+        return Ok(new { uploadUrl, s3Key, version, expiresIn = 3600 });
+    }
+
+    [HttpPost("models/activate")]
+    public async Task<ActionResult> ActivateModel([FromQuery] string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return BadRequest(new { error = "version is required" });
+
+        var sourceKey = $"{ClassifierPrefix}{version}.onnx";
+
+        // Verify the version exists
+        try
+        {
+            await _s3.GetObjectMetadataAsync(_bucketName, sourceKey);
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return NotFound(new { error = $"Version '{version}' not found" });
+        }
+
+        // Copy version to best.onnx
+        await _s3.CopyObjectAsync(_bucketName, sourceKey, _bucketName, ClassifierActiveKey);
+
+        // Write active.json
+        await _s3.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = _bucketName,
+            Key = ClassifierActiveVersionKey,
+            ContentBody = System.Text.Json.JsonSerializer.Serialize(new { version }),
+            ContentType = "application/json"
+        });
+
+        return Ok(new { message = $"Activated version '{version}'", version });
     }
 }
 
