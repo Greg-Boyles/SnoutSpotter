@@ -91,6 +91,7 @@ SnoutSpotter/
 │   │   │   │   ├── Detections.tsx     # Detection results list
 │   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions
 │   │   │   │   ├── TrainingExports.tsx# Training dataset export list and download
+│   │   │   │   ├── Models.tsx         # Classifier model version management: upload, list, activate
 │   │   │   │   ├── SystemHealth.tsx   # Landing page: API health + device summary table
 │   │   │   │   ├── DeviceDetail.tsx   # Per-device detail: status, services, camera, system, actions
 │   │   │   │   ├── DeviceConfig.tsx   # Per-device remote config editor (24 settings)
@@ -288,6 +289,11 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/ml/exports` — list exports
 - `GET /api/ml/exports/{exportId}/download` — presigned download URL
 - `DELETE /api/ml/exports/{exportId}` — delete export
+
+**ML Models:**
+- `GET /api/ml/models` — list classifier model versions (from S3 `models/dog-classifier/versions/`) with active status
+- `POST /api/ml/models/upload-url?version=v2.0` — presigned PUT URL for uploading a new `.onnx` classifier version
+- `POST /api/ml/models/activate?version=v2.0` — activate a version (copies to `models/dog-classifier/best.onnx`, writes `active.json`)
 
 **Pi Management (OTA + Config + Commands):**
 - `GET /api/pi/devices` — list all Pi devices with full shadow state
@@ -510,7 +516,7 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 - **Pi Management API has no auth** — Pi devices connect directly, cannot use Okta
 - **CORS** is locked to `allowedOrigin` on main API; open on Pi Management
 - **Naming:** IoT things prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
-- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/`, `releases/pi/`, `terraform/`
+- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-classifier/versions/`, `models/dog-classifier/best.onnx`, `models/yolov8n.onnx`, `releases/pi/`, `terraform/`
 
 ---
 
@@ -549,3 +555,5 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 16. **Breed data on labels** — Breed is required when confirming dog labels (my_dog/other_dog). My dog defaults to "Labrador Retriever". 120 breeds from ImageNet/Stanford Dogs dataset are supported. Breed is stored in DynamoDB and included in training exports via `labels.csv`.
 
 17. **System Health is split across two pages** — `/health` is a clean landing page with device summary table. `/device/:thingName` is the full device detail page. Sub-pages (config, logs, commands, shadow) link back to the detail page, not `/health`.
+
+18. **Classifier model versioning** — Classifier models are stored in S3 under `models/dog-classifier/versions/{version}.onnx`. The active model is copied to `models/dog-classifier/best.onnx` with metadata in `models/dog-classifier/active.json`. The RunInference Lambda reads from the `CLASSIFIER_MODEL_KEY` env var. Activating a new version via the Models page does not automatically restart the Lambda — the new model is picked up on the next cold start.
