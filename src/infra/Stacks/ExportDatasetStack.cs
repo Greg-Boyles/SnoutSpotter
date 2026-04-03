@@ -30,7 +30,7 @@ public class ExportDatasetStack : Stack
             }),
             MemorySize = 2048,
             Timeout = Duration.Minutes(15),
-            EphemeralStorageSize = Size.Mebibytes(2048),
+            EphemeralStorageSize = Size.Mebibytes(5120),
             Environment = new Dictionary<string, string>
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
