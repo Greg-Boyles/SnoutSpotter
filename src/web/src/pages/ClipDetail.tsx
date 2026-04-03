@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Loader2, Play } from "lucide-react";
 import { api } from "../api";
 import type { Clip, Detection } from "../types";
 import BoundingBoxOverlay from "../components/BoundingBoxOverlay";
@@ -10,6 +10,7 @@ export default function ClipDetail() {
   const [clip, setClip] = useState<Clip | null>(null);
   const [detections, setDetections] = useState<Detection[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [inferring, setInferring] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -20,6 +21,18 @@ export default function ClipDetail() {
       })
       .catch((e: Error) => setError(e.message));
   }, [id]);
+
+  const handleRunInference = async () => {
+    if (!id) return;
+    setInferring(true);
+    try {
+      await api.runInference(id);
+    } catch (e) {
+      console.error("Inference trigger failed:", e);
+    } finally {
+      setInferring(false);
+    }
+  };
 
   if (error) {
     return (
@@ -38,9 +51,19 @@ export default function ClipDetail() {
         <ArrowLeft className="w-4 h-4" /> Back to clips
       </Link>
 
-      <h1 className="text-xl font-bold text-gray-900 mb-4">
-        Clip {clip.clipId}
-      </h1>
+      <div className="flex items-center gap-3 mb-4">
+        <h1 className="text-xl font-bold text-gray-900">
+          Clip {clip.clipId}
+        </h1>
+        <button
+          onClick={handleRunInference}
+          disabled={inferring}
+          className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+        >
+          {inferring ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+          {inferring ? "Running..." : "Run Inference"}
+        </button>
+      </div>
 
       {/* Video Player */}
       {clip.videoUrl && (

@@ -19,6 +19,7 @@ public class ApiStackProps : StackProps
     public required Repository ApiEcrRepo { get; init; }
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
+    public string InferenceFunctionName { get; init; } = "snout-spotter-run-inference";
     public required string ImageTag { get; init; }
     public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
     public required string OktaIssuer { get; init; }
@@ -55,7 +56,8 @@ public class ApiStack : Stack
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
                 ["AUTO_LABEL_FUNCTION"] = props.AutoLabelFunctionName,
                 ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
-                ["EXPORT_DATASET_FUNCTION"] = props.ExportDatasetFunctionName
+                ["EXPORT_DATASET_FUNCTION"] = props.ExportDatasetFunctionName,
+                ["INFERENCE_FUNCTION"] = props.InferenceFunctionName
             }
         });
 
@@ -109,7 +111,8 @@ public class ApiStack : Stack
             Resources = new[]
             {
                 $"arn:aws:lambda:{Region}:{Account}:function:{props.AutoLabelFunctionName}",
-                $"arn:aws:lambda:{Region}:{Account}:function:{props.ExportDatasetFunctionName}"
+                $"arn:aws:lambda:{Region}:{Account}:function:{props.ExportDatasetFunctionName}",
+                $"arn:aws:lambda:{Region}:{Account}:function:{props.InferenceFunctionName}"
             }
         }));
 

@@ -75,6 +75,9 @@ export const api = {
       clipId ? `/detections?clipId=${clipId}` : "/detections",
     ),
 
+  runInference: (clipId: string) =>
+    postJson<{ message: string; clipId: string }>(`/clips/${clipId}/infer`),
+
   getHealth: () => fetchJson<SystemHealth>("/stats/health"),
 
   getDevices: () => fetchJson<SystemHealth>("/pi/devices"),

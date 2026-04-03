@@ -24,6 +24,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.PiLogGroup = Environment.GetEnvironmentVariable("PI_LOG_GROUP") ?? "/snoutspotter/pi-logs";
     cfg.AutoLabelFunction = Environment.GetEnvironmentVariable("AUTO_LABEL_FUNCTION") ?? "snout-spotter-auto-label";
     cfg.ExportDatasetFunction = Environment.GetEnvironmentVariable("EXPORT_DATASET_FUNCTION") ?? "snout-spotter-export-dataset";
+    cfg.InferenceFunction = Environment.GetEnvironmentVariable("INFERENCE_FUNCTION") ?? "snout-spotter-run-inference";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });
