@@ -68,7 +68,16 @@ def train(
     model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, 2)
     model = model.to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    counts = [0] * len(train_dataset.classes)
+    for _, label in train_dataset.samples:
+        counts[label] += 1
+    total = sum(counts)
+    class_weights = torch.tensor(
+        [total / (len(counts) * c) for c in counts], dtype=torch.float
+    ).to(device)
+    print(f"Class weights: { {cls: f'{class_weights[i]:.2f}' for i, cls in enumerate(train_dataset.classes)} }")
+
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
