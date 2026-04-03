@@ -29,7 +29,7 @@ public class ExportDatasetStack : Stack
                 TagOrDigest = props.ImageTag
             }),
             MemorySize = 2048,
-            Timeout = Duration.Minutes(5),
+            Timeout = Duration.Minutes(15),
             EphemeralStorageSize = Size.Mebibytes(2048),
             Environment = new Dictionary<string, string>
             {
