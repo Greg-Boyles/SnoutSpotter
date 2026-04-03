@@ -75,74 +75,88 @@ public class Function
             var trainCount = myDogTrainCount + notMyDogTrainCount;
             var valCount = labels.Count - trainCount;
 
-            // Create zip in /tmp
-            var baseDir = $"/tmp/dataset_{exportId}";
+            // Stream images directly into zip — no intermediate directory needed
             var zipPath = $"/tmp/{exportId}.zip";
-
-            foreach (var (splitDir, items) in splits)
-            {
-                var dir = Path.Combine(baseDir, splitDir);
-                Directory.CreateDirectory(dir);
-
-                await Parallel.ForEachAsync(
-                    items.Select((item, i) => (item, i)),
-                    new ParallelOptions { MaxDegreeOfParallelism = 20 },
-                    async ((LabelRecord item, int idx) entry, CancellationToken _) =>
-                    {
-                        try
-                        {
-                            var ext = Path.GetExtension(entry.item.keyframeKey).ToLowerInvariant();
-                            if (string.IsNullOrEmpty(ext)) ext = ".jpg";
-                            var localPath = Path.Combine(dir, $"img_{entry.idx:D4}{ext}");
-
-                            var response = await _s3.GetObjectAsync(_bucketName, entry.item.keyframeKey);
-                            await using var fs = File.Create(localPath);
-                            await response.ResponseStream.CopyToAsync(fs);
-                        }
-                        catch (Exception ex)
-                        {
-                            context.Logger.LogWarning($"Failed to download {entry.item.keyframeKey}: {ex.Message}");
-                        }
-                    });
-            }
-
-            // Write manifest.json inside the dataset
-            var breedCounts = labels
-                .Where(l => !string.IsNullOrEmpty(l.breed))
-                .GroupBy(l => l.breed)
-                .ToDictionary(g => g.Key, g => g.Count());
-
-            var manifest = new
-            {
-                export_id = exportId,
-                created_at = DateTime.UtcNow.ToString("O"),
-                total = labels.Count,
-                my_dog = myDog.Count,
-                not_my_dog = notMyDog.Count,
-                train_count = trainCount,
-                val_count = valCount,
-                breeds = breedCounts,
-            };
-            await File.WriteAllTextAsync(
-                Path.Combine(baseDir, "manifest.json"),
-                JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
-
-            // Write labels.csv with per-image metadata
-            var csvLines = new List<string> { "filename,split,confirmed_label,breed" };
-            foreach (var (splitDir, items) in splits)
-            {
-                for (var i = 0; i < items.Count; i++)
-                {
-                    var ext = Path.GetExtension(items[i].keyframeKey).ToLowerInvariant();
-                    if (string.IsNullOrEmpty(ext)) ext = ".jpg";
-                    csvLines.Add($"{splitDir}/img_{i:D4}{ext},{splitDir.Split('/')[0]},{items[i].confirmedLabel},{items[i].breed}");
-                }
-            }
-            await File.WriteAllLinesAsync(Path.Combine(baseDir, "labels.csv"), csvLines);
-
-            // Zip
             if (File.Exists(zipPath)) File.Delete(zipPath);
-            ZipFile.CreateFromDirectory(baseDir, zipPath);
+
+            await using (var zipStream = File.Create(zipPath))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false))
+            {
+                foreach (var (splitDir, items) in splits)
+                {
+                    // Parallel-download all images for this split into memory
+                    var downloaded = new (byte[] data, string ext)[items.Count];
+                    await Parallel.ForEachAsync(
+                        items.Select((item, i) => (item, i)),
+                        new ParallelOptions { MaxDegreeOfParallelism = 20 },
+                        async ((LabelRecord item, int i) entry, CancellationToken _) =>
+                        {
+                            try
+                            {
+                                var response = await _s3.GetObjectAsync(_bucketName, entry.item.keyframeKey);
+                                using var ms = new MemoryStream();
+                                await response.ResponseStream.CopyToAsync(ms);
+                                var ext = Path.GetExtension(entry.item.keyframeKey).ToLowerInvariant();
+                                downloaded[entry.i] = (ms.ToArray(), string.IsNullOrEmpty(ext) ? ".jpg" : ext);
+                            }
+                            catch (Exception ex)
+                            {
+                                context.Logger.LogWarning($"Failed to download {entry.item.keyframeKey}: {ex.Message}");
+                                downloaded[entry.i] = (Array.Empty<byte>(), ".jpg");
+                            }
+                        });
+
+                    // Write sequentially into the archive (ZipArchive is not thread-safe)
+                    for (var i = 0; i < downloaded.Length; i++)
+                    {
+                        var (data, ext) = downloaded[i];
+                        if (data.Length == 0) continue;
+                        var zipEntry = archive.CreateEntry($"{splitDir}/img_{i:D4}{ext}");
+                        await using var entryStream = zipEntry.Open();
+                        await entryStream.WriteAsync(data);
+                    }
+                }
+
+                // Write manifest.json as archive entry
+                var breedCounts = labels
+                    .Where(l => !string.IsNullOrEmpty(l.breed))
+                    .GroupBy(l => l.breed)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                var manifest = new
+                {
+                    export_id = exportId,
+                    created_at = DateTime.UtcNow.ToString("O"),
+                    total = labels.Count,
+                    my_dog = myDog.Count,
+                    not_my_dog = notMyDog.Count,
+                    train_count = trainCount,
+                    val_count = valCount,
+                    breeds = breedCounts,
+                };
+                var manifestEntry = archive.CreateEntry("manifest.json");
+                await using (var manifestStream = manifestEntry.Open())
+                {
+                    await JsonSerializer.SerializeAsync(manifestStream, manifest, new JsonSerializerOptions { WriteIndented = true });
+                }
+
+                // Write labels.csv as archive entry
+                var csvLines = new List<string> { "filename,split,confirmed_label,breed" };
+                foreach (var (splitDir, items) in splits)
+                {
+                    for (var i = 0; i < items.Count; i++)
+                    {
+                        var ext = Path.GetExtension(items[i].keyframeKey).ToLowerInvariant();
+                        if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+                        csvLines.Add($"{splitDir}/img_{i:D4}{ext},{splitDir.Split('/')[0]},{items[i].confirmedLabel},{items[i].breed}");
+                    }
+                }
+                var csvEntry = archive.CreateEntry("labels.csv");
+                await using var csvStream = csvEntry.Open();
+                await using var csvWriter = new StreamWriter(csvStream);
+                foreach (var line in csvLines)
+                    await csvWriter.WriteLineAsync(line);
+            }
 
             var zipSize = new FileInfo(zipPath).Length;
             var sizeMb = Math.Round(zipSize / (1024.0 * 1024.0), 1);
@@ -188,7 +202,6 @@ public class Function
             context.Logger.LogInformation($"Export {exportId} complete: {labels.Count} images, {sizeMb}MB");
 
             // Cleanup
-            Directory.Delete(baseDir, true);
             File.Delete(zipPath);
         }
         catch (Exception ex)
