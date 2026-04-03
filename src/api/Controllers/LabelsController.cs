@@ -1,5 +1,8 @@
+using Amazon.S3;
+using Amazon.S3.Model;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Services;
 
 namespace SnoutSpotter.Api.Controllers;
@@ -11,11 +14,28 @@ public class LabelsController : ControllerBase
 {
     private readonly ILabelService _labelService;
     private readonly IExportService _exportService;
+    private readonly IS3PresignService _presignService;
+    private readonly IAmazonS3 _s3;
+    private readonly string _bucketName;
 
-    public LabelsController(ILabelService labelService, IExportService exportService)
+    private static readonly Dictionary<string, string> KnownModels = new()
+    {
+        ["dog-detector"] = "models/dog-detector/best.onnx",
+        ["dog-classifier"] = "models/dog-classifier/best.onnx",
+    };
+
+    public LabelsController(
+        ILabelService labelService,
+        IExportService exportService,
+        IS3PresignService presignService,
+        IAmazonS3 s3,
+        IOptions<AppConfig> config)
     {
         _exportService = exportService;
         _labelService = labelService;
+        _presignService = presignService;
+        _s3 = s3;
+        _bucketName = config.Value.BucketName;
     }
 
     [HttpPost("auto-label")]
@@ -180,6 +200,52 @@ public class LabelsController : ControllerBase
     {
         await _exportService.DeleteExportAsync(exportId);
         return Ok(new { message = "Export deleted" });
+    }
+
+    [HttpGet("models")]
+    public async Task<ActionResult> ListModels()
+    {
+        var models = new List<object>();
+
+        foreach (var (modelType, s3Key) in KnownModels)
+        {
+            try
+            {
+                var metadata = await _s3.GetObjectMetadataAsync(_bucketName, s3Key);
+                models.Add(new
+                {
+                    modelType,
+                    s3Key,
+                    lastModified = metadata.LastModified.ToString("O"),
+                    sizeBytes = metadata.ContentLength,
+                    deployed = true
+                });
+            }
+            catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                models.Add(new
+                {
+                    modelType,
+                    s3Key,
+                    lastModified = (string?)null,
+                    sizeBytes = 0L,
+                    deployed = false
+                });
+            }
+        }
+
+        return Ok(new { models });
+    }
+
+    [HttpPost("models/upload-url")]
+    public ActionResult GetModelUploadUrl([FromQuery] string modelType)
+    {
+        if (!KnownModels.TryGetValue(modelType, out var s3Key))
+            return BadRequest(new { error = $"Unknown model type '{modelType}'. Valid types: {string.Join(", ", KnownModels.Keys)}" });
+
+        var uploadUrl = _presignService.GeneratePresignedPutUrl(s3Key, "application/octet-stream");
+
+        return Ok(new { uploadUrl, s3Key, expiresIn = 3600 });
     }
 }
 

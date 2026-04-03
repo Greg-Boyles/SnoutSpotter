@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban } from "lucide-react";
+import { ArrowLeft, Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban, Cpu } from "lucide-react";
 import { api } from "../api";
 
 interface ExportItem {
@@ -91,7 +91,15 @@ export default function TrainingExports() {
         <ArrowLeft className="w-4 h-4" /> Labels
       </Link>
 
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Training Exports</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Training Exports</h1>
+        <Link
+          to="/models"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg"
+        >
+          <Cpu className="w-3.5 h-3.5" /> Deployed Models
+        </Link>
+      </div>
 
       {/* Label Summary */}
       {labelStats && (
