@@ -33,77 +33,54 @@ public class Function
         _classifierModelKey = Environment.GetEnvironmentVariable("CLASSIFIER_MODEL_KEY")!;
     }
 
-    public async Task FunctionHandler(EventBridgeEvent<S3EventDetail> eventBridgeEvent, ILambdaContext context)
+    public async Task FunctionHandler(JsonElement input, ILambdaContext context)
     {
-        var keyframeKey = eventBridgeEvent.Detail.Object.Key;
+        // Normalise input: EventBridge event or direct invocation
+        var (clipId, isEventBridge) = ParseInput(input);
+        context.Logger.LogInformation($"Running inference for clip {clipId} (source={( isEventBridge ? "eventbridge" : "direct" )})");
 
-        // Only process .jpg keyframes
-        if (!keyframeKey.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase))
+        // Get clip record from DynamoDB (with retry for EventBridge path)
+        var clipItem = await GetClipRecord(clipId, isEventBridge, context);
+        if (clipItem == null)
         {
-            context.Logger.LogInformation($"Skipping non-jpg file: {keyframeKey}");
+            context.Logger.LogWarning($"Clip {clipId} not found — skipping");
             return;
         }
 
-        var clipId = ExtractClipId(keyframeKey);
-        context.Logger.LogInformation($"Running inference on keyframe {keyframeKey} (clip {clipId})");
+        // Get keyframe keys from the clip record
+        var keyframeKeys = clipItem.TryGetValue("keyframe_keys", out var kk) ? kk.SS : [];
+        if (keyframeKeys.Count == 0)
+        {
+            context.Logger.LogWarning($"Clip {clipId} has no keyframe_keys — skipping");
+            return;
+        }
 
         await EnsureModelLoaded(context);
 
-        DetectionResult? detection = null;
-
-        try
+        // Process all keyframes
+        var detections = new List<DetectionResult>();
+        foreach (var keyframeKey in keyframeKeys.OrderBy(k => k))
         {
-            var response = await _s3Client.GetObjectAsync(_bucketName, keyframeKey);
-            using var image = await Image.LoadAsync<Rgb24>(response.ResponseStream);
-            detection = RunClassifier(image, keyframeKey);
-        }
-        catch (Exception ex)
-        {
-            context.Logger.LogWarning($"Failed to process {keyframeKey}: {ex.Message}");
-            return;
-        }
-
-        // Wait for IngestClip to write the clip record before updating it.
-        // Lambda can fire before IngestClip finishes writing DynamoDB, so retry if not found.
-        Dictionary<string, AttributeValue>? existingItem = null;
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            var getResponse = await _dynamoClient.GetItemAsync(_tableName,
-                new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
-
-            if (getResponse.IsItemSet)
+            try
             {
-                existingItem = getResponse.Item;
-                break;
+                var response = await _s3Client.GetObjectAsync(_bucketName, keyframeKey);
+                using var image = await Image.LoadAsync<Rgb24>(response.ResponseStream);
+                var detection = RunClassifier(image, keyframeKey);
+                if (detection != null)
+                    detections.Add(detection);
             }
-
-            if (attempt < 2)
+            catch (Exception ex)
             {
-                context.Logger.LogInformation($"Clip {clipId} not in DynamoDB yet (attempt {attempt + 1}), retrying in 2s...");
-                await Task.Delay(2000);
+                context.Logger.LogWarning($"Failed to process {keyframeKey}: {ex.Message}");
             }
         }
 
-        if (existingItem == null)
-        {
-            context.Logger.LogWarning($"Clip {clipId} not found after 3 attempts — skipping update");
-            return;
-        }
+        // Compute detection_type from all results
+        var detectionType = "none";
+        foreach (var d in detections)
+            detectionType = UpgradeDetectionType(detectionType, d.Label);
 
-        // Merge this keyframe's result with any already stored
-        var existingDetections = new List<DetectionResult>();
-        if (existingItem.TryGetValue("detections", out var existing) && existing.S != null)
-            existingDetections = JsonSerializer.Deserialize<List<DetectionResult>>(existing.S) ?? [];
-
-        if (detection != null)
-            existingDetections.Add(detection);
-
-        // Only upgrade detection_type — my_dog > other_dog > none > pending
-        var keyframeType = detection?.Label ?? "none";
-        var currentStoredType = existingItem.TryGetValue("detection_type", out var ct) ? ct.S ?? "pending" : "pending";
-        var overallDetectionType = UpgradeDetectionType(currentStoredType, keyframeType);
-
-        // ConditionExpression ensures we never create orphan records missing pk/timestamp/date
+        // Write complete results in a single update (no read-merge-write race)
         await _dynamoClient.UpdateItemAsync(new UpdateItemRequest
         {
             TableName = _tableName,
@@ -112,15 +89,59 @@ public class Function
             ConditionExpression = "attribute_exists(clip_id)",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
-                [":dt"] = new() { S = overallDetectionType },
-                [":dc"] = new() { N = existingDetections.Count.ToString() },
-                [":dets"] = new() { S = JsonSerializer.Serialize(existingDetections) },
+                [":dt"] = new() { S = detectionType },
+                [":dc"] = new() { N = detections.Count.ToString() },
+                [":dets"] = new() { S = JsonSerializer.Serialize(detections) },
                 [":ia"] = new() { S = DateTime.UtcNow.ToString("O") }
             }
         });
 
         context.Logger.LogInformation(
-            $"Keyframe {keyframeKey}: label={detection?.Label ?? "none"} confidence={detection?.Confidence:F2}, clip type={overallDetectionType}");
+            $"Clip {clipId}: {detections.Count} detections across {keyframeKeys.Count} keyframes, type={detectionType}");
+    }
+
+    private static (string clipId, bool isEventBridge) ParseInput(JsonElement input)
+    {
+        // EventBridge event has detail.object.key
+        if (input.TryGetProperty("detail", out var detail) &&
+            detail.TryGetProperty("object", out var obj) &&
+            obj.TryGetProperty("key", out var key))
+        {
+            var keyframeKey = key.GetString()!;
+            return (ExtractClipId(keyframeKey), true);
+        }
+
+        // Direct invocation has ClipId (case-insensitive)
+        if (input.TryGetProperty("ClipId", out var clipIdProp) ||
+            input.TryGetProperty("clipId", out clipIdProp))
+        {
+            return (clipIdProp.GetString()!, false);
+        }
+
+        throw new ArgumentException("Unrecognised input: expected EventBridge event or { ClipId: \"...\" }");
+    }
+
+    private async Task<Dictionary<string, AttributeValue>?> GetClipRecord(
+        string clipId, bool withRetry, ILambdaContext context)
+    {
+        var maxAttempts = withRetry ? 3 : 1;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var getResponse = await _dynamoClient.GetItemAsync(_tableName,
+                new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
+
+            if (getResponse.IsItemSet)
+                return getResponse.Item;
+
+            if (attempt < maxAttempts - 1)
+            {
+                context.Logger.LogInformation($"Clip {clipId} not in DynamoDB yet (attempt {attempt + 1}), retrying in 2s...");
+                await Task.Delay(2000);
+            }
+        }
+
+        return null;
     }
 
     private static string ExtractClipId(string keyframeKey)
