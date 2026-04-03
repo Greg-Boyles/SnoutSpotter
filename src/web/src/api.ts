@@ -165,6 +165,13 @@ export const api = {
   deleteExport: (exportId: string) =>
     deleteJson<{ message: string }>(`/ml/exports/${exportId}`),
 
+  // Models
+  listModels: () =>
+    fetchJson<{ models: { modelType: string; s3Key: string; lastModified: string | null; sizeBytes: number; deployed: boolean }[] }>("/ml/models"),
+
+  getModelUploadUrl: (modelType: string) =>
+    postJson<{ uploadUrl: string; s3Key: string; expiresIn: number }>(`/ml/models/upload-url?modelType=${encodeURIComponent(modelType)}`),
+
   // Streaming
   startStream: (thingName: string) =>
     postJson<StreamStartResult>(`/stream/${thingName}/start`),

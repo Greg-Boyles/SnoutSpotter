@@ -58,7 +58,7 @@ public class CoreStack : Stack
             {
                 new CorsRule
                 {
-                    AllowedMethods = new[] { HttpMethods.GET },
+                    AllowedMethods = new[] { HttpMethods.GET, HttpMethods.PUT },
                     AllowedOrigins = new[] { "*" },
                     AllowedHeaders = new[] { "*" },
                     MaxAge = 3600

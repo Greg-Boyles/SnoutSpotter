@@ -29,6 +29,20 @@ public class S3PresignService : IS3PresignService
         return _s3Client.GetPreSignedURL(request);
     }
 
+    public string GeneratePresignedPutUrl(string s3Key, string contentType, int expirySeconds = DefaultExpirySeconds)
+    {
+        var request = new GetPreSignedUrlRequest
+        {
+            BucketName = _bucketName,
+            Key = s3Key,
+            Expires = DateTime.UtcNow.AddSeconds(expirySeconds),
+            Verb = HttpVerb.PUT,
+            ContentType = contentType
+        };
+
+        return _s3Client.GetPreSignedURL(request);
+    }
+
     public List<string> GeneratePresignedUrls(IEnumerable<string> s3Keys, int expirySeconds = DefaultExpirySeconds)
     {
         return s3Keys.Select(key => GeneratePresignedUrl(key, expirySeconds)).ToList();

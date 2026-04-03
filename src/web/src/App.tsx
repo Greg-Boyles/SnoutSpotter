@@ -15,6 +15,7 @@ import DeviceDetail from "./pages/DeviceDetail";
 import DeviceShadow from "./pages/DeviceShadow";
 import Labels from "./pages/Labels";
 import TrainingExports from "./pages/TrainingExports";
+import Models from "./pages/Models";
 import { setAuthGetter } from "./api";
 
 const navItems = [
@@ -106,6 +107,7 @@ export default function App() {
                   <Route path="/live" element={<LiveView />} />
                   <Route path="/labels" element={<Labels />} />
                   <Route path="/exports" element={<TrainingExports />} />
+                  <Route path="/models" element={<Models />} />
                   <Route path="/health" element={<SystemHealthPage />} />
                   <Route path="/device/:thingName" element={<DeviceDetail />} />
                   <Route path="/device/:thingName/shadow" element={<DeviceShadow />} />
