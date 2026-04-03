@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda.Core;
@@ -13,30 +14,14 @@ using SixLabors.ImageSharp.Processing;
 
 namespace SnoutSpotter.Lambda.RunInference;
 
-public class InferenceRequest
-{
-    public string ClipId { get; set; } = string.Empty;
-    public List<string> KeyframeKeys { get; set; } = new();
-}
-
-public class DetectionResult
-{
-    public string KeyframeKey { get; set; } = string.Empty;
-    public float Confidence { get; set; }
-    public float[] BoundingBox { get; set; } = Array.Empty<float>(); // [x1, y1, x2, y2]
-    public string Label { get; set; } = string.Empty; // "dog", "my_dog", "other_dog"
-}
-
 public class Function
 {
     private readonly IAmazonS3 _s3Client;
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly string _bucketName;
     private readonly string _tableName;
-    private readonly string _detectorModelKey;
     private readonly string _classifierModelKey;
 
-    private InferenceSession? _detectorSession;
     private InferenceSession? _classifierSession;
 
     public Function()
@@ -45,90 +30,121 @@ public class Function
         _dynamoClient = new AmazonDynamoDBClient();
         _bucketName = Environment.GetEnvironmentVariable("BUCKET_NAME")!;
         _tableName = Environment.GetEnvironmentVariable("TABLE_NAME")!;
-        _detectorModelKey = Environment.GetEnvironmentVariable("DETECTOR_MODEL_KEY")!;
         _classifierModelKey = Environment.GetEnvironmentVariable("CLASSIFIER_MODEL_KEY")!;
     }
 
-    public async Task FunctionHandler(InferenceRequest request, ILambdaContext context)
+    public async Task FunctionHandler(EventBridgeEvent<S3EventDetail> eventBridgeEvent, ILambdaContext context)
     {
-        context.Logger.LogInformation($"Running inference on clip {request.ClipId} with {request.KeyframeKeys.Count} keyframes");
+        var keyframeKey = eventBridgeEvent.Detail.Object.Key;
 
-        // Load models (cached across warm invocations)
-        await EnsureModelsLoaded(context);
-
-        var allDetections = new List<DetectionResult>();
-
-        foreach (var keyframeKey in request.KeyframeKeys)
+        // Only process .jpg keyframes
+        if (!keyframeKey.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase))
         {
-            try
+            context.Logger.LogInformation($"Skipping non-jpg file: {keyframeKey}");
+            return;
+        }
+
+        var clipId = ExtractClipId(keyframeKey);
+        context.Logger.LogInformation($"Running inference on keyframe {keyframeKey} (clip {clipId})");
+
+        await EnsureModelLoaded(context);
+
+        DetectionResult? detection = null;
+
+        try
+        {
+            var response = await _s3Client.GetObjectAsync(_bucketName, keyframeKey);
+            using var image = await Image.LoadAsync<Rgb24>(response.ResponseStream);
+            detection = RunClassifier(image, keyframeKey);
+        }
+        catch (Exception ex)
+        {
+            context.Logger.LogWarning($"Failed to process {keyframeKey}: {ex.Message}");
+            return;
+        }
+
+        // Wait for IngestClip to write the clip record before updating it.
+        // Lambda can fire before IngestClip finishes writing DynamoDB, so retry if not found.
+        Dictionary<string, AttributeValue>? existingItem = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var getResponse = await _dynamoClient.GetItemAsync(_tableName,
+                new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
+
+            if (getResponse.IsItemSet)
             {
-                // Download keyframe
-                var response = await _s3Client.GetObjectAsync(_bucketName, keyframeKey);
-                using var image = await Image.LoadAsync<Rgb24>(response.ResponseStream);
-
-                // Run dog detector
-                var detections = RunDetector(image, keyframeKey);
-
-                foreach (var detection in detections)
-                {
-                    // For each detected dog, run classifier
-                    var cropRegion = new Rectangle(
-                        (int)detection.BoundingBox[0],
-                        (int)detection.BoundingBox[1],
-                        (int)(detection.BoundingBox[2] - detection.BoundingBox[0]),
-                        (int)(detection.BoundingBox[3] - detection.BoundingBox[1]));
-
-                    using var crop = image.Clone(ctx => ctx.Crop(cropRegion));
-                    var classification = RunClassifier(crop);
-                    detection.Label = classification;
-
-                    allDetections.Add(detection);
-                }
+                existingItem = getResponse.Item;
+                break;
             }
-            catch (Exception ex)
+
+            if (attempt < 2)
             {
-                context.Logger.LogWarning($"Failed to process {keyframeKey}: {ex.Message}");
+                context.Logger.LogInformation($"Clip {clipId} not in DynamoDB yet (attempt {attempt + 1}), retrying in 2s...");
+                await Task.Delay(2000);
             }
         }
 
-        // Determine overall detection type
-        var detectionType = "none";
-        if (allDetections.Any(d => d.Label == "my_dog"))
-            detectionType = "my_dog";
-        else if (allDetections.Any(d => d.Label == "dog" || d.Label == "other_dog"))
-            detectionType = "other_dog";
+        if (existingItem == null)
+        {
+            context.Logger.LogWarning($"Clip {clipId} not found after 3 attempts — skipping update");
+            return;
+        }
 
-        // Update DynamoDB with results
+        // Merge this keyframe's result with any already stored
+        var existingDetections = new List<DetectionResult>();
+        if (existingItem.TryGetValue("detections", out var existing) && existing.S != null)
+            existingDetections = JsonSerializer.Deserialize<List<DetectionResult>>(existing.S) ?? [];
+
+        if (detection != null)
+            existingDetections.Add(detection);
+
+        // Only upgrade detection_type — my_dog > other_dog > none > pending
+        var keyframeType = detection?.Label ?? "none";
+        var currentStoredType = existingItem.TryGetValue("detection_type", out var ct) ? ct.S ?? "pending" : "pending";
+        var overallDetectionType = UpgradeDetectionType(currentStoredType, keyframeType);
+
+        // ConditionExpression ensures we never create orphan records missing pk/timestamp/date
         await _dynamoClient.UpdateItemAsync(new UpdateItemRequest
         {
             TableName = _tableName,
-            Key = new Dictionary<string, AttributeValue>
-            {
-                ["clip_id"] = new() { S = request.ClipId }
-            },
+            Key = new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } },
             UpdateExpression = "SET detection_type = :dt, detection_count = :dc, detections = :dets, inference_at = :ia",
+            ConditionExpression = "attribute_exists(clip_id)",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
-                [":dt"] = new() { S = detectionType },
-                [":dc"] = new() { N = allDetections.Count.ToString() },
-                [":dets"] = new() { S = System.Text.Json.JsonSerializer.Serialize(allDetections) },
+                [":dt"] = new() { S = overallDetectionType },
+                [":dc"] = new() { N = existingDetections.Count.ToString() },
+                [":dets"] = new() { S = JsonSerializer.Serialize(existingDetections) },
                 [":ia"] = new() { S = DateTime.UtcNow.ToString("O") }
             }
         });
 
         context.Logger.LogInformation(
-            $"Clip {request.ClipId}: {allDetections.Count} detections, type={detectionType}");
+            $"Keyframe {keyframeKey}: label={detection?.Label ?? "none"} confidence={detection?.Confidence:F2}, clip type={overallDetectionType}");
     }
 
-    private async Task EnsureModelsLoaded(ILambdaContext context)
+    private static string ExtractClipId(string keyframeKey)
     {
-        if (_detectorSession == null)
-        {
-            context.Logger.LogInformation("Loading detector model...");
-            var detectorPath = await DownloadModel(_detectorModelKey);
-            _detectorSession = new InferenceSession(detectorPath);
-        }
+        // keyframes/{device}/YYYY/MM/DD/clipId_0001.jpg or keyframes/YYYY/MM/DD/clipId_0001.jpg
+        var filename = Path.GetFileNameWithoutExtension(keyframeKey);
+        var lastUnderscore = filename.LastIndexOf('_');
+        return lastUnderscore > 0 ? filename[..lastUnderscore] : filename;
+    }
 
+    private static string UpgradeDetectionType(string current, string candidate)
+    {
+        // Priority: my_dog(3) > other_dog(2) > none(1) > pending(0)
+        var priority = new Dictionary<string, int>
+        {
+            ["pending"] = 0, ["none"] = 1, ["other_dog"] = 2, ["my_dog"] = 3
+        };
+        return priority.GetValueOrDefault(candidate, 0) > priority.GetValueOrDefault(current, 0)
+            ? candidate
+            : current;
+    }
+
+    private async Task EnsureModelLoaded(ILambdaContext context)
+    {
         if (_classifierSession == null)
         {
             context.Logger.LogInformation("Loading classifier model...");
@@ -148,82 +164,13 @@ public class Function
         return localPath;
     }
 
-    private List<DetectionResult> RunDetector(Image<Rgb24> image, string keyframeKey)
+    private DetectionResult? RunClassifier(Image<Rgb24> image, string keyframeKey)
     {
-        if (_detectorSession == null) return new List<DetectionResult>();
-
-        // Resize to 640x640 for YOLOv8
-        const int targetSize = 640;
-        using var resized = image.Clone(ctx => ctx.Resize(targetSize, targetSize));
-
-        // Convert to tensor [1, 3, 640, 640] normalized to [0, 1]
-        var tensor = new DenseTensor<float>(new[] { 1, 3, targetSize, targetSize });
-        resized.ProcessPixelRows(accessor =>
-        {
-            for (var y = 0; y < targetSize; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < targetSize; x++)
-                {
-                    var pixel = row[x];
-                    tensor[0, 0, y, x] = pixel.R / 255f;
-                    tensor[0, 1, y, x] = pixel.G / 255f;
-                    tensor[0, 2, y, x] = pixel.B / 255f;
-                }
-            }
-        });
-
-        var inputName = _detectorSession.InputNames[0];
-        var inputs = new List<NamedOnnxValue>
-        {
-            NamedOnnxValue.CreateFromTensor(inputName, tensor)
-        };
-
-        using var results = _detectorSession.Run(inputs);
-        var output = results.First().AsTensor<float>();
-
-        // Parse YOLOv8 output and filter for dog class (class 16 in COCO)
-        var detections = new List<DetectionResult>();
-        var scaleX = (float)image.Width / targetSize;
-        var scaleY = (float)image.Height / targetSize;
-
-        // YOLOv8 output shape: [1, 84, 8400] (84 = 4 bbox + 80 classes)
-        var numDetections = output.Dimensions[2];
-        for (var i = 0; i < numDetections; i++)
-        {
-            var dogConfidence = output[0, 4 + 16, i]; // Class 16 = dog in COCO
-            if (dogConfidence < 0.5f) continue;
-
-            var cx = output[0, 0, i] * scaleX;
-            var cy = output[0, 1, i] * scaleY;
-            var w = output[0, 2, i] * scaleX;
-            var h = output[0, 3, i] * scaleY;
-
-            detections.Add(new DetectionResult
-            {
-                KeyframeKey = keyframeKey,
-                Confidence = dogConfidence,
-                BoundingBox = new[]
-                {
-                    Math.Max(0, cx - w / 2),
-                    Math.Max(0, cy - h / 2),
-                    Math.Min(image.Width, cx + w / 2),
-                    Math.Min(image.Height, cy + h / 2)
-                },
-                Label = "dog"
-            });
-        }
-
-        return detections;
-    }
-
-    private string RunClassifier(Image<Rgb24> crop)
-    {
-        if (_classifierSession == null) return "dog";
+        if (_classifierSession == null) return null;
 
         // Resize to 224x224 for MobileNetV3
         const int targetSize = 224;
-        using var resized = crop.Clone(ctx => ctx.Resize(targetSize, targetSize));
+        using var resized = image.Clone(ctx => ctx.Resize(targetSize, targetSize));
 
         // ImageNet normalization
         float[] mean = { 0.485f, 0.456f, 0.406f };
@@ -255,6 +202,12 @@ public class Function
         var output = results.First().AsEnumerable<float>().ToArray();
 
         // Binary classification: [not_my_dog, my_dog]
-        return output.Length >= 2 && output[1] > output[0] ? "my_dog" : "other_dog";
+        var isMyDog = output.Length >= 2 && output[1] > output[0];
+        return new DetectionResult
+        {
+            KeyframeKey = keyframeKey,
+            Label = isMyDog ? "my_dog" : "other_dog",
+            Confidence = isMyDog ? output[1] : output[0]
+        };
     }
 }

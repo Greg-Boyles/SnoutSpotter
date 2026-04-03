@@ -1,6 +1,8 @@
 using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
+using Amazon.CDK.AWS.Events;
+using Amazon.CDK.AWS.Events.Targets;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.S3;
 using Constructs;
@@ -33,7 +35,6 @@ public class InferenceStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
-                ["DETECTOR_MODEL_KEY"] = "models/dog-detector/best.onnx",
                 ["CLASSIFIER_MODEL_KEY"] = "models/dog-classifier/best.onnx"
             }
         });
@@ -41,5 +42,37 @@ public class InferenceStack : Stack
         // Grant permissions
         props.DataBucket.GrantRead(inferenceFunction);
         props.ClipsTable.GrantReadWriteData(inferenceFunction);
+
+        // EventBridge rule: trigger Lambda when keyframe JPGs are uploaded
+        var rule = new Rule(this, "InferenceKeyframeRule", new RuleProps
+        {
+            RuleName = "snout-spotter-inference-trigger",
+            Description = "Trigger RunInference Lambda when keyframes are uploaded to S3",
+            EventPattern = new EventPattern
+            {
+                Source = new[] { "aws.s3" },
+                DetailType = new[] { "Object Created" },
+                Detail = new Dictionary<string, object>
+                {
+                    ["bucket"] = new Dictionary<string, object>
+                    {
+                        ["name"] = new[] { props.DataBucket.BucketName }
+                    },
+                    ["object"] = new Dictionary<string, object>
+                    {
+                        ["key"] = new[] { new Dictionary<string, string> { ["prefix"] = "keyframes/" } }
+                    }
+                }
+            }
+        });
+
+        rule.AddTarget(new LambdaFunction(inferenceFunction));
+
+        // Output
+        _ = new CfnOutput(this, "InferenceFunctionArn", new CfnOutputProps
+        {
+            Value = inferenceFunction.FunctionArn,
+            Description = "ARN of the RunInference Lambda function"
+        });
     }
 }
