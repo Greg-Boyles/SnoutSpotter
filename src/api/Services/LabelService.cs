@@ -5,6 +5,7 @@ using Amazon.Lambda;
 using Amazon.Lambda.Model;
 using Amazon.S3;
 using Microsoft.Extensions.Options;
+using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Services;
 

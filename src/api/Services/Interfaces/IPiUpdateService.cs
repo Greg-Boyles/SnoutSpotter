@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace SnoutSpotter.Api.Services;
+namespace SnoutSpotter.Api.Services.Interfaces;
 
 public interface IPiUpdateService
 {

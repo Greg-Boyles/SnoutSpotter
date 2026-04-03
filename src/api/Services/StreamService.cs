@@ -3,6 +3,7 @@ using Amazon.IotData;
 using Amazon.IotData.Model;
 using Amazon.KinesisVideo;
 using Amazon.KinesisVideo.Model;
+using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Services;
 
