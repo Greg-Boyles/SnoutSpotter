@@ -167,10 +167,13 @@ export const api = {
 
   // Models
   listModels: () =>
-    fetchJson<{ models: { modelType: string; s3Key: string; lastModified: string | null; sizeBytes: number; deployed: boolean }[] }>("/ml/models"),
+    fetchJson<{ activeVersion: string | null; versions: { version: string; s3Key: string; sizeBytes: number; lastModified: string; active: boolean }[] }>("/ml/models"),
 
-  getModelUploadUrl: (modelType: string) =>
-    postJson<{ uploadUrl: string; s3Key: string; expiresIn: number }>(`/ml/models/upload-url?modelType=${encodeURIComponent(modelType)}`),
+  getModelUploadUrl: (version: string) =>
+    postJson<{ uploadUrl: string; s3Key: string; version: string; expiresIn: number }>(`/ml/models/upload-url?version=${encodeURIComponent(version)}`),
+
+  activateModel: (version: string) =>
+    postJson<{ message: string; version: string }>(`/ml/models/activate?version=${encodeURIComponent(version)}`),
 
   // Streaming
   startStream: (thingName: string) =>
