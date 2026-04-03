@@ -1,4 +1,4 @@
-namespace SnoutSpotter.Api.Services;
+namespace SnoutSpotter.Api.Services.Interfaces;
 
 public interface IS3PresignService
 {

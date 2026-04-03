@@ -2,6 +2,7 @@ using System.Text.Json;
 using Amazon.CloudWatchLogs;
 using Amazon.CloudWatchLogs.Model;
 using Microsoft.Extensions.Options;
+using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Services;
 

@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using SnoutSpotter.Api.Services;
+using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Controllers;
 

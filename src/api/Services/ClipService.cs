@@ -1,6 +1,7 @@
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using SnoutSpotter.Api.Models;
+using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Services;
 

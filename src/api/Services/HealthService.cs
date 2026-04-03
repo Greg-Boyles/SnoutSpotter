@@ -1,5 +1,6 @@
 using Amazon.CloudWatch;
 using Amazon.CloudWatch.Model;
+using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Services;
 

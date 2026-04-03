@@ -6,9 +6,9 @@ using Amazon.IotData;
 using Amazon.KinesisVideo;
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.Extensions.Options;
 using SnoutSpotter.Api;
 using SnoutSpotter.Api.Services;
+using SnoutSpotter.Api.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 

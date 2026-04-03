@@ -1,6 +1,6 @@
 using SnoutSpotter.Api.Models;
 
-namespace SnoutSpotter.Api.Services;
+namespace SnoutSpotter.Api.Services.Interfaces;
 
 public interface IClipService
 {
