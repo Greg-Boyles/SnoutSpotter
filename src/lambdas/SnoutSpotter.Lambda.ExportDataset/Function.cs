@@ -84,31 +84,26 @@ public class Function
                 var dir = Path.Combine(baseDir, splitDir);
                 Directory.CreateDirectory(dir);
 
-                var idx = 0;
-                foreach (var item in items)
-                {
-                    try
+                await Parallel.ForEachAsync(
+                    items.Select((item, i) => (item, i)),
+                    new ParallelOptions { MaxDegreeOfParallelism = 20 },
+                    async ((LabelRecord item, int idx) entry, CancellationToken _) =>
                     {
-                        var ext = Path.GetExtension(item.keyframeKey).ToLowerInvariant();
-                        if (string.IsNullOrEmpty(ext)) ext = ".jpg";
-                        var localPath = Path.Combine(dir, $"img_{idx:D4}{ext}");
+                        try
+                        {
+                            var ext = Path.GetExtension(entry.item.keyframeKey).ToLowerInvariant();
+                            if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+                            var localPath = Path.Combine(dir, $"img_{entry.idx:D4}{ext}");
 
-                        var response = await _s3.GetObjectAsync(_bucketName, item.keyframeKey);
-                        await using var fs = File.Create(localPath);
-                        await response.ResponseStream.CopyToAsync(fs);
-                        idx++;
-                    }
-                    catch (Exception ex)
-                    {
-                        context.Logger.LogWarning($"Failed to download {item.keyframeKey}: {ex.Message}");
-                    }
-
-                    if (context.RemainingTime.TotalSeconds < 30)
-                    {
-                        context.Logger.LogWarning("Running low on time, stopping image download");
-                        break;
-                    }
-                }
+                            var response = await _s3.GetObjectAsync(_bucketName, entry.item.keyframeKey);
+                            await using var fs = File.Create(localPath);
+                            await response.ResponseStream.CopyToAsync(fs);
+                        }
+                        catch (Exception ex)
+                        {
+                            context.Logger.LogWarning($"Failed to download {entry.item.keyframeKey}: {ex.Message}");
+                        }
+                    });
             }
 
             // Write manifest.json inside the dataset
