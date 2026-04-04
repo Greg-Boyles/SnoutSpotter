@@ -1,9 +1,23 @@
-﻿namespace SnoutSpotter.Lambda.RunInference;
+namespace SnoutSpotter.Lambda.RunInference;
 
-public class DetectionResult
+public class KeyframeResult
 {
     public string KeyframeKey { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public List<DetectionBox> Detections { get; set; } = new();
+}
+
+public class DetectionBox
+{
+    public string Label { get; set; } = string.Empty;
     public float Confidence { get; set; }
-    public float[] BoundingBox { get; set; } = Array.Empty<float>(); // [x1, y1, x2, y2]
-    public string Label { get; set; } = string.Empty; // "dog", "my_dog", "other_dog"
+    public BoundingBoxData BoundingBox { get; set; } = new();
+}
+
+public class BoundingBoxData
+{
+    public float X { get; set; }
+    public float Y { get; set; }
+    public float Width { get; set; }
+    public float Height { get; set; }
 }
