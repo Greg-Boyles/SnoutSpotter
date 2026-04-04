@@ -13,6 +13,19 @@ export interface Clip {
   thumbnailUrl?: string;
   videoUrl?: string;
   keyframeUrls?: string[];
+  keyframeDetections?: KeyframeDetection[];
+}
+
+export interface KeyframeDetection {
+  keyframeKey: string;
+  label: string;
+  detections: DetectionBox[];
+}
+
+export interface DetectionBox {
+  label: string;
+  confidence: number;
+  boundingBox: { x: number; y: number; width: number; height: number };
 }
 
 export interface Detection {

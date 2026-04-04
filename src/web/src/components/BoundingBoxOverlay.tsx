@@ -8,8 +8,8 @@ interface Props {
 
 export default function BoundingBoxOverlay({
   detection,
-  imageWidth = 640,
-  imageHeight = 480,
+  imageWidth = 1920,
+  imageHeight = 1080,
 }: Props) {
   const { boundingBox: bb, isTargetDog } = detection;
   const color = isTargetDog ? "#d97706" : "#6b7280";
@@ -17,7 +17,7 @@ export default function BoundingBoxOverlay({
   return (
     <svg
       viewBox={`0 0 ${imageWidth} ${imageHeight}`}
-      className="w-full bg-gray-100 rounded-lg"
+      className="absolute inset-0 w-full h-full"
       preserveAspectRatio="xMidYMid meet"
     >
       <rect
