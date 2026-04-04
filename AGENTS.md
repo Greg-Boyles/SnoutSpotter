@@ -63,7 +63,7 @@ SnoutSpotter/
 │   │   │   ├── Function.cs                    # Extracts keyframes via FFmpeg, writes DynamoDB
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload
-│   │   │   ├── Function.cs                    # ONNX inference (YOLOv8 + MobileNetV3)
+│   │   │   ├── Function.cs                    # Custom YOLOv8 inference (my_dog/other_dog detection + bounding boxes)
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.AutoLabel/     # YOLOv8 dog detection on keyframes
 │   │   │   ├── Function.cs                    # ONNX inference, writes labels to DynamoDB
@@ -160,9 +160,9 @@ SnoutSpotter/
               │ S3 event notification
               ▼
          [Lambda: RunInference]
-              │ YOLOv8 dog detection → MobileNetV3 classification
+              │ Custom YOLOv8 detection (my_dog / other_dog / no_dog + bounding boxes)
               ▼
-         [DynamoDB: detection results updated on clip record]
+         [DynamoDB: keyframe_detections list updated on clip record]
 
 [React Dashboard] ──Okta JWT──► [API Lambda + API Gateway]
                                       │
@@ -329,10 +329,28 @@ All main API endpoints require a valid Okta JWT Bearer token.
 | `date` | String | `YYYY/MM/DD` |
 | `keyframe_count` | Number | Number of extracted keyframes |
 | `keyframe_keys` | String Set | S3 keys for keyframe images |
-| `detection_type` | String | `pending`, `my_dog`, `other_dog`, `no_dog` |
+| `detection_type` | String | `pending`, `my_dog`, `other_dog`, `no_dog`, `none` |
 | `detection_count` | Number | Number of detections found |
-| `detections` | String | JSON string of detection details |
+| `keyframe_detections` | List | List of Maps: per-keyframe detection results (see below) |
 | `created_at` | String | ISO 8601 timestamp |
+| `inference_at` | String | ISO 8601 timestamp of last inference run |
+
+**`keyframe_detections` structure** (List of Maps):
+```json
+[
+  {
+    "keyframeKey": "keyframes/2026/03/27/clip_0001.jpg",
+    "label": "my_dog",
+    "detections": [
+      {
+        "label": "my_dog",
+        "confidence": 0.92,
+        "boundingBox": { "x": 100, "y": 50, "width": 200, "height": 300 }
+      }
+    ]
+  }
+]
+```
 
 **GSIs:**
 - `all-by-time` — PK: fixed value, SK: `timestamp` (server-side ordering across all clips)
@@ -550,10 +568,14 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 
 14. **DynamoDB `FilterExpression` with `Limit`** — `Limit` applies *before* `FilterExpression`. A query with `Limit=30` and a filter may return 0 results even when matching items exist. Use the `by-confirmed-label` GSI for direct queries instead of filtering on the `by-review` GSI.
 
-15. **Training label types** — Three confirmed labels: `my_dog`, `other_dog`, `no_dog`. The `auto_label` field uses `dog`/`no_dog` (binary). `my_dog` and `other_dog` both map to `auto_label=dog`. The classifier trains on `my_dog` vs `not_my_dog` (other_dog + no_dog combined).
+15. **Training label types** — Three confirmed labels: `my_dog`, `other_dog`, `no_dog`. The `auto_label` field uses `dog`/`no_dog` (binary). `my_dog` and `other_dog` both map to `auto_label=dog`. The detector trains on 2 YOLO classes: `my_dog` (class 0) and `other_dog` (class 1). No_dog is inferred by the absence of detections. The training export produces YOLO detection format with bounding box labels.
 
 16. **Breed data on labels** — Breed is required when confirming dog labels (my_dog/other_dog). My dog defaults to "Labrador Retriever". 120 breeds from ImageNet/Stanford Dogs dataset are supported. Breed is stored in DynamoDB and included in training exports via `labels.csv`.
 
 17. **System Health is split across two pages** — `/health` is a clean landing page with device summary table. `/device/:thingName` is the full device detail page. Sub-pages (config, logs, commands, shadow) link back to the detail page, not `/health`.
 
-18. **Classifier model versioning** — Classifier models are stored in S3 under `models/dog-classifier/versions/{version}.onnx`. The active model is copied to `models/dog-classifier/best.onnx` with metadata in `models/dog-classifier/active.json`. The RunInference Lambda reads from the `CLASSIFIER_MODEL_KEY` env var. Activating a new version via the Models page does not automatically restart the Lambda — the new model is picked up on the next cold start.
+18. **Detector model versioning** — Detector models (custom YOLOv8) are stored in S3 under `models/dog-classifier/versions/{version}.onnx`. The active model is copied to `models/dog-classifier/best.onnx` with metadata in `models/dog-classifier/active.json`. The RunInference Lambda reads from the `MODEL_KEY` env var. Activating a new version via the Models page does not automatically restart the Lambda — the new model is picked up on the next cold start.
+
+19. **Custom YOLOv8 output format** — A fine-tuned YOLOv8 with 2 classes outputs tensor shape `[1, 6, 8400]` (4 bbox coords + 2 class scores). This differs from the pre-trained YOLOv8n which outputs `[1, 84, 8400]` (80 COCO classes). The RunInference Lambda dynamically reads the number of classes from the output tensor dimensions.
+
+20. **Keyframe detections are DynamoDB native** — Detection results are stored as a DynamoDB List of Maps (`keyframe_detections`) on the clips table, not as a JSON string. Each entry contains the keyframe key, overall label, and a list of detection boxes with bounding coordinates. The API parses these directly into typed DTOs.

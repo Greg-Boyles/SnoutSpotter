@@ -19,7 +19,8 @@ train: images/train
 val: images/val
 
 names:
-  0: dog
+  0: my_dog
+  1: other_dog
 """
     path = Path(output_path)
     path.write_text(content.strip())

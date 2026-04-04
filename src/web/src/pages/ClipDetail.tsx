@@ -2,23 +2,20 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Loader2, Play } from "lucide-react";
 import { api } from "../api";
-import type { Clip, Detection } from "../types";
+import type { Clip, KeyframeDetection } from "../types";
 import BoundingBoxOverlay from "../components/BoundingBoxOverlay";
 
 export default function ClipDetail() {
   const { id } = useParams<{ id: string }>();
   const [clip, setClip] = useState<Clip | null>(null);
-  const [detections, setDetections] = useState<Detection[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [inferring, setInferring] = useState(false);
 
   useEffect(() => {
     if (!id) return;
-    Promise.all([api.getClip(id), api.getDetections(id)])
-      .then(([c, d]) => {
-        setClip(c);
-        setDetections(d);
-      })
+    api
+      .getClip(id)
+      .then(setClip)
       .catch((e: Error) => setError(e.message));
   }, [id]);
 
@@ -41,6 +38,12 @@ export default function ClipDetail() {
   }
 
   if (!clip) return <div className="text-gray-400">Loading...</div>;
+
+  // Build a map of keyframe key → detection data for overlay rendering
+  const detectionsByKeyframe = new Map<string, KeyframeDetection>();
+  clip.keyframeDetections?.forEach((kd) => {
+    detectionsByKeyframe.set(kd.keyframeKey, kd);
+  });
 
   return (
     <div>
@@ -101,53 +104,65 @@ export default function ClipDetail() {
         </div>
       </div>
 
-      {/* Keyframes */}
+      {/* Keyframes with detection overlays */}
       {clip.keyframeUrls && clip.keyframeUrls.length > 0 && (
         <div className="mb-6">
           <h2 className="text-sm font-semibold text-gray-700 mb-2">
             Keyframes ({clip.keyframeUrls.length})
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-            {clip.keyframeUrls.map((url, idx) => (
-              <img
-                key={idx}
-                src={url}
-                alt={`Keyframe ${idx + 1}`}
-                className="w-full rounded-lg border border-gray-200"
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Detections */}
-      {detections.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">
-            Detections ({detections.length})
-          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {detections.map((d) => (
-              <div
-                key={d.detectionId}
-                className="bg-white rounded-lg border border-gray-200 p-3"
-              >
-                <BoundingBoxOverlay detection={d} />
-                <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="font-medium text-gray-700">{d.label}</span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-xs ${
-                      d.isTargetDog
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {(d.confidence * 100).toFixed(0)}%
-                    {d.isTargetDog && " ★"}
-                  </span>
+            {clip.keyframeUrls.map((url, idx) => {
+              // Match keyframe URL to detection data by index
+              // keyframeUrls and keyframeDetections are ordered the same way
+              const kd = clip.keyframeDetections?.[idx];
+              const hasDetections = kd && kd.detections.length > 0;
+
+              return (
+                <div key={idx} className="bg-white rounded-lg border border-gray-200 p-2">
+                  <div className="relative">
+                    <img
+                      src={url}
+                      alt={`Keyframe ${idx + 1}`}
+                      className="w-full rounded-lg"
+                    />
+                    {hasDetections && kd.detections.map((d, di) => (
+                      <BoundingBoxOverlay
+                        key={di}
+                        detection={{
+                          detectionId: `${idx}-${di}`,
+                          clipId: clip.clipId,
+                          timestamp: clip.createdAt,
+                          confidence: d.confidence,
+                          label: d.label,
+                          boundingBox: d.boundingBox,
+                          isTargetDog: d.label === "my_dog",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  {kd && (
+                    <div className="mt-1 flex items-center gap-2 text-xs">
+                      <span
+                        className={`px-2 py-0.5 rounded-full ${
+                          kd.label === "my_dog"
+                            ? "bg-amber-100 text-amber-700"
+                            : kd.label === "other_dog"
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {kd.label}
+                      </span>
+                      {kd.detections.length > 0 && (
+                        <span className="text-gray-400">
+                          {kd.detections.length} detection{kd.detections.length !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

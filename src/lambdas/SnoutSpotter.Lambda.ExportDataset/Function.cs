@@ -1,10 +1,12 @@
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda.Core;
 using Amazon.S3;
 using Amazon.S3.Model;
+using SixLabors.ImageSharp;
 
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.SystemTextJson.DefaultLambdaJsonSerializer))]
 
@@ -42,7 +44,6 @@ public class Function
 
         try
         {
-            // Query all reviewed labels
             var labels = await GetAllReviewedLabels(context);
             context.Logger.LogInformation($"Found {labels.Count} reviewed labels");
 
@@ -52,105 +53,78 @@ public class Function
                 return;
             }
 
-            // Split into my_dog and not_my_dog (other_dog + no_dog both go into not_my_dog)
-            var myDog = labels.Where(l => l.confirmedLabel == "my_dog").ToList();
-            var notMyDog = labels.Where(l => l.confirmedLabel is "other_dog" or "no_dog").ToList();
+            // For YOLO detection training: my_dog (class 0), other_dog (class 1)
+            // Skip no_dog labels — absence of detections IS the no_dog signal
+            var dogLabels = labels.Where(l => l.ConfirmedLabel is "my_dog" or "other_dog").ToList();
+            var noDogCount = labels.Count(l => l.ConfirmedLabel == "no_dog");
+
+            if (dogLabels.Count == 0)
+            {
+                await UpdateExportStatus(exportId, "failed", error: "No dog labels with bounding boxes found");
+                return;
+            }
 
             // 80/20 train/val split (random shuffle)
             var rng = new Random();
-            myDog = myDog.OrderBy(_ => rng.Next()).ToList();
-            notMyDog = notMyDog.OrderBy(_ => rng.Next()).ToList();
+            dogLabels = dogLabels.OrderBy(_ => rng.Next()).ToList();
+            var trainCount = (int)(dogLabels.Count * 0.8);
+            var trainSet = dogLabels.Take(trainCount).ToList();
+            var valSet = dogLabels.Skip(trainCount).ToList();
 
-            var myDogTrainCount = (int)(myDog.Count * 0.8);
-            var notMyDogTrainCount = (int)(notMyDog.Count * 0.8);
-
-            var splits = new Dictionary<string, List<LabelRecord>>
-            {
-                ["train/my_dog"] = myDog.Take(myDogTrainCount).ToList(),
-                ["val/my_dog"] = myDog.Skip(myDogTrainCount).ToList(),
-                ["train/not_my_dog"] = notMyDog.Take(notMyDogTrainCount).ToList(),
-                ["val/not_my_dog"] = notMyDog.Skip(notMyDogTrainCount).ToList(),
-            };
-
-            var trainCount = myDogTrainCount + notMyDogTrainCount;
-            var valCount = labels.Count - trainCount;
-
-            // Stream images directly into zip — no intermediate directory needed
             var zipPath = $"/tmp/{exportId}.zip";
             if (File.Exists(zipPath)) File.Delete(zipPath);
 
             await using (var zipStream = File.Create(zipPath))
             using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false))
             {
-                foreach (var (splitDir, items) in splits)
-                {
-                    // Parallel-download all images for this split into memory
-                    var downloaded = new (byte[] data, string ext)[items.Count];
-                    await Parallel.ForEachAsync(
-                        items.Select((item, i) => (item, i)),
-                        new ParallelOptions { MaxDegreeOfParallelism = 20 },
-                        async ((LabelRecord item, int i) entry, CancellationToken _) =>
-                        {
-                            try
-                            {
-                                var response = await _s3.GetObjectAsync(_bucketName, entry.item.keyframeKey);
-                                using var ms = new MemoryStream();
-                                await response.ResponseStream.CopyToAsync(ms);
-                                var ext = Path.GetExtension(entry.item.keyframeKey).ToLowerInvariant();
-                                downloaded[entry.i] = (ms.ToArray(), string.IsNullOrEmpty(ext) ? ".jpg" : ext);
-                            }
-                            catch (Exception ex)
-                            {
-                                context.Logger.LogWarning($"Failed to download {entry.item.keyframeKey}: {ex.Message}");
-                                downloaded[entry.i] = (Array.Empty<byte>(), ".jpg");
-                            }
-                        });
+                await WriteImageSplit(archive, "train", trainSet, context);
+                await WriteImageSplit(archive, "val", valSet, context);
 
-                    // Write sequentially into the archive (ZipArchive is not thread-safe)
-                    for (var i = 0; i < downloaded.Length; i++)
-                    {
-                        var (data, ext) = downloaded[i];
-                        if (data.Length == 0) continue;
-                        var zipEntry = archive.CreateEntry($"{splitDir}/img_{i:D4}{ext}");
-                        await using var entryStream = zipEntry.Open();
-                        await entryStream.WriteAsync(data);
-                    }
-                }
+                // Write dataset.yaml
+                var datasetYaml = """
+                    path: .
+                    train: images/train
+                    val: images/val
 
-                // Write manifest.json as archive entry
+                    names:
+                      0: my_dog
+                      1: other_dog
+                    """;
+                var yamlEntry = archive.CreateEntry("dataset.yaml");
+                await using (var yamlStream = yamlEntry.Open())
+                await using (var writer = new StreamWriter(yamlStream))
+                    await writer.WriteAsync(datasetYaml);
+
+                // Write manifest.json
                 var breedCounts = labels
-                    .Where(l => !string.IsNullOrEmpty(l.breed))
-                    .GroupBy(l => l.breed)
+                    .Where(l => !string.IsNullOrEmpty(l.Breed))
+                    .GroupBy(l => l.Breed)
                     .ToDictionary(g => g.Key, g => g.Count());
+
+                var myDogCount = dogLabels.Count(l => l.ConfirmedLabel == "my_dog");
+                var otherDogCount = dogLabels.Count(l => l.ConfirmedLabel == "other_dog");
 
                 var manifest = new
                 {
                     export_id = exportId,
                     created_at = DateTime.UtcNow.ToString("O"),
-                    total = labels.Count,
-                    my_dog = myDog.Count,
-                    not_my_dog = notMyDog.Count,
+                    format = "yolo_detection",
+                    total = dogLabels.Count,
+                    my_dog = myDogCount,
+                    other_dog = otherDogCount,
+                    no_dog_excluded = noDogCount,
                     train_count = trainCount,
-                    val_count = valCount,
+                    val_count = dogLabels.Count - trainCount,
                     breeds = breedCounts,
                 };
                 var manifestEntry = archive.CreateEntry("manifest.json");
                 await using (var manifestStream = manifestEntry.Open())
-                {
                     await JsonSerializer.SerializeAsync(manifestStream, manifest, new JsonSerializerOptions { WriteIndented = true });
-                }
 
-                // Write labels.csv as archive entry
+                // Write labels.csv for reference
                 var csvLines = new List<string> { "filename,split,confirmed_label,breed" };
-                foreach (var (splitDir, items) in splits)
-                {
-                    for (var i = 0; i < items.Count; i++)
-                    {
-                        var ext = Path.GetExtension(items[i].keyframeKey).ToLowerInvariant();
-                        if (string.IsNullOrEmpty(ext)) ext = ".jpg";
-                        csvLines.Add($"{splitDir}/img_{i:D4}{ext},{splitDir.Split('/')[0]},{items[i].confirmedLabel},{items[i].breed}");
-                    }
-                }
+                AddCsvLines(csvLines, "train", trainSet);
+                AddCsvLines(csvLines, "val", valSet);
                 var csvEntry = archive.CreateEntry("labels.csv");
                 await using var csvStream = csvEntry.Open();
                 await using var csvWriter = new StreamWriter(csvStream);
@@ -161,7 +135,6 @@ public class Function
             var zipSize = new FileInfo(zipPath).Length;
             var sizeMb = Math.Round(zipSize / (1024.0 * 1024.0), 1);
 
-            // Upload zip to S3
             var s3Key = $"training-exports/{exportId}.zip";
             context.Logger.LogInformation($"Uploading {sizeMb}MB zip to s3://{_bucketName}/{s3Key}");
 
@@ -173,7 +146,6 @@ public class Function
                 ContentType = "application/zip"
             });
 
-            // Update export row
             await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
             {
                 TableName = _exportsTable,
@@ -190,24 +162,133 @@ public class Function
                     [":status"] = new() { S = "complete" },
                     [":completed"] = new() { S = DateTime.UtcNow.ToString("O") },
                     [":key"] = new() { S = s3Key },
-                    [":total"] = new() { N = labels.Count.ToString() },
-                    [":mydog"] = new() { N = myDog.Count.ToString() },
-                    [":notmydog"] = new() { N = notMyDog.Count.ToString() },
+                    [":total"] = new() { N = dogLabels.Count.ToString() },
+                    [":mydog"] = new() { N = dogLabels.Count(l => l.ConfirmedLabel == "my_dog").ToString() },
+                    [":notmydog"] = new() { N = dogLabels.Count(l => l.ConfirmedLabel == "other_dog").ToString() },
                     [":train"] = new() { N = trainCount.ToString() },
-                    [":val"] = new() { N = valCount.ToString() },
+                    [":val"] = new() { N = (dogLabels.Count - trainCount).ToString() },
                     [":size"] = new() { N = sizeMb.ToString() },
                 }
             });
 
-            context.Logger.LogInformation($"Export {exportId} complete: {labels.Count} images, {sizeMb}MB");
-
-            // Cleanup
+            context.Logger.LogInformation($"Export {exportId} complete: {dogLabels.Count} images, {sizeMb}MB");
             File.Delete(zipPath);
         }
         catch (Exception ex)
         {
             context.Logger.LogError($"Export {exportId} failed: {ex.Message}");
             await UpdateExportStatus(exportId, "failed", error: ex.Message);
+        }
+    }
+
+    private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, ILambdaContext context)
+    {
+        // Parallel-download all images
+        var downloaded = new (byte[] data, string ext, int imgWidth, int imgHeight)[items.Count];
+        await Parallel.ForEachAsync(
+            items.Select((item, i) => (item, i)),
+            new ParallelOptions { MaxDegreeOfParallelism = 20 },
+            async ((LabelRecord item, int i) entry, CancellationToken _) =>
+            {
+                try
+                {
+                    var response = await _s3.GetObjectAsync(_bucketName, entry.item.KeyframeKey);
+                    using var ms = new MemoryStream();
+                    await response.ResponseStream.CopyToAsync(ms);
+                    ms.Position = 0;
+                    var imageInfo = await Image.IdentifyAsync(ms);
+                    var ext = Path.GetExtension(entry.item.KeyframeKey).ToLowerInvariant();
+                    downloaded[entry.i] = (ms.ToArray(), string.IsNullOrEmpty(ext) ? ".jpg" : ext,
+                        imageInfo?.Width ?? 1920, imageInfo?.Height ?? 1080);
+                }
+                catch (Exception ex)
+                {
+                    context.Logger.LogWarning($"Failed to download {entry.item.KeyframeKey}: {ex.Message}");
+                    downloaded[entry.i] = (Array.Empty<byte>(), ".jpg", 1920, 1080);
+                }
+            });
+
+        // Write images and YOLO label files sequentially
+        for (var i = 0; i < downloaded.Length; i++)
+        {
+            var (data, ext, imgWidth, imgHeight) = downloaded[i];
+            if (data.Length == 0) continue;
+
+            var baseName = $"img_{i:D4}";
+
+            // Write image
+            var imgEntry = archive.CreateEntry($"images/{split}/{baseName}{ext}");
+            await using (var entryStream = imgEntry.Open())
+                await entryStream.WriteAsync(data);
+
+            // Write YOLO label file
+            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight);
+            var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
+            await using (var labelStream = labelEntry.Open())
+            await using (var writer = new StreamWriter(labelStream, Encoding.UTF8))
+                await writer.WriteAsync(labelContent);
+        }
+    }
+
+    private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight)
+    {
+        var classId = label.ConfirmedLabel == "my_dog" ? 0 : 1;
+        var boxes = ParseBoundingBoxes(label.BoundingBoxes);
+
+        if (boxes.Count == 0)
+        {
+            // No bounding boxes — use full image as a single detection
+            return $"{classId} 0.5 0.5 1.0 1.0";
+        }
+
+        var sb = new StringBuilder();
+        foreach (var box in boxes)
+        {
+            // box = [x_min, y_min, width, height, confidence]
+            var xMin = box.Length > 0 ? box[0] : 0;
+            var yMin = box.Length > 1 ? box[1] : 0;
+            var w = box.Length > 2 ? box[2] : imgWidth;
+            var h = box.Length > 3 ? box[3] : imgHeight;
+
+            // Convert to YOLO normalized center format
+            var cx = (xMin + w / 2) / imgWidth;
+            var cy = (yMin + h / 2) / imgHeight;
+            var nw = w / imgWidth;
+            var nh = h / imgHeight;
+
+            // Clamp to [0, 1]
+            cx = Math.Clamp(cx, 0f, 1f);
+            cy = Math.Clamp(cy, 0f, 1f);
+            nw = Math.Clamp(nw, 0f, 1f);
+            nh = Math.Clamp(nh, 0f, 1f);
+
+            if (sb.Length > 0) sb.AppendLine();
+            sb.Append($"{classId} {cx:F6} {cy:F6} {nw:F6} {nh:F6}");
+        }
+
+        return sb.ToString();
+    }
+
+    private static List<float[]> ParseBoundingBoxes(string json)
+    {
+        if (string.IsNullOrEmpty(json) || json == "[]") return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<float[]>>(json) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static void AddCsvLines(List<string> csvLines, string split, List<LabelRecord> items)
+    {
+        for (var i = 0; i < items.Count; i++)
+        {
+            var ext = Path.GetExtension(items[i].KeyframeKey).ToLowerInvariant();
+            if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+            csvLines.Add($"images/{split}/img_{i:D4}{ext},{split},{items[i].ConfirmedLabel},{items[i].Breed}");
         }
     }
 
@@ -237,9 +318,10 @@ public class Function
 
                 labels.Add(new LabelRecord
                 {
-                    keyframeKey = item["keyframe_key"].S,
-                    confirmedLabel = confirmedLabel,
-                    breed = item.GetValueOrDefault("breed")?.S ?? ""
+                    KeyframeKey = item["keyframe_key"].S,
+                    ConfirmedLabel = confirmedLabel,
+                    Breed = item.GetValueOrDefault("breed")?.S ?? "",
+                    BoundingBoxes = item.GetValueOrDefault("bounding_boxes")?.S ?? "[]"
                 });
             }
 
@@ -279,8 +361,9 @@ public class Function
 
     private record LabelRecord
     {
-        public string keyframeKey { get; init; } = "";
-        public string confirmedLabel { get; init; } = "";
-        public string breed { get; init; } = "";
+        public string KeyframeKey { get; init; } = "";
+        public string ConfirmedLabel { get; init; } = "";
+        public string Breed { get; init; } = "";
+        public string BoundingBoxes { get; init; } = "[]";
     }
 }

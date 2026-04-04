@@ -18,4 +18,18 @@ public record ClipDetail(
 {
     public string? VideoUrl { get; init; }
     public List<string>? KeyframeUrls { get; init; }
+    public List<KeyframeDetectionDto>? KeyframeDetections { get; init; }
 }
+
+public record KeyframeDetectionDto(
+    string KeyframeKey,
+    string Label,
+    List<DetectionBoxDto> Detections);
+
+public record DetectionBoxDto(
+    string Label,
+    float Confidence,
+    BoundingBoxDto BoundingBox);
+
+public record BoundingBoxDto(
+    float X, float Y, float Width, float Height);

@@ -16,13 +16,17 @@ namespace SnoutSpotter.Lambda.RunInference;
 
 public class Function
 {
+    private static readonly string[] ClassNames = ["my_dog", "other_dog"];
+    private const int YoloInputSize = 640;
+    private const float ConfidenceThreshold = 0.4f;
+
     private readonly IAmazonS3 _s3Client;
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly string _bucketName;
     private readonly string _tableName;
-    private readonly string _classifierModelKey;
+    private readonly string _modelKey;
 
-    private InferenceSession? _classifierSession;
+    private InferenceSession? _session;
 
     public Function()
     {
@@ -30,16 +34,14 @@ public class Function
         _dynamoClient = new AmazonDynamoDBClient();
         _bucketName = Environment.GetEnvironmentVariable("BUCKET_NAME")!;
         _tableName = Environment.GetEnvironmentVariable("TABLE_NAME")!;
-        _classifierModelKey = Environment.GetEnvironmentVariable("CLASSIFIER_MODEL_KEY")!;
+        _modelKey = Environment.GetEnvironmentVariable("MODEL_KEY")!;
     }
 
     public async Task FunctionHandler(JsonElement input, ILambdaContext context)
     {
-        // Normalise input: EventBridge event or direct invocation
         var (clipId, isEventBridge) = ParseInput(input);
-        context.Logger.LogInformation($"Running inference for clip {clipId} (source={( isEventBridge ? "eventbridge" : "direct" )})");
+        context.Logger.LogInformation($"Running inference for clip {clipId} (source={(isEventBridge ? "eventbridge" : "direct")})");
 
-        // Get clip record from DynamoDB (with retry for EventBridge path)
         var clipItem = await GetClipRecord(clipId, isEventBridge, context);
         if (clipItem == null)
         {
@@ -47,7 +49,6 @@ public class Function
             return;
         }
 
-        // Get keyframe keys from the clip record
         var keyframeKeys = clipItem.TryGetValue("keyframe_keys", out var kk) ? kk.SS : [];
         if (keyframeKeys.Count == 0)
         {
@@ -57,17 +58,18 @@ public class Function
 
         await EnsureModelLoaded(context);
 
-        // Process all keyframes
-        var detections = new List<DetectionResult>();
+        var keyframeResults = new List<KeyframeResult>();
+        var totalDetections = 0;
+
         foreach (var keyframeKey in keyframeKeys.OrderBy(k => k))
         {
             try
             {
                 var response = await _s3Client.GetObjectAsync(_bucketName, keyframeKey);
                 using var image = await Image.LoadAsync<Rgb24>(response.ResponseStream);
-                var detection = RunClassifier(image, keyframeKey);
-                if (detection != null)
-                    detections.Add(detection);
+                var result = RunDetector(image, keyframeKey);
+                keyframeResults.Add(result);
+                totalDetections += result.Detections.Count;
             }
             catch (Exception ex)
             {
@@ -75,43 +77,73 @@ public class Function
             }
         }
 
-        // Compute detection_type from all results
+        // Compute overall detection_type from keyframe results
         var detectionType = "none";
-        foreach (var d in detections)
-            detectionType = UpgradeDetectionType(detectionType, d.Label);
+        foreach (var kr in keyframeResults)
+            detectionType = UpgradeDetectionType(detectionType, kr.Label);
 
-        // Write complete results in a single update (no read-merge-write race)
+        // Build DynamoDB List of Maps for keyframe_detections
+        var keyframeDetectionsAttr = new AttributeValue
+        {
+            L = keyframeResults.Select(kr => new AttributeValue
+            {
+                M = new Dictionary<string, AttributeValue>
+                {
+                    ["keyframeKey"] = new() { S = kr.KeyframeKey },
+                    ["label"] = new() { S = kr.Label },
+                    ["detections"] = new()
+                    {
+                        L = kr.Detections.Select(d => new AttributeValue
+                        {
+                            M = new Dictionary<string, AttributeValue>
+                            {
+                                ["label"] = new() { S = d.Label },
+                                ["confidence"] = new() { N = d.Confidence.ToString("F4") },
+                                ["boundingBox"] = new()
+                                {
+                                    M = new Dictionary<string, AttributeValue>
+                                    {
+                                        ["x"] = new() { N = d.BoundingBox.X.ToString("F1") },
+                                        ["y"] = new() { N = d.BoundingBox.Y.ToString("F1") },
+                                        ["width"] = new() { N = d.BoundingBox.Width.ToString("F1") },
+                                        ["height"] = new() { N = d.BoundingBox.Height.ToString("F1") }
+                                    }
+                                }
+                            }
+                        }).ToList()
+                    }
+                }
+            }).ToList()
+        };
+
         await _dynamoClient.UpdateItemAsync(new UpdateItemRequest
         {
             TableName = _tableName,
             Key = new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } },
-            UpdateExpression = "SET detection_type = :dt, detection_count = :dc, detections = :dets, inference_at = :ia",
+            UpdateExpression = "SET detection_type = :dt, detection_count = :dc, keyframe_detections = :kd, inference_at = :ia",
             ConditionExpression = "attribute_exists(clip_id)",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
                 [":dt"] = new() { S = detectionType },
-                [":dc"] = new() { N = detections.Count.ToString() },
-                [":dets"] = new() { S = JsonSerializer.Serialize(detections) },
+                [":dc"] = new() { N = totalDetections.ToString() },
+                [":kd"] = keyframeDetectionsAttr,
                 [":ia"] = new() { S = DateTime.UtcNow.ToString("O") }
             }
         });
 
         context.Logger.LogInformation(
-            $"Clip {clipId}: {detections.Count} detections across {keyframeKeys.Count} keyframes, type={detectionType}");
+            $"Clip {clipId}: {totalDetections} detections across {keyframeKeys.Count} keyframes, type={detectionType}");
     }
 
     private static (string clipId, bool isEventBridge) ParseInput(JsonElement input)
     {
-        // EventBridge event has detail.object.key
         if (input.TryGetProperty("detail", out var detail) &&
             detail.TryGetProperty("object", out var obj) &&
             obj.TryGetProperty("key", out var key))
         {
-            var keyframeKey = key.GetString()!;
-            return (ExtractClipId(keyframeKey), true);
+            return (ExtractClipId(key.GetString()!), true);
         }
 
-        // Direct invocation has ClipId (case-insensitive)
         if (input.TryGetProperty("ClipId", out var clipIdProp) ||
             input.TryGetProperty("clipId", out clipIdProp))
         {
@@ -146,7 +178,6 @@ public class Function
 
     private static string ExtractClipId(string keyframeKey)
     {
-        // keyframes/{device}/YYYY/MM/DD/clipId_0001.jpg or keyframes/YYYY/MM/DD/clipId_0001.jpg
         var filename = Path.GetFileNameWithoutExtension(keyframeKey);
         var lastUnderscore = filename.LastIndexOf('_');
         return lastUnderscore > 0 ? filename[..lastUnderscore] : filename;
@@ -154,10 +185,9 @@ public class Function
 
     private static string UpgradeDetectionType(string current, string candidate)
     {
-        // Priority: my_dog(3) > other_dog(2) > none(1) > pending(0)
         var priority = new Dictionary<string, int>
         {
-            ["pending"] = 0, ["none"] = 1, ["other_dog"] = 2, ["my_dog"] = 3
+            ["pending"] = 0, ["none"] = 1, ["no_dog"] = 1, ["other_dog"] = 2, ["my_dog"] = 3
         };
         return priority.GetValueOrDefault(candidate, 0) > priority.GetValueOrDefault(current, 0)
             ? candidate
@@ -166,12 +196,11 @@ public class Function
 
     private async Task EnsureModelLoaded(ILambdaContext context)
     {
-        if (_classifierSession == null)
-        {
-            context.Logger.LogInformation("Loading classifier model...");
-            var classifierPath = await DownloadModel(_classifierModelKey);
-            _classifierSession = new InferenceSession(classifierPath);
-        }
+        if (_session != null) return;
+
+        context.Logger.LogInformation("Loading YOLO model...");
+        var modelPath = await DownloadModel(_modelKey);
+        _session = new InferenceSession(modelPath);
     }
 
     private async Task<string> DownloadModel(string modelKey)
@@ -185,50 +214,88 @@ public class Function
         return localPath;
     }
 
-    private DetectionResult? RunClassifier(Image<Rgb24> image, string keyframeKey)
+    private KeyframeResult RunDetector(Image<Rgb24> image, string keyframeKey)
     {
-        if (_classifierSession == null) return null;
+        var result = new KeyframeResult { KeyframeKey = keyframeKey };
 
-        // Resize to 224x224 for MobileNetV3
-        const int targetSize = 224;
-        using var resized = image.Clone(ctx => ctx.Resize(targetSize, targetSize));
+        if (_session == null)
+        {
+            result.Label = "no_dog";
+            return result;
+        }
 
-        // ImageNet normalization
-        float[] mean = { 0.485f, 0.456f, 0.406f };
-        float[] std = { 0.229f, 0.224f, 0.225f };
+        using var resized = image.Clone(ctx => ctx.Resize(YoloInputSize, YoloInputSize));
 
-        var tensor = new DenseTensor<float>(new[] { 1, 3, targetSize, targetSize });
+        var tensor = new DenseTensor<float>(new[] { 1, 3, YoloInputSize, YoloInputSize });
         resized.ProcessPixelRows(accessor =>
         {
-            for (var y = 0; y < targetSize; y++)
+            for (var y = 0; y < YoloInputSize; y++)
             {
                 var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < targetSize; x++)
+                for (var x = 0; x < YoloInputSize; x++)
                 {
                     var pixel = row[x];
-                    tensor[0, 0, y, x] = (pixel.R / 255f - mean[0]) / std[0];
-                    tensor[0, 1, y, x] = (pixel.G / 255f - mean[1]) / std[1];
-                    tensor[0, 2, y, x] = (pixel.B / 255f - mean[2]) / std[2];
+                    tensor[0, 0, y, x] = pixel.R / 255f;
+                    tensor[0, 1, y, x] = pixel.G / 255f;
+                    tensor[0, 2, y, x] = pixel.B / 255f;
                 }
             }
         });
 
-        var inputName = _classifierSession.InputNames[0];
-        var inputs = new List<NamedOnnxValue>
-        {
-            NamedOnnxValue.CreateFromTensor(inputName, tensor)
-        };
+        var inputName = _session.InputNames[0];
+        using var results = _session.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, tensor) });
+        var output = results.First().AsTensor<float>();
 
-        using var results = _classifierSession.Run(inputs);
-        var output = results.First().AsEnumerable<float>().ToArray();
+        var scaleX = (float)image.Width / YoloInputSize;
+        var scaleY = (float)image.Height / YoloInputSize;
 
-        // Binary classification: ImageFolder sorts alphabetically → [my_dog=0, not_my_dog=1]
-        var isMyDog = output.Length >= 2 && output[0] > output[1];
-        return new DetectionResult
+        // YOLOv8 output: [1, 4+num_classes, 8400]
+        var numClasses = output.Dimensions[1] - 4;
+        var numDetections = output.Dimensions[2];
+
+        for (var i = 0; i < numDetections; i++)
         {
-            KeyframeKey = keyframeKey,
-            Label = isMyDog ? "my_dog" : "other_dog",
-            Confidence = isMyDog ? output[0] : output[1]
-        };
+            // Find best class and its confidence
+            var bestClassIdx = 0;
+            var bestConfidence = output[0, 4, i];
+            for (var c = 1; c < numClasses; c++)
+            {
+                var conf = output[0, 4 + c, i];
+                if (conf > bestConfidence)
+                {
+                    bestClassIdx = c;
+                    bestConfidence = conf;
+                }
+            }
+
+            if (bestConfidence < ConfidenceThreshold) continue;
+
+            var cx = output[0, 0, i] * scaleX;
+            var cy = output[0, 1, i] * scaleY;
+            var w = output[0, 2, i] * scaleX;
+            var h = output[0, 3, i] * scaleY;
+
+            var label = bestClassIdx < ClassNames.Length ? ClassNames[bestClassIdx] : $"class_{bestClassIdx}";
+
+            result.Detections.Add(new DetectionBox
+            {
+                Label = label,
+                Confidence = bestConfidence,
+                BoundingBox = new BoundingBoxData
+                {
+                    X = Math.Max(0, cx - w / 2),
+                    Y = Math.Max(0, cy - h / 2),
+                    Width = w,
+                    Height = h
+                }
+            });
+        }
+
+        // Overall keyframe label: highest priority detection, or no_dog
+        result.Label = "no_dog";
+        foreach (var d in result.Detections)
+            result.Label = UpgradeDetectionType(result.Label, d.Label);
+
+        return result;
     }
 }
