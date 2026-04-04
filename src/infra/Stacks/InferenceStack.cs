@@ -35,7 +35,7 @@ public class InferenceStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
-                ["CLASSIFIER_MODEL_KEY"] = "models/dog-classifier/best.onnx"
+                ["MODEL_KEY"] = "models/dog-classifier/best.onnx"
             }
         });
 
