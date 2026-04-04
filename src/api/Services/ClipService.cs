@@ -243,8 +243,38 @@ public class ClipService : IClipService
             InferenceAt: item.GetValueOrDefault("inference_at")?.S)
         {
             VideoUrl = videoUrl,
-            KeyframeUrls = keyframeUrls
+            KeyframeUrls = keyframeUrls,
+            KeyframeDetections = ParseKeyframeDetections(item)
         };
+    }
+
+    private static List<KeyframeDetectionDto>? ParseKeyframeDetections(Dictionary<string, AttributeValue> item)
+    {
+        if (!item.TryGetValue("keyframe_detections", out var attr) || attr.L == null || attr.L.Count == 0)
+            return null;
+
+        return attr.L.Select(kf =>
+        {
+            var m = kf.M;
+            var detections = m.GetValueOrDefault("detections")?.L?.Select(d =>
+            {
+                var dm = d.M;
+                var bb = dm.GetValueOrDefault("boundingBox")?.M;
+                return new DetectionBoxDto(
+                    Label: dm.GetValueOrDefault("label")?.S ?? "",
+                    Confidence: float.TryParse(dm.GetValueOrDefault("confidence")?.N, out var c) ? c : 0,
+                    BoundingBox: new BoundingBoxDto(
+                        X: float.TryParse(bb?.GetValueOrDefault("x")?.N, out var x) ? x : 0,
+                        Y: float.TryParse(bb?.GetValueOrDefault("y")?.N, out var y) ? y : 0,
+                        Width: float.TryParse(bb?.GetValueOrDefault("width")?.N, out var w) ? w : 0,
+                        Height: float.TryParse(bb?.GetValueOrDefault("height")?.N, out var h) ? h : 0));
+            }).ToList() ?? [];
+
+            return new KeyframeDetectionDto(
+                KeyframeKey: m.GetValueOrDefault("keyframeKey")?.S ?? "",
+                Label: m.GetValueOrDefault("label")?.S ?? "",
+                Detections: detections);
+        }).ToList();
     }
 
     private static DetectionSummary MapToDetectionSummary(Dictionary<string, AttributeValue> item) => new(
