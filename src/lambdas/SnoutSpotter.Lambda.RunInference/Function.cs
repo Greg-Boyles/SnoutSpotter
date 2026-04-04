@@ -222,13 +222,13 @@ public class Function
         using var results = _classifierSession.Run(inputs);
         var output = results.First().AsEnumerable<float>().ToArray();
 
-        // Binary classification: [not_my_dog, my_dog]
-        var isMyDog = output.Length >= 2 && output[1] > output[0];
+        // Binary classification: ImageFolder sorts alphabetically → [my_dog=0, not_my_dog=1]
+        var isMyDog = output.Length >= 2 && output[0] > output[1];
         return new DetectionResult
         {
             KeyframeKey = keyframeKey,
             Label = isMyDog ? "my_dog" : "other_dog",
-            Confidence = isMyDog ? output[1] : output[0]
+            Confidence = isMyDog ? output[0] : output[1]
         };
     }
 }
