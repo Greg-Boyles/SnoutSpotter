@@ -27,6 +27,23 @@ names:
     return str(path)
 
 
+def resolve_dataset_yaml(data_yaml: str) -> str:
+    """Ensure dataset.yaml has an absolute path so YOLO can find the images."""
+    import yaml
+
+    yaml_path = Path(data_yaml).resolve()
+    with open(yaml_path) as f:
+        cfg = yaml.safe_load(f)
+
+    dataset_path = Path(cfg.get("path", "."))
+    if not dataset_path.is_absolute():
+        cfg["path"] = str(yaml_path.parent / dataset_path)
+        with open(yaml_path, "w") as f:
+            yaml.dump(cfg, f, default_flow_style=False)
+
+    return str(yaml_path)
+
+
 def train(
     data_yaml: str,
     model: str = "yolov8n.pt",
@@ -37,6 +54,7 @@ def train(
     name: str = "snout-spotter",
 ):
     """Fine-tune YOLOv8 on the dog detection dataset."""
+    data_yaml = resolve_dataset_yaml(data_yaml)
     yolo = YOLO(model)
 
     results = yolo.train(
