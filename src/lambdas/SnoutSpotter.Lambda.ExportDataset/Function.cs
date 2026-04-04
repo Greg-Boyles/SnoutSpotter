@@ -225,7 +225,7 @@ public class Function
             var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight);
             var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
             await using (var labelStream = labelEntry.Open())
-            await using (var writer = new StreamWriter(labelStream, Encoding.UTF8))
+            await using (var writer = new StreamWriter(labelStream, new UTF8Encoding(false)))
                 await writer.WriteAsync(labelContent);
         }
     }
