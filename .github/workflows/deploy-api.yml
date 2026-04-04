@@ -44,7 +44,7 @@ jobs:
         working-directory: src/infra
 
       - name: CDK deploy API stack
-        run: cdk deploy SnoutSpotter-Api --require-approval never
+        run: cdk deploy SnoutSpotter-Api --require-approval never --method=direct
         working-directory: src/infra
         env:
           IMAGE_TAG: ${{ github.sha }}
