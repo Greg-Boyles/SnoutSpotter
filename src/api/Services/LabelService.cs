@@ -409,4 +409,64 @@ public class LabelService : ILabelService
 
         return updated;
     }
+
+    public async Task<object> BackfillBoundingBoxesAsync(string? confirmedLabel)
+    {
+        // Collect all reviewed dog labels with empty bounding boxes
+        var labelsToProcess = confirmedLabel != null
+            ? new[] { confirmedLabel }
+            : new[] { "my_dog", "other_dog" };
+
+        var allKeys = new List<string>();
+
+        foreach (var label in labelsToProcess)
+        {
+            Dictionary<string, AttributeValue>? lastKey = null;
+            do
+            {
+                var response = await _dynamoDb.QueryAsync(new QueryRequest
+                {
+                    TableName = _config.LabelsTable,
+                    IndexName = "by-confirmed-label",
+                    KeyConditionExpression = "confirmed_label = :cl",
+                    FilterExpression = "bounding_boxes = :empty OR attribute_not_exists(bounding_boxes)",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":cl"] = new() { S = label },
+                        [":empty"] = new() { S = "[]" }
+                    },
+                    ProjectionExpression = "keyframe_key",
+                    ExclusiveStartKey = lastKey
+                });
+
+                allKeys.AddRange(response.Items.Select(item => item["keyframe_key"].S));
+                lastKey = response.LastEvaluatedKey;
+            } while (lastKey != null && lastKey.Count > 0);
+        }
+
+        if (allKeys.Count == 0)
+            return new { total = 0, batches = 0, message = "No labels found with missing bounding boxes" };
+
+        // Chunk into batches of 500 and fire async Lambda invocations
+        const int batchSize = 500;
+        var batches = 0;
+        using var lambdaClient = new AmazonLambdaClient();
+
+        for (var i = 0; i < allKeys.Count; i += batchSize)
+        {
+            var batch = allKeys.Skip(i).Take(batchSize).ToList();
+            var payload = JsonSerializer.Serialize(new { ReprocessKeys = batch });
+
+            await lambdaClient.InvokeAsync(new Amazon.Lambda.Model.InvokeRequest
+            {
+                FunctionName = _config.AutoLabelFunction,
+                InvocationType = Amazon.Lambda.InvocationType.Event,
+                Payload = payload
+            });
+
+            batches++;
+        }
+
+        return new { total = allKeys.Count, batches };
+    }
 }

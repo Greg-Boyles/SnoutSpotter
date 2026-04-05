@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Cpu } from "lucide-react";
+import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Cpu, Crosshair } from "lucide-react";
 import { api } from "../api";
 
 const DOG_BREEDS = [
@@ -77,6 +77,8 @@ export default function Labels() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [backfillingBoxes, setBackfillingBoxes] = useState(false);
+  const [backfillResult, setBackfillResult] = useState("");
   const [showUploadPicker, setShowUploadPicker] = useState(false);
   const [uploadLabel, setUploadLabel] = useState<"my_dog" | "other_dog" | "no_dog">("my_dog");
   const [uploadBreed, setUploadBreed] = useState("");
@@ -158,6 +160,25 @@ export default function Labels() {
       console.error("Auto-label failed:", e);
     }
     setLabelling(false);
+  };
+
+  const handleBackfillBoxes = async () => {
+    setBackfillingBoxes(true);
+    setBackfillResult("");
+    try {
+      const result = await api.backfillBoundingBoxes();
+      if (result.total === 0) {
+        setBackfillResult("No labels found with missing bounding boxes.");
+      } else {
+        setBackfillResult(`Backfilling ${result.total} labels across ${result.batches} batch${result.batches !== 1 ? "es" : ""} — running in background.`);
+      }
+      setTimeout(() => setBackfillResult(""), 8000);
+    } catch (e) {
+      console.error("Backfill failed:", e);
+      setBackfillResult("Backfill failed — check console.");
+      setTimeout(() => setBackfillResult(""), 5000);
+    }
+    setBackfillingBoxes(false);
   };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -351,6 +372,14 @@ export default function Labels() {
             {labelling ? "Running..." : "Run Auto-Label"}
           </button>
           <button
+            onClick={handleBackfillBoxes}
+            disabled={backfillingBoxes}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg disabled:opacity-50"
+          >
+            {backfillingBoxes ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />}
+            {backfillingBoxes ? "Queuing..." : "Backfill Boxes"}
+          </button>
+          <button
             onClick={async () => {
               setExporting(true);
               try { await api.triggerExport(); } catch (e) { console.error(e); }
@@ -380,6 +409,12 @@ export default function Labels() {
       {uploadProgress && (
         <div className="mb-4 p-3 bg-green-50 text-green-700 rounded-lg text-sm">
           {uploadProgress}
+        </div>
+      )}
+
+      {backfillResult && (
+        <div className="mb-4 p-3 bg-violet-50 text-violet-700 rounded-lg text-sm">
+          {backfillResult}
         </div>
       )}
 

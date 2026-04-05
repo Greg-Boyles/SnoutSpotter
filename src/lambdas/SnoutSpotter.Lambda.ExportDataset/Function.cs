@@ -53,12 +53,18 @@ public class Function
                 return;
             }
 
-            // For YOLO detection training: my_dog (class 0), other_dog (class 1)
-            // Skip no_dog labels — absence of detections IS the no_dog signal
-            var dogLabels = labels.Where(l => l.ConfirmedLabel is "my_dog" or "other_dog").ToList();
-            var noDogCount = labels.Count(l => l.ConfirmedLabel == "no_dog");
+            // Only include dog labels that have real bounding box data
+            var dogLabelsWithBoxes = labels
+                .Where(l => l.ConfirmedLabel is "my_dog" or "other_dog" && HasBoundingBoxes(l.BoundingBoxes))
+                .ToList();
+            var dogLabelsNoBoxes = labels
+                .Count(l => l.ConfirmedLabel is "my_dog" or "other_dog" && !HasBoundingBoxes(l.BoundingBoxes));
+            var noDogLabels = labels.Where(l => l.ConfirmedLabel == "no_dog").ToList();
 
-            if (dogLabels.Count == 0)
+            context.Logger.LogInformation(
+                $"Dogs with boxes: {dogLabelsWithBoxes.Count}, dogs without boxes (skipped): {dogLabelsNoBoxes}, no_dog (background): {noDogLabels.Count}");
+
+            if (dogLabelsWithBoxes.Count == 0)
             {
                 await UpdateExportStatus(exportId, "failed", error: "No dog labels with bounding boxes found");
                 return;
@@ -66,10 +72,16 @@ public class Function
 
             // 80/20 train/val split (random shuffle)
             var rng = new Random();
-            dogLabels = dogLabels.OrderBy(_ => rng.Next()).ToList();
-            var trainCount = (int)(dogLabels.Count * 0.8);
-            var trainSet = dogLabels.Take(trainCount).ToList();
-            var valSet = dogLabels.Skip(trainCount).ToList();
+            dogLabelsWithBoxes = dogLabelsWithBoxes.OrderBy(_ => rng.Next()).ToList();
+            noDogLabels = noDogLabels.OrderBy(_ => rng.Next()).ToList();
+
+            var dogTrainCount = (int)(dogLabelsWithBoxes.Count * 0.8);
+            var noDogTrainCount = (int)(noDogLabels.Count * 0.8);
+
+            var trainSet = dogLabelsWithBoxes.Take(dogTrainCount)
+                .Concat(noDogLabels.Take(noDogTrainCount)).ToList();
+            var valSet = dogLabelsWithBoxes.Skip(dogTrainCount)
+                .Concat(noDogLabels.Skip(noDogTrainCount)).ToList();
 
             var zipPath = $"/tmp/{exportId}.zip";
             if (File.Exists(zipPath)) File.Delete(zipPath);
@@ -101,20 +113,21 @@ public class Function
                     .GroupBy(l => l.Breed)
                     .ToDictionary(g => g.Key, g => g.Count());
 
-                var myDogCount = dogLabels.Count(l => l.ConfirmedLabel == "my_dog");
-                var otherDogCount = dogLabels.Count(l => l.ConfirmedLabel == "other_dog");
+                var myDogCount = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "my_dog");
+                var otherDogCount = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "other_dog");
 
                 var manifest = new
                 {
                     export_id = exportId,
                     created_at = DateTime.UtcNow.ToString("O"),
                     format = "yolo_detection",
-                    total = dogLabels.Count,
+                    total = dogLabelsWithBoxes.Count + noDogLabels.Count,
                     my_dog = myDogCount,
                     other_dog = otherDogCount,
-                    no_dog_excluded = noDogCount,
-                    train_count = trainCount,
-                    val_count = dogLabels.Count - trainCount,
+                    no_dog_background = noDogLabels.Count,
+                    dogs_without_boxes_skipped = dogLabelsNoBoxes,
+                    train_count = trainSet.Count,
+                    val_count = valSet.Count,
                     breeds = breedCounts,
                 };
                 var manifestEntry = archive.CreateEntry("manifest.json");
@@ -162,16 +175,16 @@ public class Function
                     [":status"] = new() { S = "complete" },
                     [":completed"] = new() { S = DateTime.UtcNow.ToString("O") },
                     [":key"] = new() { S = s3Key },
-                    [":total"] = new() { N = dogLabels.Count.ToString() },
-                    [":mydog"] = new() { N = dogLabels.Count(l => l.ConfirmedLabel == "my_dog").ToString() },
-                    [":notmydog"] = new() { N = dogLabels.Count(l => l.ConfirmedLabel == "other_dog").ToString() },
-                    [":train"] = new() { N = trainCount.ToString() },
-                    [":val"] = new() { N = (dogLabels.Count - trainCount).ToString() },
+                    [":total"] = new() { N = (dogLabelsWithBoxes.Count + noDogLabels.Count).ToString() },
+                    [":mydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "my_dog").ToString() },
+                    [":notmydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "other_dog").ToString() },
+                    [":train"] = new() { N = trainSet.Count.ToString() },
+                    [":val"] = new() { N = valSet.Count.ToString() },
                     [":size"] = new() { N = sizeMb.ToString() },
                 }
             });
 
-            context.Logger.LogInformation($"Export {exportId} complete: {dogLabels.Count} images, {sizeMb}MB");
+            context.Logger.LogInformation($"Export {exportId} complete: {dogLabelsWithBoxes.Count + noDogLabels.Count} images ({dogLabelsWithBoxes.Count} dogs, {noDogLabels.Count} background), {sizeMb}MB");
             File.Delete(zipPath);
         }
         catch (Exception ex)
@@ -225,21 +238,22 @@ public class Function
             var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight);
             var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
             await using (var labelStream = labelEntry.Open())
-            await using (var writer = new StreamWriter(labelStream, Encoding.UTF8))
+            await using (var writer = new StreamWriter(labelStream, new UTF8Encoding(false)))
                 await writer.WriteAsync(labelContent);
         }
     }
 
     private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight)
     {
+        // no_dog = background image, empty label file
+        if (label.ConfirmedLabel == "no_dog")
+            return "";
+
         var classId = label.ConfirmedLabel == "my_dog" ? 0 : 1;
         var boxes = ParseBoundingBoxes(label.BoundingBoxes);
 
         if (boxes.Count == 0)
-        {
-            // No bounding boxes — use full image as a single detection
-            return $"{classId} 0.5 0.5 1.0 1.0";
-        }
+            return "";
 
         var sb = new StringBuilder();
         foreach (var box in boxes)
@@ -267,6 +281,11 @@ public class Function
         }
 
         return sb.ToString();
+    }
+
+    private static bool HasBoundingBoxes(string json)
+    {
+        return ParseBoundingBoxes(json).Count > 0;
     }
 
     private static List<float[]> ParseBoundingBoxes(string json)

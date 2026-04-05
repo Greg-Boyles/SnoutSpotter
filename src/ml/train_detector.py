@@ -27,31 +27,56 @@ names:
     return str(path)
 
 
+def resolve_dataset_yaml(data_yaml: str) -> str:
+    """Ensure dataset.yaml has an absolute path so YOLO can find the images."""
+    import yaml
+
+    yaml_path = Path(data_yaml).resolve()
+    with open(yaml_path) as f:
+        cfg = yaml.safe_load(f)
+
+    dataset_path = Path(cfg.get("path", "."))
+    if not dataset_path.is_absolute():
+        cfg["path"] = str(yaml_path.parent / dataset_path)
+        with open(yaml_path, "w") as f:
+            yaml.dump(cfg, f, default_flow_style=False)
+
+    return str(yaml_path)
+
+
 def train(
     data_yaml: str,
     model: str = "yolov8n.pt",
     epochs: int = 100,
     imgsz: int = 640,
     batch: int = 16,
+    workers: int = 4,
+    resume: str = None,
     project: str = "runs/detect",
     name: str = "snout-spotter",
 ):
     """Fine-tune YOLOv8 on the dog detection dataset."""
-    yolo = YOLO(model)
+    data_yaml = resolve_dataset_yaml(data_yaml)
 
-    results = yolo.train(
-        data=data_yaml,
-        epochs=epochs,
-        imgsz=imgsz,
-        batch=batch,
-        project=project,
-        name=name,
-        patience=20,       # Early stopping
-        save=True,
-        save_period=10,    # Save checkpoint every 10 epochs
-        plots=True,
-        verbose=True,
-    )
+    if resume:
+        yolo = YOLO(resume)
+        results = yolo.train(resume=True)
+    else:
+        yolo = YOLO(model)
+        results = yolo.train(
+            data=data_yaml,
+            epochs=epochs,
+            imgsz=imgsz,
+            batch=batch,
+            workers=workers,
+            project=project,
+            name=name,
+            patience=20,       # Early stopping
+            save=True,
+            save_period=10,    # Save checkpoint every 10 epochs
+            plots=True,
+            verbose=True,
+        )
 
     # Export to ONNX for inference Lambda
     best_model = YOLO(f"{project}/{name}/weights/best.pt")
@@ -72,6 +97,8 @@ def main():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--resume", type=str, default=None, help="Path to last.pt to resume from")
     args = parser.parse_args()
 
     train(
@@ -80,6 +107,8 @@ def main():
         epochs=args.epochs,
         imgsz=args.imgsz,
         batch=args.batch,
+        workers=args.workers,
+        resume=args.resume,
     )
 
 

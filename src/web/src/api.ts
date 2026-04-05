@@ -142,6 +142,9 @@ export const api = {
   bulkConfirmLabels: (keyframeKeys: string[], confirmedLabel: string, breed?: string) =>
     postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel, breed }),
 
+  backfillBoundingBoxes: (confirmedLabel?: string) =>
+    postJson<{ total: number; batches: number; message?: string }>(`/ml/labels/backfill-boxes${confirmedLabel ? `?confirmedLabel=${confirmedLabel}` : ""}`),
+
   uploadTrainingImage: async (file: File, label: string = "my_dog", breed?: string) => {
     const formData = new FormData();
     formData.append("files", file);
