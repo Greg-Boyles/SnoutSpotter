@@ -18,6 +18,7 @@ namespace SnoutSpotter.Lambda.AutoLabel;
 public class AutoLabelRequest
 {
     public string? Date { get; set; } // Optional: "YYYY/MM/DD" to scope to a specific day
+    public List<string>? ReprocessKeys { get; set; } // Optional: reprocess specific keys to backfill bounding boxes
 }
 
 public class Function
@@ -43,6 +44,9 @@ public class Function
     public async Task<object> FunctionHandler(AutoLabelRequest request, ILambdaContext context)
     {
         await EnsureModelLoaded(context);
+
+        if (request.ReprocessKeys != null && request.ReprocessKeys.Count > 0)
+            return await ReprocessHandler(request.ReprocessKeys, context);
 
         var prefix = "keyframes/";
         if (!string.IsNullOrEmpty(request.Date))
@@ -126,6 +130,53 @@ public class Function
 
         context.Logger.LogInformation($"Done: {processed} processed, {skipped} skipped, {dogsFound} dogs found");
         return new { processed, skipped, dogsFound, total = keyframes.Count };
+    }
+
+    private async Task<object> ReprocessHandler(List<string> keys, ILambdaContext context)
+    {
+        context.Logger.LogInformation($"Reprocess mode: {keys.Count} keys to reprocess for bounding boxes");
+
+        var reprocessed = 0;
+        var failed = 0;
+
+        foreach (var keyframeKey in keys)
+        {
+            if (context.RemainingTime.TotalSeconds < 30)
+            {
+                context.Logger.LogWarning($"Running low on time, stopping after {reprocessed} reprocessed");
+                break;
+            }
+
+            try
+            {
+                var (_, confidence, boxes) = await DetectDogs(keyframeKey);
+
+                await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
+                {
+                    TableName = _tableName,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["keyframe_key"] = new() { S = keyframeKey }
+                    },
+                    UpdateExpression = "SET bounding_boxes = :boxes, confidence = :conf",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":boxes"] = new() { S = JsonSerializer.Serialize(boxes) },
+                        [":conf"] = new() { N = confidence.ToString("F4") }
+                    }
+                });
+
+                reprocessed++;
+            }
+            catch (Exception ex)
+            {
+                context.Logger.LogWarning($"Failed to reprocess {keyframeKey}: {ex.Message}");
+                failed++;
+            }
+        }
+
+        context.Logger.LogInformation($"Reprocess done: {reprocessed} updated, {failed} failed");
+        return new { reprocessed, failed, total = keys.Count };
     }
 
     private async Task EnsureModelLoaded(ILambdaContext context)
