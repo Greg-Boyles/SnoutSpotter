@@ -41,16 +41,35 @@ public class Function
         _modelKey = Environment.GetEnvironmentVariable("MODEL_KEY") ?? "models/yolov8n.onnx";
     }
 
-    public async Task<object> FunctionHandler(AutoLabelRequest request, ILambdaContext context)
+    // Single entry point handles both direct invocations (AutoLabelRequest) and SQS trigger events
+    public async Task<object> FunctionHandler(System.Text.Json.JsonElement request, ILambdaContext context)
     {
         await EnsureModelLoaded(context);
 
-        if (request.ReprocessKeys != null && request.ReprocessKeys.Count > 0)
-            return await ReprocessHandler(request.ReprocessKeys, context);
+        // SQS event: { "Records": [ { "body": "<json array of keyframe keys>" }, ... ] }
+        if (request.TryGetProperty("Records", out var records))
+        {
+            var allKeys = new List<string>();
+            foreach (var record in records.EnumerateArray())
+            {
+                var body = record.GetProperty("body").GetString() ?? "[]";
+                var keys = System.Text.Json.JsonSerializer.Deserialize<List<string>>(body) ?? [];
+                allKeys.AddRange(keys);
+            }
+            context.Logger.LogInformation($"SQS trigger: {allKeys.Count} keys to reprocess");
+            return await ReprocessHandler(allKeys, context);
+        }
+
+        // Direct invocation: AutoLabelRequest
+        var autoLabelRequest = System.Text.Json.JsonSerializer.Deserialize<AutoLabelRequest>(request.GetRawText())
+            ?? new AutoLabelRequest();
+
+        if (autoLabelRequest.ReprocessKeys != null && autoLabelRequest.ReprocessKeys.Count > 0)
+            return await ReprocessHandler(autoLabelRequest.ReprocessKeys, context);
 
         var prefix = "keyframes/";
-        if (!string.IsNullOrEmpty(request.Date))
-            prefix = $"keyframes/{request.Date}/";
+        if (!string.IsNullOrEmpty(autoLabelRequest.Date))
+            prefix = $"keyframes/{autoLabelRequest.Date}/";
 
         // List all keyframes
         var keyframes = new List<string>();
