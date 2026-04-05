@@ -67,7 +67,7 @@ function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed"
 }
 
 export default function Labels() {
-  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
+  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; breeds: Record<string, number> } | null>(null);
   const [labels, setLabels] = useState<LabelItem[]>([]);
   const [filter, setFilter] = useState<Filter>("unreviewed");
   const [loading, setLoading] = useState(true);
@@ -448,7 +448,7 @@ export default function Labels() {
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="grid grid-cols-3 gap-3 mb-3">
             {[
               { label: "Confirmed My Dog", value: stats.myDog, color: "text-green-600" },
               { label: "Confirmed Other Dog", value: stats.otherDog, color: "text-orange-600" },
@@ -459,6 +459,31 @@ export default function Labels() {
                 <p className="text-xs text-gray-500">{label}</p>
               </div>
             ))}
+          </div>
+          {/* Bounding box coverage */}
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            {[
+              { label: "My Dog", withBoxes: stats.myDogWithBoxes, withoutBoxes: stats.myDogWithoutBoxes, color: "text-green-600" },
+              { label: "Other Dog", withBoxes: stats.otherDogWithBoxes, withoutBoxes: stats.otherDogWithoutBoxes, color: "text-orange-600" },
+            ].map(({ label, withBoxes, withoutBoxes, color }) => {
+              const total = withBoxes + withoutBoxes;
+              const pct = total > 0 ? Math.round((withBoxes / total) * 100) : 0;
+              return (
+                <div key={label} className="bg-white rounded-lg border border-gray-200 p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-xs font-medium ${color}`}>{label} — Bounding Boxes</span>
+                    <span className="text-xs text-gray-500">{pct}% covered</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-2 mb-2">
+                    <div className="bg-violet-500 h-2 rounded-full" style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span><span className="font-medium text-violet-600">{withBoxes.toLocaleString()}</span> with boxes</span>
+                    <span><span className="font-medium text-gray-400">{withoutBoxes.toLocaleString()}</span> without</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </>
       )}

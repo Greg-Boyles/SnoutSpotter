@@ -44,7 +44,7 @@ public class LabelService : ILabelService
         var noDogs = await CountAsync("by-label", "no_dog");
         var unreviewed = await CountAsync("by-review", "false");
         var reviewed = await CountAsync("by-review", "true");
-        var (confirmedCounts, breedCounts) = await CountConfirmedLabelsAsync();
+        var (confirmedCounts, breedCounts, withBoxes, withoutBoxes) = await CountConfirmedLabelsAsync();
 
         return new
         {
@@ -52,14 +52,20 @@ public class LabelService : ILabelService
             myDog = confirmedCounts.GetValueOrDefault("my_dog"),
             otherDog = confirmedCounts.GetValueOrDefault("other_dog"),
             confirmedNoDog = confirmedCounts.GetValueOrDefault("no_dog"),
+            myDogWithBoxes = withBoxes.GetValueOrDefault("my_dog"),
+            myDogWithoutBoxes = withoutBoxes.GetValueOrDefault("my_dog"),
+            otherDogWithBoxes = withBoxes.GetValueOrDefault("other_dog"),
+            otherDogWithoutBoxes = withoutBoxes.GetValueOrDefault("other_dog"),
             breeds = breedCounts,
         };
     }
 
-    private async Task<(Dictionary<string, int> labels, Dictionary<string, int> breeds)> CountConfirmedLabelsAsync()
+    private async Task<(Dictionary<string, int> labels, Dictionary<string, int> breeds, Dictionary<string, int> withBoxes, Dictionary<string, int> withoutBoxes)> CountConfirmedLabelsAsync()
     {
         var counts = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0, ["no_dog"] = 0 };
         var breedCounts = new Dictionary<string, int>();
+        var withBoxes = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0 };
+        var withoutBoxes = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0 };
         Dictionary<string, AttributeValue>? lastKey = null;
 
         do
@@ -73,7 +79,7 @@ public class LabelService : ILabelService
                 {
                     [":rev"] = new() { S = "true" }
                 },
-                ProjectionExpression = "confirmed_label, breed",
+                ProjectionExpression = "confirmed_label, breed, bounding_boxes",
                 ExclusiveStartKey = lastKey
             });
 
@@ -82,6 +88,15 @@ public class LabelService : ILabelService
                 var label = item.GetValueOrDefault("confirmed_label")?.S ?? "";
                 if (counts.ContainsKey(label))
                     counts[label]++;
+
+                if (label is "my_dog" or "other_dog")
+                {
+                    var boxes = item.GetValueOrDefault("bounding_boxes")?.S ?? "[]";
+                    if (boxes != "[]" && !string.IsNullOrEmpty(boxes))
+                        withBoxes[label]++;
+                    else
+                        withoutBoxes[label]++;
+                }
 
                 var breed = item.GetValueOrDefault("breed")?.S;
                 if (!string.IsNullOrEmpty(breed))
@@ -94,7 +109,7 @@ public class LabelService : ILabelService
             lastKey = response.LastEvaluatedKey;
         } while (lastKey != null && lastKey.Count > 0);
 
-        return (counts, breedCounts);
+        return (counts, breedCounts, withBoxes, withoutBoxes);
     }
 
     private async Task<int> CountAsync(string? indexName, string? pkValue)
