@@ -121,6 +121,16 @@ public class LabelsController : ControllerBase
         return Ok(new { message = $"Updated {count} labels with breed '{request.Breed}'" , updated = count });
     }
 
+    [HttpPost("labels/backfill-boxes")]
+    public async Task<ActionResult> BackfillBoundingBoxes([FromQuery] string? confirmedLabel = null)
+    {
+        if (confirmedLabel != null && confirmedLabel is not ("my_dog" or "other_dog"))
+            return BadRequest(new { error = "confirmedLabel must be 'my_dog' or 'other_dog'" });
+
+        var result = await _labelService.BackfillBoundingBoxesAsync(confirmedLabel);
+        return Ok(result);
+    }
+
     [HttpPost("labels/upload")]
     [RequestSizeLimit(100 * 1024 * 1024)] // 100MB total
     public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog", [FromQuery] string? breed = null)
