@@ -35,20 +35,6 @@ var inferenceStack = new InferenceStack(app, "SnoutSpotter-Inference", new Infer
 var oktaIssuer = (string?)app.Node.TryGetContext("oktaIssuer") ?? "https://integrator-4203185.okta.com/oauth2/default";
 var allowedOrigin = (string?)app.Node.TryGetContext("allowedOrigin") ?? "https://d2c95zo6ucmtrt.cloudfront.net";
 
-var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
-{
-    Env = env,
-    DataBucket = coreStack.DataBucket,
-    ClipsTable = coreStack.ClipsTable,
-    CommandsTable = coreStack.CommandsTable,
-    LabelsTable = coreStack.LabelsTable,
-    ExportsTable = coreStack.ExportsTable,
-    ApiEcrRepo = coreStack.ApiEcrRepo,
-    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
-    OktaIssuer = oktaIssuer,
-    AllowedOrigin = allowedOrigin
-});
-
 var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new IoTStackProps
 {
     Env = env,
@@ -87,6 +73,21 @@ var autoLabelStack = new AutoLabelStack(app, "SnoutSpotter-AutoLabel", new AutoL
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     DataBucket = coreStack.DataBucket,
     LabelsTable = coreStack.LabelsTable
+});
+
+var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
+{
+    Env = env,
+    DataBucket = coreStack.DataBucket,
+    ClipsTable = coreStack.ClipsTable,
+    CommandsTable = coreStack.CommandsTable,
+    LabelsTable = coreStack.LabelsTable,
+    ExportsTable = coreStack.ExportsTable,
+    ApiEcrRepo = coreStack.ApiEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    OktaIssuer = oktaIssuer,
+    AllowedOrigin = allowedOrigin,
+    BackfillQueueUrl = autoLabelStack.BackfillQueue.QueueUrl
 });
 
 var exportDatasetStack = new ExportDatasetStack(app, "SnoutSpotter-ExportDataset", new ExportDatasetStackProps

@@ -462,21 +462,22 @@ public class LabelService : ILabelService
         if (allKeys.Count == 0)
             return new { total = 0, batches = 0, message = "No labels found with missing bounding boxes" };
 
-        // Chunk into batches of 500 and fire async Lambda invocations
-        const int batchSize = 500;
+        if (string.IsNullOrEmpty(_config.BackfillQueueUrl))
+            throw new InvalidOperationException("BACKFILL_QUEUE_URL is not configured");
+
+        // Send each batch as an SQS message — Lambda processes them one at a time (MaxConcurrency=1)
+        const int batchSize = 100;
         var batches = 0;
-        using var lambdaClient = new AmazonLambdaClient();
+        using var sqsClient = new Amazon.SQS.AmazonSQSClient();
 
         for (var i = 0; i < allKeys.Count; i += batchSize)
         {
             var batch = allKeys.Skip(i).Take(batchSize).ToList();
-            var payload = JsonSerializer.Serialize(new { ReprocessKeys = batch });
 
-            await lambdaClient.InvokeAsync(new Amazon.Lambda.Model.InvokeRequest
+            await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
             {
-                FunctionName = _config.AutoLabelFunction,
-                InvocationType = Amazon.Lambda.InvocationType.Event,
-                Payload = payload
+                QueueUrl = _config.BackfillQueueUrl,
+                MessageBody = JsonSerializer.Serialize(batch)
             });
 
             batches++;
