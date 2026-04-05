@@ -20,6 +20,7 @@ public class ApiStackProps : StackProps
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
     public string InferenceFunctionName { get; init; } = "snout-spotter-run-inference";
+    public string BackfillQueueUrl { get; init; } = "";
     public required string ImageTag { get; init; }
     public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
     public required string OktaIssuer { get; init; }
@@ -55,6 +56,7 @@ public class ApiStack : Stack
                 ["COMMANDS_TABLE"] = props.CommandsTable.TableName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
                 ["AUTO_LABEL_FUNCTION"] = props.AutoLabelFunctionName,
+                ["BACKFILL_QUEUE_URL"] = props.BackfillQueueUrl,
                 ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
                 ["EXPORT_DATASET_FUNCTION"] = props.ExportDatasetFunctionName,
                 ["INFERENCE_FUNCTION"] = props.InferenceFunctionName
@@ -115,6 +117,17 @@ public class ApiStack : Stack
                 $"arn:aws:lambda:{Region}:{Account}:function:{props.InferenceFunctionName}"
             }
         }));
+
+        // SQS SendMessage for backfill queue
+        if (!string.IsNullOrEmpty(props.BackfillQueueUrl))
+        {
+            apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+            {
+                Effect = Effect.ALLOW,
+                Actions = new[] { "sqs:SendMessage" },
+                Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-backfill-boxes" }
+            }));
+        }
 
         // IoT Publish for device commands
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps

@@ -2,7 +2,9 @@ using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.Lambda;
+using Amazon.CDK.AWS.Lambda.EventSources;
 using Amazon.CDK.AWS.S3;
+using Amazon.CDK.AWS.SQS;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -18,9 +20,30 @@ public class AutoLabelStackProps : StackProps
 public class AutoLabelStack : Stack
 {
     public Function AutoLabelFunction { get; }
+    public Queue BackfillQueue { get; }
 
     public AutoLabelStack(Construct scope, string id, AutoLabelStackProps props) : base(scope, id, props)
     {
+        // Dead-letter queue for failed backfill batches
+        var dlq = new Queue(this, "BackfillDlq", new QueueProps
+        {
+            QueueName = "snout-spotter-backfill-boxes-dlq",
+            RetentionPeriod = Duration.Days(7)
+        });
+
+        // Backfill queue — feeds bounding-box reprocess jobs to the Lambda one at a time
+        BackfillQueue = new Queue(this, "BackfillQueue", new QueueProps
+        {
+            QueueName = "snout-spotter-backfill-boxes",
+            VisibilityTimeout = Duration.Minutes(20), // must exceed Lambda timeout
+            RetentionPeriod = Duration.Days(1),
+            DeadLetterQueue = new DeadLetterQueue
+            {
+                Queue = dlq,
+                MaxReceiveCount = 2
+            }
+        });
+
         AutoLabelFunction = new DockerImageFunction(this, "AutoLabelFunction", new DockerImageFunctionProps
         {
             FunctionName = "snout-spotter-auto-label",
@@ -42,10 +65,23 @@ public class AutoLabelStack : Stack
         props.DataBucket.GrantRead(AutoLabelFunction);
         props.LabelsTable.GrantReadWriteData(AutoLabelFunction);
 
+        // SQS event source — MaxConcurrency=1 ensures only one Lambda runs at a time
+        AutoLabelFunction.AddEventSource(new SqsEventSource(BackfillQueue, new SqsEventSourceProps
+        {
+            BatchSize = 1,
+            MaxConcurrency = 1
+        }));
+
         _ = new CfnOutput(this, "AutoLabelFunctionArn", new CfnOutputProps
         {
             Value = AutoLabelFunction.FunctionArn,
             Description = "ARN of the AutoLabel Lambda function"
+        });
+
+        _ = new CfnOutput(this, "BackfillQueueUrl", new CfnOutputProps
+        {
+            Value = BackfillQueue.QueueUrl,
+            Description = "SQS queue URL for backfill bounding box jobs"
         });
     }
 }
