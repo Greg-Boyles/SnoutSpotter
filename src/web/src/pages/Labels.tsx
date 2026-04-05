@@ -105,10 +105,21 @@ export default function Labels() {
   const [deviceFilter, setDeviceFilter] = useState("");
   const [devices, setDevices] = useState<string[]>([]);
 
+  // Bounding box filter
+  const [boxFilter, setBoxFilter] = useState<"all" | "has_boxes" | "no_boxes">("all");
+
+  const hasBoxes = (item: LabelItem) => {
+    const b = item.bounding_boxes;
+    return !!b && b !== "[]";
+  };
+
   const filteredLabels = useMemo(() => {
     let items = labels.filter((item) => {
       const conf = item.confidence ? parseFloat(item.confidence) : 0;
-      return conf >= confidenceMin;
+      if (conf < confidenceMin) return false;
+      if (boxFilter === "has_boxes") return hasBoxes(item);
+      if (boxFilter === "no_boxes") return !hasBoxes(item);
+      return true;
     });
     if (sortOrder === "asc") {
       items = [...items].sort((a, b) => parseFloat(a.confidence || "0") - parseFloat(b.confidence || "0"));
@@ -116,7 +127,7 @@ export default function Labels() {
       items = [...items].sort((a, b) => parseFloat(b.confidence || "0") - parseFloat(a.confidence || "0"));
     }
     return items;
-  }, [labels, confidenceMin, sortOrder]);
+  }, [labels, confidenceMin, sortOrder, boxFilter]);
 
   const loadStats = () => api.getLabelStats().then(setStats).catch(console.error);
 
@@ -532,6 +543,20 @@ export default function Labels() {
           </label>
         )}
 
+        <label className="flex items-center gap-2 text-gray-600">
+          <Crosshair className="w-4 h-4" />
+          <span>Boxes:</span>
+          <select
+            value={boxFilter}
+            onChange={(e) => setBoxFilter(e.target.value as "all" | "has_boxes" | "no_boxes")}
+            className="text-xs border border-gray-300 rounded px-2 py-1"
+          >
+            <option value="all">All</option>
+            <option value="has_boxes">Has boxes</option>
+            <option value="no_boxes">No boxes</option>
+          </select>
+        </label>
+
         <span className="text-xs text-gray-400 ml-auto">
           Showing {filteredLabels.length} of {labels.length} loaded
         </span>
@@ -654,6 +679,13 @@ export default function Labels() {
                     {isSelected && (
                       <div className="absolute top-1 right-8">
                         <CheckCircle className="w-5 h-5 text-blue-600 drop-shadow" />
+                      </div>
+                    )}
+                    {hasBoxes(item) && (
+                      <div className="absolute bottom-1 left-1">
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-violet-600 bg-opacity-80 text-white text-xs rounded">
+                          <Crosshair className="w-3 h-3" /> boxes
+                        </span>
                       </div>
                     )}
                     {item.confidence && parseFloat(item.confidence) > 0 && (
