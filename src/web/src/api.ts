@@ -51,6 +51,16 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
 async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "DELETE",
@@ -144,6 +154,9 @@ export const api = {
 
   bulkConfirmLabels: (keyframeKeys: string[], confirmedLabel: string, breed?: string) =>
     postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel, breed }),
+
+  updateBoundingBoxes: (keyframeKey: string, boxes: number[][]) =>
+    patchJson<{ message: string; count: number }>(`/ml/labels/${encodeURIComponent(keyframeKey)}/bounding-boxes`, { boxes }),
 
   backfillBoundingBoxes: (confirmedLabel?: string, keys?: string[]) =>
     postJson<{ total: number; batches: number; message?: string }>("/ml/labels/backfill-boxes", { confirmedLabel, keys }),

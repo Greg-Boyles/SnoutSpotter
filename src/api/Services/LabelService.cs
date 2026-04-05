@@ -495,6 +495,23 @@ public class LabelService : ILabelService
         return new { total = allKeys.Count, batches };
     }
 
+    public async Task UpdateBoundingBoxesAsync(string keyframeKey, List<float[]> boxes)
+    {
+        await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
+        {
+            TableName = _config.LabelsTable,
+            Key = new Dictionary<string, AttributeValue>
+            {
+                ["keyframe_key"] = new() { S = keyframeKey }
+            },
+            UpdateExpression = "SET bounding_boxes = :boxes",
+            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            {
+                [":boxes"] = new() { S = JsonSerializer.Serialize(boxes) }
+            }
+        });
+    }
+
     public async Task<Dictionary<string, string?>?> GetLabelAsync(string keyframeKey)
     {
         var response = await _dynamoDb.GetItemAsync(new GetItemRequest
