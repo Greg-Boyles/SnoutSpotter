@@ -25,6 +25,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.AutoLabelFunction = Environment.GetEnvironmentVariable("AUTO_LABEL_FUNCTION") ?? "snout-spotter-auto-label";
     cfg.ExportDatasetFunction = Environment.GetEnvironmentVariable("EXPORT_DATASET_FUNCTION") ?? "snout-spotter-export-dataset";
     cfg.InferenceFunction = Environment.GetEnvironmentVariable("INFERENCE_FUNCTION") ?? "snout-spotter-run-inference";
+    cfg.BackfillQueueUrl = Environment.GetEnvironmentVariable("BACKFILL_QUEUE_URL") ?? "";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });
