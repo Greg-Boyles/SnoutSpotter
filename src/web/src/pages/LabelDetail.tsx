@@ -1,0 +1,368 @@
+import { useEffect, useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, Dog, Ban, CheckCircle, Crosshair, Loader2, ExternalLink } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { api } from "../api";
+
+const DOG_BREEDS = [
+  "Unknown", "Mixed",
+  "Affenpinscher", "Afghan Hound", "African Hunting Dog", "Airedale",
+  "American Staffordshire Terrier", "Appenzeller", "Australian Terrier",
+  "Basenji", "Basset", "Beagle", "Bedlington Terrier", "Bernese Mountain Dog",
+  "Black-and-tan Coonhound", "Blenheim Spaniel", "Bloodhound", "Bluetick",
+  "Border Collie", "Border Terrier", "Borzoi", "Boston Bull",
+  "Bouvier des Flandres", "Boxer", "Brabancon Griffon", "Briard",
+  "Brittany Spaniel", "Bull Mastiff", "Cairn", "Cardigan",
+  "Chesapeake Bay Retriever", "Chihuahua", "Chow", "Clumber",
+  "Cocker Spaniel", "Collie", "Curly-coated Retriever", "Dandie Dinmont",
+  "Dhole", "Dingo", "Doberman", "English Foxhound", "English Setter",
+  "English Springer", "EntleBucher", "Eskimo Dog", "Flat-coated Retriever",
+  "French Bulldog", "German Shepherd", "German Short-haired Pointer",
+  "Giant Schnauzer", "Golden Retriever", "Gordon Setter", "Great Dane",
+  "Great Pyrenees", "Greater Swiss Mountain Dog", "Groenendael",
+  "Ibizan Hound", "Irish Setter", "Irish Terrier", "Irish Water Spaniel",
+  "Irish Wolfhound", "Italian Greyhound", "Japanese Spaniel", "Keeshond",
+  "Kelpie", "Kerry Blue Terrier", "Komondor", "Kuvasz",
+  "Labrador Retriever", "Lakeland Terrier", "Leonberg", "Lhasa",
+  "Malamute", "Malinois", "Maltese Dog", "Mexican Hairless",
+  "Miniature Pinscher", "Miniature Poodle", "Miniature Schnauzer",
+  "Newfoundland", "Norfolk Terrier", "Norwegian Elkhound", "Norwich Terrier",
+  "Old English Sheepdog", "Otterhound", "Papillon", "Pekinese", "Pembroke",
+  "Pomeranian", "Pug", "Redbone", "Rhodesian Ridgeback", "Rottweiler",
+  "Saint Bernard", "Saluki", "Samoyed", "Schipperke", "Scotch Terrier",
+  "Scottish Deerhound", "Sealyham Terrier", "Shetland Sheepdog", "Shih-Tzu",
+  "Siberian Husky", "Silky Terrier", "Soft-coated Wheaten Terrier",
+  "Staffordshire Bullterrier", "Standard Poodle", "Standard Schnauzer",
+  "Sussex Spaniel", "Tibetan Mastiff", "Tibetan Terrier", "Toy Poodle",
+  "Toy Terrier", "Vizsla", "Walker Hound", "Weimaraner",
+  "Welsh Springer Spaniel", "West Highland White Terrier", "Whippet",
+  "Wire-haired Fox Terrier", "Yorkshire Terrier",
+];
+
+function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed" }) {
+  const isDog = label === "dog" || label === "my_dog";
+  const isOtherDog = label === "other_dog";
+  const color = type === "confirmed"
+    ? isDog ? "bg-green-100 text-green-800" : isOtherDog ? "bg-orange-100 text-orange-800" : "bg-gray-100 text-gray-700"
+    : isDog ? "bg-amber-50 text-amber-700" : "bg-gray-50 text-gray-500";
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${color}`}>
+      {isDog ? <Dog className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
+      {label}
+    </span>
+  );
+}
+
+function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex justify-between items-start gap-2 py-2 border-b border-gray-100 last:border-0">
+      <span className="text-xs text-gray-500 whitespace-nowrap">{label}</span>
+      <span className="text-xs text-gray-900 text-right break-all">{children}</span>
+    </div>
+  );
+}
+
+export default function LabelDetail() {
+  const { keyframeKey: encodedKey } = useParams<{ keyframeKey: string }>();
+  const navigate = useNavigate();
+  const keyframeKey = decodeURIComponent(encodedKey ?? "");
+
+  const [label, setLabel] = useState<Record<string, string | null> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reboxing, setReboxing] = useState(false);
+  const [reboxResult, setReboxResult] = useState("");
+  const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [pendingLabel, setPendingLabel] = useState<"my_dog" | "other_dog" | "no_dog" | null>(null);
+  const [pendingBreed, setPendingBreed] = useState("Unknown");
+  const [confirming, setConfirming] = useState(false);
+
+  const loadLabel = () => {
+    setLoading(true);
+    api.getLabel(keyframeKey)
+      .then((data) => { setLabel(data); setLoading(false); })
+      .catch((e: Error) => { setError(e.message); setLoading(false); });
+  };
+
+  useEffect(() => {
+    if (keyframeKey) loadLabel();
+  }, [keyframeKey]);
+
+  const handleRebox = async () => {
+    setReboxing(true);
+    setReboxResult("");
+    try {
+      await api.backfillBoundingBoxes(undefined, [keyframeKey]);
+      setReboxResult("Queued for re-boxing — refresh in a moment to see updated boxes.");
+      setTimeout(() => setReboxResult(""), 8000);
+    } catch (e) {
+      console.error(e);
+      setReboxResult("Rebox failed — check console.");
+      setTimeout(() => setReboxResult(""), 5000);
+    }
+    setReboxing(false);
+  };
+
+  const handleConfirm = async () => {
+    if (!pendingLabel) return;
+    setConfirming(true);
+    try {
+      const breed = pendingLabel !== "no_dog" ? pendingBreed : undefined;
+      await api.updateLabel(keyframeKey, pendingLabel, breed);
+      setPendingLabel(null);
+      setEditing(false);
+      loadLabel();
+    } catch (e) {
+      console.error(e);
+    }
+    setConfirming(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-gray-400">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading label...
+      </div>
+    );
+  }
+
+  if (error || !label) {
+    return (
+      <div className="text-red-600 bg-red-50 p-4 rounded-lg">
+        {error ?? "Label not found"}
+      </div>
+    );
+  }
+
+  const isReviewed = label.reviewed === "true";
+  const confirmedLabel = label.confirmed_label;
+  const autoLabel = label.auto_label ?? "";
+  const confidence = label.confidence ? parseFloat(label.confidence) : null;
+  const boundingBoxes: number[][] = (() => {
+    try { return JSON.parse(label.bounding_boxes ?? "[]"); } catch { return []; }
+  })();
+  const hasBoxes = boundingBoxes.length > 0;
+  const filename = keyframeKey.split("/").pop() ?? keyframeKey;
+  const isDogLabel = confirmedLabel === "my_dog" || confirmedLabel === "other_dog";
+
+  return (
+    <div>
+      {/* Top bar */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => navigate(-1)}
+          className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-900"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <span className="text-gray-300">/</span>
+        <Link to="/labels" className="text-sm text-gray-500 hover:text-gray-900">Labels</Link>
+        <span className="text-gray-300">/</span>
+        <span className="text-sm text-gray-900 font-medium truncate max-w-xs">{filename}</span>
+      </div>
+
+      <div className="flex gap-6">
+        {/* Left: image */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-black rounded-xl overflow-hidden relative" style={{ aspectRatio: "16/9" }}>
+            {label.imageUrl ? (
+              <>
+                <img
+                  src={label.imageUrl}
+                  alt=""
+                  className="w-full h-full object-contain"
+                  onLoad={(e) => {
+                    const img = e.target as HTMLImageElement;
+                    setImageDims({ w: img.naturalWidth, h: img.naturalHeight });
+                  }}
+                />
+                {hasBoxes && imageDims && (
+                  <svg
+                    className="absolute inset-0 w-full h-full pointer-events-none"
+                    viewBox={`0 0 ${imageDims.w} ${imageDims.h}`}
+                    preserveAspectRatio="xMidYMid meet"
+                  >
+                    {boundingBoxes.map((box, i) => (
+                      <rect
+                        key={i}
+                        x={box[0]} y={box[1]}
+                        width={box[2]} height={box[3]}
+                        fill="none"
+                        stroke="#7c3aed"
+                        strokeWidth={Math.max(imageDims.w, imageDims.h) / 200}
+                      />
+                    ))}
+                  </svg>
+                )}
+              </>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-gray-600">
+                No image available
+              </div>
+            )}
+          </div>
+
+          {/* Bounding box status */}
+          <div className="mt-3 flex items-center justify-between">
+            <span className="text-sm text-gray-500">
+              {hasBoxes
+                ? <span className="text-violet-600 font-medium">{boundingBoxes.length} bounding box{boundingBoxes.length !== 1 ? "es" : ""} detected</span>
+                : <span className="text-gray-400">No bounding boxes detected</span>
+              }
+            </span>
+            <button
+              onClick={handleRebox}
+              disabled={reboxing}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg disabled:opacity-50"
+            >
+              {reboxing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />}
+              {reboxing ? "Queuing..." : "Re-box"}
+            </button>
+          </div>
+          {reboxResult && (
+            <p className="mt-2 text-sm text-violet-700 bg-violet-50 px-3 py-2 rounded-lg">{reboxResult}</p>
+          )}
+        </div>
+
+        {/* Right: details panel */}
+        <div className="w-72 shrink-0 space-y-4">
+          {/* Label status */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Label</h2>
+            <div className="flex flex-wrap gap-2 mb-3">
+              <div>
+                <p className="text-xs text-gray-400 mb-1">Auto</p>
+                <LabelBadge label={autoLabel} type="auto" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 mb-1">Confirmed</p>
+                {confirmedLabel
+                  ? <LabelBadge label={confirmedLabel} type="confirmed" />
+                  : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">Unreviewed</span>
+                }
+              </div>
+            </div>
+            {confidence !== null && (
+              <p className="text-xs text-gray-500">Confidence: <span className="font-medium text-gray-900">{(confidence * 100).toFixed(1)}%</span></p>
+            )}
+            {confirmedLabel && label.breed && isDogLabel && (
+              <p className="text-xs text-gray-500 mt-1">Breed: <span className="font-medium text-gray-900">{label.breed}</span></p>
+            )}
+            {isReviewed && (
+              <div className="flex items-center gap-1 mt-2 text-xs text-green-600">
+                <CheckCircle className="w-3 h-3" /> Reviewed
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Actions</h2>
+
+            {(!isReviewed || editing) && !pendingLabel && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500">Confirm label:</p>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={() => { setPendingLabel("my_dog"); setPendingBreed("Labrador Retriever"); }}
+                    className="w-full inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg"
+                  >
+                    <Dog className="w-4 h-4" /> My Dog
+                  </button>
+                  <button
+                    onClick={() => { setPendingLabel("other_dog"); setPendingBreed("Unknown"); }}
+                    className="w-full inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-lg"
+                  >
+                    <Dog className="w-4 h-4" /> Other Dog
+                  </button>
+                  <button
+                    onClick={() => { setPendingLabel("no_dog"); handleConfirm(); }}
+                    className="w-full inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg"
+                  >
+                    <Ban className="w-4 h-4" /> No Dog
+                  </button>
+                </div>
+                {editing && (
+                  <button onClick={() => setEditing(false)} className="text-xs text-gray-400 hover:text-gray-600">
+                    Cancel
+                  </button>
+                )}
+              </div>
+            )}
+
+            {pendingLabel && pendingLabel !== "no_dog" && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500">Select breed for {pendingLabel === "my_dog" ? "My Dog" : "Other Dog"}:</p>
+                <select
+                  value={pendingBreed}
+                  onChange={(e) => setPendingBreed(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded px-2 py-1.5"
+                >
+                  {DOG_BREEDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPendingLabel(null)}
+                    className="flex-1 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleConfirm}
+                    disabled={confirming}
+                    className="flex-1 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                  >
+                    {confirming ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Confirm"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isReviewed && !editing && (
+              <button
+                onClick={() => setEditing(true)}
+                className="text-xs text-blue-600 hover:text-blue-700"
+              >
+                Re-review this label
+              </button>
+            )}
+          </div>
+
+          {/* Metadata */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Metadata</h2>
+            <div>
+              {label.clip_id && (
+                <MetaRow label="Clip">
+                  <Link
+                    to={`/clips/${label.clip_id}`}
+                    className="text-blue-600 hover:underline inline-flex items-center gap-1"
+                  >
+                    {label.clip_id.slice(0, 12)}… <ExternalLink className="w-3 h-3" />
+                  </Link>
+                </MetaRow>
+              )}
+              {label.device && (
+                <MetaRow label="Device">{label.device}</MetaRow>
+              )}
+              {label.labelled_at && (
+                <MetaRow label="Labelled">
+                  {formatDistanceToNow(new Date(label.labelled_at), { addSuffix: true })}
+                </MetaRow>
+              )}
+              {label.reviewed_at && (
+                <MetaRow label="Reviewed">
+                  {formatDistanceToNow(new Date(label.reviewed_at), { addSuffix: true })}
+                </MetaRow>
+              )}
+              <MetaRow label="S3 Key">
+                <span className="font-mono text-gray-500 break-all">{keyframeKey}</span>
+              </MetaRow>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

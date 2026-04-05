@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Cpu, Crosshair } from "lucide-react";
+import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Cpu, Crosshair, ExternalLink } from "lucide-react";
 import { api } from "../api";
 
 const DOG_BREEDS = [
@@ -820,6 +820,14 @@ export default function Labels() {
                         {(parseFloat(item.confidence) * 100).toFixed(0)}%
                       </span>
                     )}
+                    <Link
+                      to={`/labels/${encodeURIComponent(item.keyframe_key)}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title="Open detail"
+                      className="absolute bottom-1 left-1 p-0.5 bg-black bg-opacity-40 rounded hover:bg-opacity-70"
+                    >
+                      <ExternalLink className="w-3 h-3 text-white" />
+                    </Link>
                   </div>
                   {!isReviewed && pendingConfirm?.key !== item.keyframe_key && (
                     <div className="p-2 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>

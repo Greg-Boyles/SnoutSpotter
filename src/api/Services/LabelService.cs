@@ -494,4 +494,29 @@ public class LabelService : ILabelService
 
         return new { total = allKeys.Count, batches };
     }
+
+    public async Task<Dictionary<string, string?>?> GetLabelAsync(string keyframeKey)
+    {
+        var response = await _dynamoDb.GetItemAsync(new GetItemRequest
+        {
+            TableName = _config.LabelsTable,
+            Key = new Dictionary<string, AttributeValue>
+            {
+                ["keyframe_key"] = new() { S = keyframeKey }
+            }
+        });
+
+        if (!response.IsItemSet || response.Item.Count == 0)
+            return null;
+
+        var dict = new Dictionary<string, string?>();
+        foreach (var (k, v) in response.Item)
+        {
+            if (v.S != null) dict[k] = v.S;
+            else if (v.N != null) dict[k] = v.N;
+        }
+
+        dict["imageUrl"] = GetPresignedUrl(keyframeKey);
+        return dict;
+    }
 }

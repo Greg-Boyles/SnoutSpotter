@@ -124,6 +124,9 @@ export const api = {
   getLabelStats: () =>
     fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; breeds: Record<string, number> }>("/ml/labels/stats"),
 
+  getLabel: (keyframeKey: string) =>
+    fetchJson<Record<string, string | null>>(`/ml/labels/${encodeURIComponent(keyframeKey)}`),
+
   getLabels: (params: { reviewed?: string; label?: string; confirmedLabel?: string; breed?: string; device?: string; limit?: number; nextPageKey?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.reviewed) qs.set("reviewed", params.reviewed);

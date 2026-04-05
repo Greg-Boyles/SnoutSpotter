@@ -14,6 +14,7 @@ import CommandHistory from "./pages/CommandHistory";
 import DeviceDetail from "./pages/DeviceDetail";
 import DeviceShadow from "./pages/DeviceShadow";
 import Labels from "./pages/Labels";
+import LabelDetail from "./pages/LabelDetail";
 import TrainingExports from "./pages/TrainingExports";
 import Models from "./pages/Models";
 import { setAuthGetter } from "./api";
@@ -105,6 +106,7 @@ export default function App() {
                   <Route path="/clips/:id" element={<ClipDetail />} />
                   <Route path="/detections" element={<Detections />} />
                   <Route path="/live" element={<LiveView />} />
+                  <Route path="/labels/:keyframeKey" element={<LabelDetail />} />
                   <Route path="/labels" element={<Labels />} />
                   <Route path="/exports" element={<TrainingExports />} />
                   <Route path="/models" element={<Models />} />
