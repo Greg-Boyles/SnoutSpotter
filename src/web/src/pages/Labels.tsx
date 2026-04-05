@@ -85,6 +85,9 @@ export default function Labels() {
   const [uploadStep, setUploadStep] = useState<"label" | "breed">("label");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Natural image dimensions for bounding box scaling
+  const [imageDims, setImageDims] = useState<Record<string, { w: number; h: number }>>({});
+
   // Confidence filter & sort
   const [confidenceMin, setConfidenceMin] = useState(0);
   const [sortOrder, setSortOrder] = useState<"asc" | "desc" | "none">("none");
@@ -668,8 +671,44 @@ export default function Labels() {
                 >
                   <div className="aspect-video bg-gray-100 relative">
                     {item.imageUrl && (
-                      <img src={item.imageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                      <img
+                        src={item.imageUrl}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        onLoad={(e) => {
+                          const img = e.target as HTMLImageElement;
+                          setImageDims((prev) => ({
+                            ...prev,
+                            [item.keyframe_key]: { w: img.naturalWidth, h: img.naturalHeight },
+                          }));
+                        }}
+                      />
                     )}
+                    {/* Bounding box overlay */}
+                    {hasBoxes(item) && imageDims[item.keyframe_key] && (() => {
+                      const { w, h } = imageDims[item.keyframe_key];
+                      const boxes: number[][] = JSON.parse(item.bounding_boxes!);
+                      return (
+                        <svg
+                          className="absolute inset-0 w-full h-full pointer-events-none"
+                          viewBox={`0 0 ${w} ${h}`}
+                          preserveAspectRatio="xMidYMid slice"
+                        >
+                          {boxes.map((box, i) => (
+                            <rect
+                              key={i}
+                              x={box[0]} y={box[1]}
+                              width={box[2]} height={box[3]}
+                              fill="none"
+                              stroke="#7c3aed"
+                              strokeWidth={Math.max(w, h) / 200}
+                              strokeDasharray="none"
+                            />
+                          ))}
+                        </svg>
+                      );
+                    })()}
                     <div className="absolute top-1 left-1">
                       <LabelBadge
                         label={item.confirmed_label || item.auto_label}
@@ -679,13 +718,6 @@ export default function Labels() {
                     {isSelected && (
                       <div className="absolute top-1 right-8">
                         <CheckCircle className="w-5 h-5 text-blue-600 drop-shadow" />
-                      </div>
-                    )}
-                    {hasBoxes(item) && (
-                      <div className="absolute bottom-1 left-1">
-                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-violet-600 bg-opacity-80 text-white text-xs rounded">
-                          <Crosshair className="w-3 h-3" /> boxes
-                        </span>
                       </div>
                     )}
                     {item.confidence && parseFloat(item.confidence) > 0 && (
