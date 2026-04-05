@@ -466,7 +466,7 @@ public class LabelService : ILabelService
             throw new InvalidOperationException("BACKFILL_QUEUE_URL is not configured");
 
         // Send each batch as an SQS message — Lambda processes them one at a time (MaxConcurrency=1)
-        const int batchSize = 500;
+        const int batchSize = 100;
         var batches = 0;
         using var sqsClient = new Amazon.SQS.AmazonSQSClient();
 
