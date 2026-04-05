@@ -13,4 +13,5 @@ public interface ILabelService
     Task<int> BackfillBreedAsync(string confirmedLabel, string breed);
     Task<object> BackfillBoundingBoxesAsync(string? confirmedLabel, List<string>? keys = null);
     Task<Dictionary<string, string?>?> GetLabelAsync(string keyframeKey);
+    Task UpdateBoundingBoxesAsync(string keyframeKey, List<float[]> boxes);
 }

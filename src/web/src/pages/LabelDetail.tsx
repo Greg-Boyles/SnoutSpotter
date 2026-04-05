@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Dog, Ban, CheckCircle, Crosshair, Loader2, ExternalLink } from "lucide-react";
+import { ArrowLeft, Dog, Ban, CheckCircle, Crosshair, Loader2, ExternalLink, PenLine, RotateCcw, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { api } from "../api";
 
@@ -78,6 +78,14 @@ export default function LabelDetail() {
   const [pendingBreed, setPendingBreed] = useState("Unknown");
   const [confirming, setConfirming] = useState(false);
 
+  // Drawing mode
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawnBoxes, setDrawnBoxes] = useState<number[][]>([]);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
+  const [submittingBoxes, setSubmittingBoxes] = useState(false);
+
   const loadLabel = () => {
     setLoading(true);
     api.getLabel(keyframeKey)
@@ -117,6 +125,56 @@ export default function LabelDetail() {
       console.error(e);
     }
     setConfirming(false);
+  };
+
+  const toSvgCoords = (e: React.MouseEvent): { x: number; y: number } => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const svgPt = pt.matrixTransform(svg.getScreenCTM()!.inverse());
+    return { x: svgPt.x, y: svgPt.y };
+  };
+
+  const handleSvgMouseDown = (e: React.MouseEvent) => {
+    if (!drawMode || !imageDims) return;
+    e.preventDefault();
+    setDragStart(toSvgCoords(e));
+    setDragCurrent(null);
+  };
+
+  const handleSvgMouseMove = (e: React.MouseEvent) => {
+    if (!drawMode || !dragStart) return;
+    setDragCurrent(toSvgCoords(e));
+  };
+
+  const handleSvgMouseUp = (e: React.MouseEvent) => {
+    if (!drawMode || !dragStart || !imageDims) return;
+    const end = toSvgCoords(e);
+    const x = Math.max(0, Math.min(dragStart.x, end.x));
+    const y = Math.max(0, Math.min(dragStart.y, end.y));
+    const w = Math.min(Math.abs(end.x - dragStart.x), imageDims.w - x);
+    const h = Math.min(Math.abs(end.y - dragStart.y), imageDims.h - y);
+    if (w > 5 && h > 5) {
+      setDrawnBoxes((prev) => [...prev, [x, y, w, h]]);
+    }
+    setDragStart(null);
+    setDragCurrent(null);
+  };
+
+  const handleSubmitBoxes = async () => {
+    if (drawnBoxes.length === 0) return;
+    setSubmittingBoxes(true);
+    try {
+      await api.updateBoundingBoxes(keyframeKey, drawnBoxes);
+      setDrawMode(false);
+      setDrawnBoxes([]);
+      loadLabel();
+    } catch (err) {
+      console.error("Failed to save boxes:", err);
+    }
+    setSubmittingBoxes(false);
   };
 
   if (loading) {
@@ -177,15 +235,22 @@ export default function LabelDetail() {
                     setImageDims({ w: img.naturalWidth, h: img.naturalHeight });
                   }}
                 />
-                {hasBoxes && imageDims && (
+                {imageDims && (
                   <svg
-                    className="absolute inset-0 w-full h-full pointer-events-none"
+                    ref={svgRef}
+                    className="absolute inset-0 w-full h-full"
                     viewBox={`0 0 ${imageDims.w} ${imageDims.h}`}
                     preserveAspectRatio="xMidYMid meet"
+                    style={{ cursor: drawMode ? "crosshair" : "default", pointerEvents: drawMode ? "all" : "none" }}
+                    onMouseDown={handleSvgMouseDown}
+                    onMouseMove={handleSvgMouseMove}
+                    onMouseUp={handleSvgMouseUp}
+                    onMouseLeave={() => { setDragStart(null); setDragCurrent(null); }}
                   >
+                    {/* Saved boxes from DB */}
                     {boundingBoxes.map((box, i) => (
                       <rect
-                        key={i}
+                        key={`saved-${i}`}
                         x={box[0]} y={box[1]}
                         width={box[2]} height={box[3]}
                         fill="none"
@@ -193,6 +258,30 @@ export default function LabelDetail() {
                         strokeWidth={Math.max(imageDims.w, imageDims.h) / 200}
                       />
                     ))}
+                    {/* User-drawn boxes */}
+                    {drawnBoxes.map((box, i) => (
+                      <rect
+                        key={`drawn-${i}`}
+                        x={box[0]} y={box[1]}
+                        width={box[2]} height={box[3]}
+                        fill="rgba(124, 58, 237, 0.1)"
+                        stroke="#7c3aed"
+                        strokeWidth={Math.max(imageDims.w, imageDims.h) / 200}
+                      />
+                    ))}
+                    {/* Current drag preview */}
+                    {dragStart && dragCurrent && (
+                      <rect
+                        x={Math.min(dragStart.x, dragCurrent.x)}
+                        y={Math.min(dragStart.y, dragCurrent.y)}
+                        width={Math.abs(dragCurrent.x - dragStart.x)}
+                        height={Math.abs(dragCurrent.y - dragStart.y)}
+                        fill="rgba(124, 58, 237, 0.15)"
+                        stroke="#7c3aed"
+                        strokeWidth={Math.max(imageDims.w, imageDims.h) / 200}
+                        strokeDasharray="8"
+                      />
+                    )}
                   </svg>
                 )}
               </>
@@ -203,25 +292,81 @@ export default function LabelDetail() {
             )}
           </div>
 
-          {/* Bounding box status */}
-          <div className="mt-3 flex items-center justify-between">
-            <span className="text-sm text-gray-500">
-              {hasBoxes
-                ? <span className="text-violet-600 font-medium">{boundingBoxes.length} bounding box{boundingBoxes.length !== 1 ? "es" : ""} detected</span>
-                : <span className="text-gray-400">No bounding boxes detected</span>
-              }
-            </span>
-            <button
-              onClick={handleRebox}
-              disabled={reboxing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg disabled:opacity-50"
-            >
-              {reboxing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />}
-              {reboxing ? "Queuing..." : "Re-box"}
-            </button>
-          </div>
-          {reboxResult && (
-            <p className="mt-2 text-sm text-violet-700 bg-violet-50 px-3 py-2 rounded-lg">{reboxResult}</p>
+          {/* Bounding box controls */}
+          {!drawMode ? (
+            <div className="mt-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">
+                  {hasBoxes
+                    ? <span className="text-violet-600 font-medium">{boundingBoxes.length} bounding box{boundingBoxes.length !== 1 ? "es" : ""} detected</span>
+                    : <span className="text-gray-400">No bounding boxes detected</span>
+                  }
+                </span>
+                <div className="flex items-center gap-2">
+                  {(isDogLabel || autoLabel === "dog") && (
+                    <button
+                      onClick={() => { setDrawMode(true); setDrawnBoxes([]); }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg"
+                    >
+                      <PenLine className="w-4 h-4" /> Draw Boxes
+                    </button>
+                  )}
+                  <button
+                    onClick={handleRebox}
+                    disabled={reboxing}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg disabled:opacity-50"
+                  >
+                    {reboxing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />}
+                    {reboxing ? "Queuing..." : "Re-box"}
+                  </button>
+                </div>
+              </div>
+              {reboxResult && (
+                <p className="mt-2 text-sm text-violet-700 bg-violet-50 px-3 py-2 rounded-lg">{reboxResult}</p>
+              )}
+            </div>
+          ) : (
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <p className="text-sm text-green-800 font-medium mb-2">
+                <PenLine className="w-4 h-4 inline mr-1" />
+                Click and drag on the image to draw bounding boxes
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {drawnBoxes.length > 0 && (
+                  <span className="text-xs font-medium text-violet-700 bg-violet-100 px-2 py-0.5 rounded-full">
+                    {drawnBoxes.length} box{drawnBoxes.length !== 1 ? "es" : ""} drawn
+                  </span>
+                )}
+                <button
+                  onClick={() => setDrawnBoxes((prev) => prev.slice(0, -1))}
+                  disabled={drawnBoxes.length === 0}
+                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 rounded disabled:opacity-40"
+                >
+                  <RotateCcw className="w-3 h-3" /> Undo
+                </button>
+                <button
+                  onClick={() => setDrawnBoxes([])}
+                  disabled={drawnBoxes.length === 0}
+                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 rounded disabled:opacity-40"
+                >
+                  <Trash2 className="w-3 h-3" /> Clear
+                </button>
+                <button
+                  onClick={() => { setDrawMode(false); setDrawnBoxes([]); setDragStart(null); setDragCurrent(null); }}
+                  className="px-2 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitBoxes}
+                  disabled={drawnBoxes.length === 0 || submittingBoxes}
+                  className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded disabled:opacity-50 ml-auto"
+                >
+                  {submittingBoxes ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  {submittingBoxes ? "Saving..." : "Submit Boxes"}
+                </button>
+              </div>
+            </div>
           )}
         </div>
 

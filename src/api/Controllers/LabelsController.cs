@@ -83,6 +83,23 @@ public class LabelsController : ControllerBase
         return Ok(new { labels = enriched, nextPageKey = nextKey });
     }
 
+    [HttpPatch("labels/{*keyframeKey}/bounding-boxes")]
+    public async Task<ActionResult> UpdateBoundingBoxes(string keyframeKey, [FromBody] UpdateBoundingBoxesRequest request)
+    {
+        if (request.Boxes == null)
+            return BadRequest(new { error = "boxes is required" });
+
+        // Append confidence 1.0 to each manually-drawn box [x, y, w, h] → [x, y, w, h, 1.0]
+        var boxes = request.Boxes.Select(b =>
+        {
+            if (b.Length < 4) throw new ArgumentException("Each box must have 4 elements [x, y, w, h]");
+            return new float[] { b[0], b[1], b[2], b[3], 1.0f };
+        }).ToList();
+
+        await _labelService.UpdateBoundingBoxesAsync(keyframeKey, boxes);
+        return Ok(new { message = "Bounding boxes updated", count = boxes.Count });
+    }
+
     [HttpGet("labels/{*keyframeKey}")]
     public async Task<ActionResult> GetLabel(string keyframeKey)
     {
@@ -275,3 +292,4 @@ public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
 public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
 public record BackfillBreedRequest(string ConfirmedLabel, string Breed);
 public record BackfillBoxesRequest(string? ConfirmedLabel = null, List<string>? Keys = null);
+public record UpdateBoundingBoxesRequest(List<float[]> Boxes);
