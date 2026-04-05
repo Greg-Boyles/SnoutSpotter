@@ -425,38 +425,47 @@ public class LabelService : ILabelService
         return updated;
     }
 
-    public async Task<object> BackfillBoundingBoxesAsync(string? confirmedLabel)
+    public async Task<object> BackfillBoundingBoxesAsync(string? confirmedLabel, List<string>? keys = null)
     {
-        // Collect all reviewed dog labels with empty bounding boxes
-        var labelsToProcess = confirmedLabel != null
-            ? new[] { confirmedLabel }
-            : new[] { "my_dog", "other_dog" };
+        List<string> allKeys;
 
-        var allKeys = new List<string>();
-
-        foreach (var label in labelsToProcess)
+        if (keys != null && keys.Count > 0)
         {
-            Dictionary<string, AttributeValue>? lastKey = null;
-            do
-            {
-                var response = await _dynamoDb.QueryAsync(new QueryRequest
-                {
-                    TableName = _config.LabelsTable,
-                    IndexName = "by-confirmed-label",
-                    KeyConditionExpression = "confirmed_label = :cl",
-                    FilterExpression = "bounding_boxes = :empty OR attribute_not_exists(bounding_boxes)",
-                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                    {
-                        [":cl"] = new() { S = label },
-                        [":empty"] = new() { S = "[]" }
-                    },
-                    ProjectionExpression = "keyframe_key",
-                    ExclusiveStartKey = lastKey
-                });
+            allKeys = keys;
+        }
+        else
+        {
+            // Collect all reviewed dog labels with empty bounding boxes
+            var labelsToProcess = confirmedLabel != null
+                ? new[] { confirmedLabel }
+                : new[] { "my_dog", "other_dog" };
 
-                allKeys.AddRange(response.Items.Select(item => item["keyframe_key"].S));
-                lastKey = response.LastEvaluatedKey;
-            } while (lastKey != null && lastKey.Count > 0);
+            allKeys = new List<string>();
+
+            foreach (var label in labelsToProcess)
+            {
+                Dictionary<string, AttributeValue>? lastKey = null;
+                do
+                {
+                    var response = await _dynamoDb.QueryAsync(new QueryRequest
+                    {
+                        TableName = _config.LabelsTable,
+                        IndexName = "by-confirmed-label",
+                        KeyConditionExpression = "confirmed_label = :cl",
+                        FilterExpression = "bounding_boxes = :empty OR attribute_not_exists(bounding_boxes)",
+                        ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                        {
+                            [":cl"] = new() { S = label },
+                            [":empty"] = new() { S = "[]" }
+                        },
+                        ProjectionExpression = "keyframe_key",
+                        ExclusiveStartKey = lastKey
+                    });
+
+                    allKeys.AddRange(response.Items.Select(item => item["keyframe_key"].S));
+                    lastKey = response.LastEvaluatedKey;
+                } while (lastKey != null && lastKey.Count > 0);
+            }
         }
 
         if (allKeys.Count == 0)
