@@ -433,7 +433,42 @@ export default function Labels() {
       )}
 
       {/* Stats */}
-      {stats && (
+      {!stats ? (
+        // Skeleton loaders
+        <div className="animate-pulse">
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <div className="h-8 bg-gray-200 rounded w-16 mx-auto mb-2" />
+                <div className="h-3 bg-gray-100 rounded w-12 mx-auto" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <div className="h-8 bg-gray-200 rounded w-16 mx-auto mb-2" />
+                <div className="h-3 bg-gray-100 rounded w-24 mx-auto" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-lg border border-gray-200 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-3 bg-gray-200 rounded w-36" />
+                  <div className="h-3 bg-gray-100 rounded w-16" />
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2 mb-3" />
+                <div className="flex justify-between">
+                  <div className="h-3 bg-gray-100 rounded w-24" />
+                  <div className="h-3 bg-gray-100 rounded w-20" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
         <>
           <div className="grid grid-cols-4 gap-3 mb-3">
             {[

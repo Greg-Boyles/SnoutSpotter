@@ -62,13 +62,16 @@ export default function Dashboard() {
   const [labelStats, setLabelStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number } | null>(null);
   const [latestExport, setLatestExport] = useState<Record<string, string> | null>(null);
   const [runningAutoLabel, setRunningAutoLabel] = useState(false);
+  const [loadingClips, setLoadingClips] = useState(true);
+  const [loadingAllClips, setLoadingAllClips] = useState(true);
+  const [loadingExport, setLoadingExport] = useState(true);
 
   const loadData = () => {
     api.getStats().then(setStats).catch((e: Error) => setError(e.message));
-    api.getClips(8).then((data) => setRecentClips(data.clips)).catch(console.error);
-    api.getClips(500).then((data) => setAllClips(data.clips)).catch(console.error);
+    api.getClips(8).then((data) => { setRecentClips(data.clips); setLoadingClips(false); }).catch(console.error);
+    api.getClips(500).then((data) => { setAllClips(data.clips); setLoadingAllClips(false); }).catch(console.error);
     api.getLabelStats().then(setLabelStats).catch(console.error);
-    api.listExports().then((data) => setLatestExport(data.exports[0] || null)).catch(console.error);
+    api.listExports().then((data) => { setLatestExport(data.exports[0] || null); setLoadingExport(false); }).catch(console.error);
   };
 
   useEffect(() => {
@@ -85,19 +88,6 @@ export default function Dashboard() {
     );
   }
 
-  if (!stats) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
-            <div className="h-4 bg-gray-200 rounded w-24 mb-3" />
-            <div className="h-8 bg-gray-200 rounded w-16" />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
   const activityData = buildActivityData(allClips);
 
   return (
@@ -106,40 +96,44 @@ export default function Dashboard() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard
-          icon={Video}
-          label="Total Clips"
-          value={stats.totalClips}
-          sub={`${stats.clipsToday} today`}
-        />
-        <StatCard
-          icon={Search}
-          label="Detections"
-          value={stats.totalDetections}
-          color="bg-blue-50"
-          iconColor="text-blue-600"
-        />
-        <StatCard
-          icon={Dog}
-          label="My Dog"
-          value={stats.myDogDetections}
-          color="bg-green-50"
-          iconColor="text-green-600"
-        />
-        <StatCard
-          icon={HardDrive}
-          label="Pi Status"
-          value={stats.piOnline ? "Online" : "Offline"}
-          sub={stats.lastUploadTime ? `Last upload ${formatDistanceToNow(new Date(stats.lastUploadTime), { addSuffix: true })}` : undefined}
-          color={stats.piOnline ? "bg-green-50" : "bg-red-50"}
-          iconColor={stats.piOnline ? "text-green-600" : "text-red-600"}
-        />
+        {!stats ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 bg-gray-200 rounded-lg" />
+                <div className="h-3 bg-gray-200 rounded w-20" />
+              </div>
+              <div className="h-8 bg-gray-200 rounded w-16 mb-2" />
+              <div className="h-3 bg-gray-100 rounded w-24" />
+            </div>
+          ))
+        ) : (
+          <>
+            <StatCard icon={Video} label="Total Clips" value={stats.totalClips} sub={`${stats.clipsToday} today`} />
+            <StatCard icon={Search} label="Detections" value={stats.totalDetections} color="bg-blue-50" iconColor="text-blue-600" />
+            <StatCard icon={Dog} label="My Dog" value={stats.myDogDetections} color="bg-green-50" iconColor="text-green-600" />
+            <StatCard
+              icon={HardDrive}
+              label="Pi Status"
+              value={stats.piOnline ? "Online" : "Offline"}
+              sub={stats.lastUploadTime ? `Last upload ${formatDistanceToNow(new Date(stats.lastUploadTime), { addSuffix: true })}` : undefined}
+              color={stats.piOnline ? "bg-green-50" : "bg-red-50"}
+              iconColor={stats.piOnline ? "text-green-600" : "text-red-600"}
+            />
+          </>
+        )}
       </div>
 
       {/* Activity chart */}
-      {activityData.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Clips — Last 14 Days</h2>
+      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+        <h2 className="text-sm font-semibold text-gray-900 mb-4">Clips — Last 14 Days</h2>
+        {loadingAllClips ? (
+          <div className="animate-pulse flex items-end gap-1 h-[200px] px-2">
+            {Array.from({ length: 14 }).map((_, i) => (
+              <div key={i} className="flex-1 bg-gray-200 rounded-t" style={{ height: `${20 + Math.random() * 60}%` }} />
+            ))}
+          </div>
+        ) : (
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={activityData}>
               <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
@@ -151,8 +145,8 @@ export default function Dashboard() {
               <Bar dataKey="clips" fill="#f59e0b" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ML Pipeline */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -176,7 +170,18 @@ export default function Dashboard() {
               {runningAutoLabel ? "Running..." : "Run"}
             </button>
           </div>
-          {labelStats ? (
+          {!labelStats ? (
+            <div className="animate-pulse space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i}>
+                    <div className="h-6 bg-gray-200 rounded w-12 mx-auto mb-1" />
+                    <div className="h-3 bg-gray-100 rounded w-14 mx-auto" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
@@ -198,8 +203,6 @@ export default function Dashboard() {
                 </Link>
               </div>
             </div>
-          ) : (
-            <p className="text-xs text-gray-400">Loading...</p>
           )}
         </div>
 
@@ -217,7 +220,22 @@ export default function Dashboard() {
               View All →
             </Link>
           </div>
-          {latestExport ? (
+          {loadingExport ? (
+            <div className="animate-pulse space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i}>
+                    <div className="h-6 bg-gray-200 rounded w-12 mx-auto mb-1" />
+                    <div className="h-3 bg-gray-100 rounded w-14 mx-auto" />
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                <div className="h-5 bg-gray-200 rounded-full w-16" />
+                <div className="h-3 bg-gray-100 rounded w-20" />
+              </div>
+            </div>
+          ) : latestExport ? (
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
@@ -260,17 +278,28 @@ export default function Dashboard() {
       </div>
 
       {/* Recent clips */}
-      {recentClips.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-gray-900">Recent Clips</h2>
-            <Link
-              to="/clips"
-              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
-            >
-              View all <ChevronRight className="w-3 h-3" />
-            </Link>
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-gray-900">Recent Clips</h2>
+          <Link
+            to="/clips"
+            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+          >
+            View all <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
+        {loadingClips ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 animate-pulse">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="rounded-lg border border-gray-100 overflow-hidden">
+                <div className="aspect-video bg-gray-200" />
+                <div className="p-2">
+                  <div className="h-3 bg-gray-100 rounded w-20" />
+                </div>
+              </div>
+            ))}
           </div>
+        ) : recentClips.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {recentClips.map((clip) => (
               <Link
@@ -310,8 +339,10 @@ export default function Dashboard() {
               </Link>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-xs text-gray-400 text-center py-4">No clips yet</p>
+        )}
+      </div>
     </div>
   );
 }

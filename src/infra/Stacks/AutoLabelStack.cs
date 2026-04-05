@@ -65,11 +65,11 @@ public class AutoLabelStack : Stack
         props.DataBucket.GrantRead(AutoLabelFunction);
         props.LabelsTable.GrantReadWriteData(AutoLabelFunction);
 
-        // SQS event source — MaxConcurrency=1 ensures only one Lambda runs at a time
+        // SQS event source — MaxConcurrency=2 (minimum allowed) keeps backfill processing to at most 2 concurrent Lambdas
         AutoLabelFunction.AddEventSource(new SqsEventSource(BackfillQueue, new SqsEventSourceProps
         {
             BatchSize = 1,
-            MaxConcurrency = 1
+            MaxConcurrency = 2
         }));
 
         _ = new CfnOutput(this, "AutoLabelFunctionArn", new CfnOutputProps
