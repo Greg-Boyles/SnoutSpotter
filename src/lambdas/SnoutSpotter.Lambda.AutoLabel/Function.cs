@@ -254,7 +254,7 @@ public class Function
         for (var i = 0; i < numDetections; i++)
         {
             var dogConfidence = output[0, 4 + 16, i]; // Class 16 = dog in COCO
-            if (dogConfidence < 0.4f) continue;
+            if (dogConfidence < 0.25f) continue;
 
             var cx = output[0, 0, i] * scaleX;
             var cy = output[0, 1, i] * scaleY;

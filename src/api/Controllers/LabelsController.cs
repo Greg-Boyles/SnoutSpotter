@@ -120,12 +120,15 @@ public class LabelsController : ControllerBase
     }
 
     [HttpPost("labels/backfill-boxes")]
-    public async Task<ActionResult> BackfillBoundingBoxes([FromQuery] string? confirmedLabel = null)
+    public async Task<ActionResult> BackfillBoundingBoxes([FromBody] BackfillBoxesRequest? request = null)
     {
+        var confirmedLabel = request?.ConfirmedLabel;
+        var keys = request?.Keys;
+
         if (confirmedLabel != null && confirmedLabel is not ("my_dog" or "other_dog"))
             return BadRequest(new { error = "confirmedLabel must be 'my_dog' or 'other_dog'" });
 
-        var result = await _labelService.BackfillBoundingBoxesAsync(confirmedLabel);
+        var result = await _labelService.BackfillBoundingBoxesAsync(confirmedLabel, keys);
         return Ok(result);
     }
 
@@ -301,3 +304,4 @@ public class LabelsController : ControllerBase
 public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
 public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
 public record BackfillBreedRequest(string ConfirmedLabel, string Breed);
+public record BackfillBoxesRequest(string? ConfirmedLabel = null, List<string>? Keys = null);

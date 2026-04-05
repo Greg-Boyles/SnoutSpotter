@@ -97,6 +97,9 @@ export default function Labels() {
   const [bulkActioning, setBulkActioning] = useState(false);
   const [bulkBreed, setBulkBreed] = useState("");
 
+  // Per-item rebox
+  const [reboxing, setReboxing] = useState<Set<string>>(new Set());
+
   // Per-card breed selection (two-step confirm for dog labels)
   const [pendingConfirm, setPendingConfirm] = useState<{ key: string; label: string } | null>(null);
   const [pendingBreed, setPendingBreed] = useState("Unknown");
@@ -278,6 +281,30 @@ export default function Labels() {
       loadStats();
     } catch (e) {
       console.error("Bulk confirm failed:", e);
+    }
+    setBulkActioning(false);
+  };
+
+  const handleReboxSingle = async (keyframeKey: string) => {
+    setReboxing((prev) => new Set(prev).add(keyframeKey));
+    try {
+      await api.backfillBoundingBoxes(undefined, [keyframeKey]);
+    } catch (e) {
+      console.error("Rebox failed:", e);
+    }
+    setReboxing((prev) => { const next = new Set(prev); next.delete(keyframeKey); return next; });
+  };
+
+  const handleReboxSelected = async () => {
+    const keys = Array.from(selected);
+    if (keys.length === 0) return;
+    setBulkActioning(true);
+    try {
+      const result = await api.backfillBoundingBoxes(undefined, keys);
+      setBackfillResult(`Queued ${result.total} label${result.total !== 1 ? "s" : ""} for re-boxing.`);
+      setTimeout(() => setBackfillResult(""), 6000);
+    } catch (e) {
+      console.error("Rebox selected failed:", e);
     }
     setBulkActioning(false);
   };
@@ -649,6 +676,14 @@ export default function Labels() {
             Deselect All
           </button>
           <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={handleReboxSelected}
+              disabled={bulkActioning}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-violet-600 hover:bg-violet-700 rounded disabled:opacity-50"
+            >
+              {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+              Rebox
+            </button>
             <select
               value={bulkBreed}
               onChange={(e) => setBulkBreed(e.target.value)}
@@ -809,6 +844,14 @@ export default function Labels() {
                       >
                         <Ban className="w-3 h-3" /> No Dog
                       </button>
+                      <button
+                        onClick={() => handleReboxSingle(item.keyframe_key)}
+                        disabled={reboxing.has(item.keyframe_key)}
+                        title="Re-run bounding box detection"
+                        className="p-1.5 text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded disabled:opacity-50"
+                      >
+                        {reboxing.has(item.keyframe_key) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+                      </button>
                     </div>
                   )}
                   {!isReviewed && pendingConfirm?.key === item.keyframe_key && (
@@ -841,9 +884,19 @@ export default function Labels() {
                     </div>
                   )}
                   {isReviewed && (
-                    <div className="p-2 flex items-center justify-center gap-1 text-xs text-green-600">
+                    <div className="p-2 flex items-center gap-1 text-xs text-green-600">
                       <CheckCircle className="w-3 h-3" /> Reviewed
                       {item.breed && <span className="text-gray-500 ml-1">({item.breed})</span>}
+                      {(item.confirmed_label === "my_dog" || item.confirmed_label === "other_dog") && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleReboxSingle(item.keyframe_key); }}
+                          disabled={reboxing.has(item.keyframe_key)}
+                          title="Re-run bounding box detection"
+                          className="ml-auto p-1 text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded disabled:opacity-50"
+                        >
+                          {reboxing.has(item.keyframe_key) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
