@@ -81,6 +81,15 @@ public class LabelsController : ControllerBase
         return Ok(new { labels = enriched, nextPageKey = nextKey });
     }
 
+    [HttpGet("labels/{*keyframeKey}")]
+    public async Task<ActionResult> GetLabel(string keyframeKey)
+    {
+        var item = await _labelService.GetLabelAsync(keyframeKey);
+        if (item == null)
+            return NotFound(new { error = "Label not found" });
+        return Ok(item);
+    }
+
     [HttpPut("labels/{*keyframeKey}")]
     public async Task<ActionResult> UpdateLabel(string keyframeKey, [FromBody] UpdateLabelRequest request)
     {

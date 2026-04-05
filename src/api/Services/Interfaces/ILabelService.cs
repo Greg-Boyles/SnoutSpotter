@@ -12,4 +12,5 @@ public interface ILabelService
     Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName, string confirmedLabel, string? breed = null);
     Task<int> BackfillBreedAsync(string confirmedLabel, string breed);
     Task<object> BackfillBoundingBoxesAsync(string? confirmedLabel, List<string>? keys = null);
+    Task<Dictionary<string, string?>?> GetLabelAsync(string keyframeKey);
 }
