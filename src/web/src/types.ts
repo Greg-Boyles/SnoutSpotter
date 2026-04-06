@@ -9,6 +9,7 @@ export interface Clip {
   detectionType: string;
   detectionCount: number;
   createdAt: string;
+  keyframeKeys?: string[];
   // Optional presigned URLs
   thumbnailUrl?: string;
   videoUrl?: string;
