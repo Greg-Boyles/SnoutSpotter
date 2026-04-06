@@ -156,7 +156,7 @@ export const api = {
     postJson<{ message: string }>("/ml/labels/bulk-confirm", { keyframeKeys, confirmedLabel, breed }),
 
   updateBoundingBoxes: (keyframeKey: string, boxes: number[][]) =>
-    patchJson<{ message: string; count: number }>(`/ml/labels/${encodeURIComponent(keyframeKey)}/bounding-boxes`, { boxes }),
+    patchJson<{ message: string; count: number }>("/ml/labels/bounding-boxes", { keyframeKey, boxes }),
 
   backfillBoundingBoxes: (confirmedLabel?: string, keys?: string[]) =>
     postJson<{ total: number; batches: number; message?: string }>("/ml/labels/backfill-boxes", { confirmedLabel, keys }),
