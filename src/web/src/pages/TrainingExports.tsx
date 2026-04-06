@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowLeft, Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban, Cpu } from "lucide-react";
+
+function Skeleton({ className }: { className: string }) {
+  return <div className={`animate-pulse bg-gray-200 rounded ${className}`} />;
+}
 import { api } from "../api";
 
 interface ExportItem {
@@ -77,14 +81,6 @@ export default function TrainingExports() {
     setDeleting(null);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-gray-400 justify-center py-12">
-        <Loader2 className="w-4 h-4 animate-spin" /> Loading exports...
-      </div>
-    );
-  }
-
   return (
     <div>
       <Link to="/labels" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
@@ -102,7 +98,27 @@ export default function TrainingExports() {
       </div>
 
       {/* Label Summary */}
-      {labelStats && (
+      {!labelStats ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <Skeleton className="h-4 w-40 mb-4" />
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="text-center space-y-1.5">
+                <Skeleton className="h-3 w-16 mx-auto" />
+                <Skeleton className="h-8 w-12 mx-auto" />
+              </div>
+            ))}
+          </div>
+          <div className="pt-3 border-t border-gray-100">
+            <Skeleton className="h-3 w-12 mb-2" />
+            <div className="flex gap-1.5">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-5 w-24 rounded-full" />
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
         <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
           <h2 className="text-sm font-semibold text-gray-900 mb-4">Training Data Summary</h2>
           <div className="grid grid-cols-3 gap-4 mb-4">
@@ -145,11 +161,40 @@ export default function TrainingExports() {
         </div>
       )}
 
-      {exports.length === 0 ? (
+      {loading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="w-5 h-5 rounded" />
+                  <div className="space-y-1.5">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-3 w-24" />
+                  </div>
+                </div>
+                <Skeleton className="h-5 w-20 rounded-full" />
+              </div>
+              <div className="grid grid-cols-4 gap-3 mb-3">
+                {Array.from({ length: 4 }).map((_, j) => (
+                  <div key={j} className="text-center space-y-1">
+                    <Skeleton className="h-6 w-10 mx-auto" />
+                    <Skeleton className="h-3 w-12 mx-auto" />
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Skeleton className="h-7 w-24 rounded-lg" />
+                <Skeleton className="h-7 w-20 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : exports.length === 0 ? (
         <div className="bg-gray-50 rounded-xl border border-gray-200 p-8 text-center">
           <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
           <p className="text-gray-500">No exports yet</p>
-          <p className="text-xs text-gray-400 mt-1">Go to Labels and click "Export Dataset"</p>
+          <p className="text-xs text-gray-400 mt-1">Go to Labels and click "Package Training Data"</p>
         </div>
       ) : (
         <div className="space-y-3">
