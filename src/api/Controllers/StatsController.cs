@@ -43,6 +43,21 @@ public class StatsController : ControllerBase
         return Ok(stats);
     }
 
+    [HttpGet("activity")]
+    public async Task<ActionResult<object>> GetActivity([FromQuery] int days = 14)
+    {
+        var tasks = Enumerable.Range(0, days)
+            .Select(i => DateTime.UtcNow.AddDays(-(days - 1 - i)))
+            .Select(async d => new
+            {
+                date = d.ToString("yyyy-MM-dd"),
+                count = await _clipService.GetClipCountForDateAsync(d.ToString("yyyy/MM/dd"))
+            });
+
+        var activity = await Task.WhenAll(tasks);
+        return Ok(new { activity });
+    }
+
     [HttpGet("health")]
     public async Task<ActionResult<object>> GetHealth()
     {
