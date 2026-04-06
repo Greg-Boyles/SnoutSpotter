@@ -70,9 +70,10 @@ public class ApiStack : Stack
         props.DataBucket.GrantRead(apiFunction);
         props.DataBucket.GrantPut(apiFunction, "training-uploads/*");
         props.DataBucket.GrantPut(apiFunction, "models/*");
-        props.ClipsTable.GrantReadData(apiFunction);
+        props.ClipsTable.GrantReadWriteData(apiFunction);
         props.DataBucket.GrantRead(apiFunction, "raw-clips/*");
         props.DataBucket.GrantRead(apiFunction, "keyframes/*");
+        props.DataBucket.GrantDelete(apiFunction);
 
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
