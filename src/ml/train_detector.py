@@ -201,6 +201,7 @@ def main():
         description="Train the SnoutSpotter YOLOv8 detection model"
     )
     parser.add_argument("--zip",     help="Local export zip (skips S3 download)")
+    parser.add_argument("--data",    help="Path to an already-extracted dataset directory (skips download and extraction)")
     parser.add_argument("--resume",  help="Path to last.pt to resume interrupted training")
     parser.add_argument("--epochs",  type=int, default=DEFAULT_EPOCHS,
                         help=f"Training epochs (default: {DEFAULT_EPOCHS})")
@@ -232,21 +233,38 @@ def main():
             best_pt = train(None, output_dir, args.epochs, args.batch,
                             args.imgsz, args.workers, args.resume)
         else:
-            # Get the export zip
-            if args.zip:
-                zip_path = args.zip
-                print(f"\nUsing local zip: {zip_path}")
+            if args.data:
+                # Already-extracted dataset — just fix the yaml path in place
+                dataset_dir = Path(args.data).resolve()
+                print(f"\nUsing local dataset: {dataset_dir}")
+                print("\n--- Dataset ---")
+                yaml_path = dataset_dir / "dataset.yaml"
+                if not yaml_path.exists():
+                    raise RuntimeError(f"dataset.yaml not found in {dataset_dir}")
+                content = yaml_path.read_text()
+                if "path: ." in content:
+                    yaml_path.write_text(content.replace("path: .", f"path: {dataset_dir.as_posix()}"))
+                    print(f"  Fixed dataset.yaml path → {dataset_dir.as_posix()}")
+                train_images = list((dataset_dir / "images" / "train").glob("*.jpg"))
+                val_images   = list((dataset_dir / "images" / "val").glob("*.jpg"))
+                print(f"  Train images : {len(train_images)}")
+                print(f"  Val images   : {len(val_images)}")
             else:
-                s3       = boto3.client("s3",       region_name=REGION)
-                dynamodb = boto3.client("dynamodb", region_name=REGION)
-                bucket   = get_bucket(s3)
-                print(f"\n--- Latest export ---")
-                export_id, s3_key = get_latest_export(dynamodb, s3, bucket)
-                zip_path = str(work_dir / "export.zip")
-                download_export(s3, bucket, s3_key, zip_path)
+                # Get the export zip
+                if args.zip:
+                    zip_path = args.zip
+                    print(f"\nUsing local zip: {zip_path}")
+                else:
+                    s3       = boto3.client("s3",       region_name=REGION)
+                    dynamodb = boto3.client("dynamodb", region_name=REGION)
+                    bucket   = get_bucket(s3)
+                    print(f"\n--- Latest export ---")
+                    export_id, s3_key = get_latest_export(dynamodb, s3, bucket)
+                    zip_path = str(work_dir / "export.zip")
+                    download_export(s3, bucket, s3_key, zip_path)
 
-            print("\n--- Dataset ---")
-            yaml_path = extract_and_fix(zip_path, dataset_dir)
+                print("\n--- Dataset ---")
+                yaml_path = extract_and_fix(zip_path, dataset_dir)
 
             print("\n--- Training ---")
             best_pt = train(yaml_path, output_dir, args.epochs, args.batch,
