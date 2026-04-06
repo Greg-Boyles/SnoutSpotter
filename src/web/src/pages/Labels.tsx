@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Cpu, Crosshair, ExternalLink } from "lucide-react";
 import { api } from "../api";
 
@@ -67,9 +67,32 @@ function LabelBadge({ label, type }: { label: string; type: "auto" | "confirmed"
 }
 
 export default function Labels() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const filter = (searchParams.get("filter") as Filter) ?? "unreviewed";
+  const breedFilter = searchParams.get("breed") ?? "";
+  const deviceFilter = searchParams.get("device") ?? "";
+  const confidenceMin = Number(searchParams.get("confidence") ?? "0");
+  const sortOrder = (searchParams.get("sort") as "asc" | "desc" | "none") ?? "none";
+  const boxFilter = (searchParams.get("boxes") as "all" | "has_boxes" | "no_boxes") ?? "all";
+
+  const setParam = (key: string, value: string, defaultValue: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value === defaultValue) next.delete(key); else next.set(key, value);
+      return next;
+    }, { replace: true });
+  };
+
+  const setFilter = (v: Filter) => setParam("filter", v, "unreviewed");
+  const setBreedFilter = (v: string) => setParam("breed", v, "");
+  const setDeviceFilter = (v: string) => setParam("device", v, "");
+  const setConfidenceMin = (v: number) => setParam("confidence", String(v), "0");
+  const setSortOrder = (v: "asc" | "desc" | "none") => setParam("sort", v, "none");
+  const setBoxFilter = (v: "all" | "has_boxes" | "no_boxes") => setParam("boxes", v, "all");
+
   const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; breeds: Record<string, number> } | null>(null);
   const [labels, setLabels] = useState<LabelItem[]>([]);
-  const [filter, setFilter] = useState<Filter>("unreviewed");
   const [loading, setLoading] = useState(true);
   const [labelling, setLabelling] = useState(false);
   const [nextPageKey, setNextPageKey] = useState<string | null>(null);
@@ -89,8 +112,6 @@ export default function Labels() {
   const [imageDims, setImageDims] = useState<Record<string, { w: number; h: number }>>({});
 
   // Confidence filter & sort
-  const [confidenceMin, setConfidenceMin] = useState(0);
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc" | "none">("none");
 
   // Multi-select
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -105,14 +126,11 @@ export default function Labels() {
   const [pendingBreed, setPendingBreed] = useState("Unknown");
 
   // Breed sub-filter for Other Dog tab
-  const [breedFilter, setBreedFilter] = useState("");
 
   // Device filter
-  const [deviceFilter, setDeviceFilter] = useState("");
   const [devices, setDevices] = useState<string[]>([]);
 
   // Bounding box filter
-  const [boxFilter, setBoxFilter] = useState<"all" | "has_boxes" | "no_boxes">("all");
 
   const hasBoxes = (item: LabelItem) => {
     const b = item.bounding_boxes;
