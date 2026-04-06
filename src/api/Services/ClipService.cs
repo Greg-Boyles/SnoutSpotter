@@ -134,16 +134,28 @@ public class ClipService : IClipService
             expressionValues[":dt2"] = new() { S = "other_dog" };
         }
 
-        var request = new ScanRequest
+        // Scan with a filter: Limit controls items examined, not items returned.
+        // Paginate until we have enough matching items or the table is exhausted.
+        var items = new List<Dictionary<string, AttributeValue>>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+        do
         {
-            TableName = TableName,
-            FilterExpression = string.Join(" AND ", filterExpressions),
-            ExpressionAttributeValues = expressionValues,
-            Limit = limit
-        };
+            var page = await _dynamoClient.ScanAsync(new ScanRequest
+            {
+                TableName = TableName,
+                FilterExpression = string.Join(" AND ", filterExpressions),
+                ExpressionAttributeValues = expressionValues,
+                ExclusiveStartKey = lastKey?.Count > 0 ? lastKey : null
+            });
+            items.AddRange(page.Items);
+            lastKey = page.LastEvaluatedKey;
+        } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
 
-        var response = await _dynamoClient.ScanAsync(request);
-        return response.Items.Select(MapToDetectionSummary).ToList();
+        return items
+            .OrderByDescending(i => long.TryParse(i.GetValueOrDefault("timestamp")?.N, out var t) ? t : 0)
+            .Take(limit)
+            .Select(MapToDetectionSummary)
+            .ToList();
     }
 
     public async Task<int> GetClipCountForDateAsync(string date)

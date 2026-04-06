@@ -1,17 +1,19 @@
-import type { Detection } from "../types";
+import type { DetectionBox } from "../types";
 
 interface Props {
-  detection: Detection;
+  detection: DetectionBox;
+  isTargetDog?: boolean;
   imageWidth?: number;
   imageHeight?: number;
 }
 
 export default function BoundingBoxOverlay({
   detection,
+  isTargetDog = false,
   imageWidth = 1920,
   imageHeight = 1080,
 }: Props) {
-  const { boundingBox: bb, isTargetDog } = detection;
+  const { boundingBox: bb } = detection;
   const color = isTargetDog ? "#d97706" : "#6b7280";
 
   return (

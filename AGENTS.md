@@ -18,7 +18,6 @@ SnoutSpotter/
 ├── README.md                          # Getting started guide
 ├── SnoutSpotter.sln                   # .NET solution file
 ├── docs/
-│   └── PLAN.md                        # Original system design document
 ├── terraform/
 │   └── okta/                          # Terraform for Okta provisioning
 │       ├── main.tf                    # App, group, access policy, sign-on policy
@@ -104,25 +103,32 @@ SnoutSpotter/
 │   │   ├── vite.config.ts
 │   │   └── package.json
 │   │
-│   └── pi/                            # Raspberry Pi Python scripts
-│       ├── agent.py                   # Thin orchestrator: MQTT connection, shadow delta dispatch, main loop
-│       ├── health.py                  # System health gathering: CPU, memory, disk, camera, upload stats
-│       ├── shadow.py                  # IoT shadow building and reporting
-│       ├── ota.py                     # OTA update: download, extract, deps, rollback, service restart
-│       ├── remote_config.py           # Remote config validation and application from shadow delta
-│       ├── log_shipping.py            # Journald log collection and MQTT publish
-│       ├── iot_credential_provider.py # IoT Credentials Provider: temp STS creds via X.509 certs
-│       ├── motion_detector.py         # Frame-differencing motion detection + recording + status file
-│       ├── uploader.py                # S3 multipart upload with retry + status file
-│       ├── config_loader.py           # Shared config loading: deep-merges defaults.yaml + config.yaml
-│       ├── config_schema.py           # Allow-list and validation for remotely configurable settings
-│       ├── defaults.yaml              # Default config values (shipped via OTA)
-│       ├── config.yaml                # Device-specific overrides (NOT included in OTA packages)
-│       ├── system-deps.txt            # System apt packages (shipped via OTA, installed during updates)
-│       ├── custom-debs.txt            # Custom .deb packages from S3 (installed during OTA)
-│       ├── setup-pi.sh                # Full automated setup: deps, registration, certs, credential provider, services
-│       ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
-│       └── version.json               # Current Pi software version (written by OTA agent)
+│   ├── pi/                            # Raspberry Pi Python scripts
+│   │   ├── agent.py                   # Thin orchestrator: MQTT connection, shadow delta dispatch, main loop
+│   │   ├── health.py                  # System health gathering: CPU, memory, disk, camera, upload stats
+│   │   ├── shadow.py                  # IoT shadow building and reporting
+│   │   ├── ota.py                     # OTA update: download, extract, deps, rollback, service restart
+│   │   ├── remote_config.py           # Remote config validation and application from shadow delta
+│   │   ├── log_shipping.py            # Journald log collection and MQTT publish
+│   │   ├── commands.py                # Device command execution via MQTT (restart, reboot, clear-clips, etc.)
+│   │   ├── iot_credential_provider.py # IoT Credentials Provider: temp STS creds via X.509 certs
+│   │   ├── motion_detector.py         # Frame-differencing motion detection + recording + status file
+│   │   ├── stream_manager.py          # Live stream: GStreamer/kvssink pipeline to Kinesis Video Streams
+│   │   ├── uploader.py                # S3 multipart upload with retry + status file
+│   │   ├── config_loader.py           # Shared config loading: deep-merges defaults.yaml + config.yaml
+│   │   ├── config_schema.py           # Allow-list and validation for remotely configurable settings
+│   │   ├── defaults.yaml              # Default config values (shipped via OTA)
+│   │   ├── config.yaml                # Device-specific overrides (NOT included in OTA packages)
+│   │   ├── system-deps.txt            # System apt packages (shipped via OTA, installed during updates)
+│   │   ├── custom-debs.txt            # Custom .deb packages from S3 (e.g. kvssink .deb, installed during OTA)
+│   │   ├── setup-pi.sh                # Full automated setup: deps, registration, certs, credential provider, services
+│   │   ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
+│   │   └── version.json               # Current Pi software version (written by OTA agent)
+│   │
+│   └── ml/                            # ML training and verification scripts (run locally)
+│       ├── train_detector.py          # Fine-tune YOLOv8n on exported dataset → best.onnx
+│       ├── test_detector.py           # Test the deployed detection model against S3 keyframes or local images
+│       └── verify_onnx.py             # Verify ONNX model is compatible with RunInference/Function.cs
 │
 └── .github/workflows/
     ├── deploy.yml                     # Main pipeline: path-filtered, only deploys changed components
@@ -410,7 +416,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 |---------|--------|---------|
 | `snoutspotter-motion` | `motion_detector.py` | Motion detection, records 1080p H.264 clips, writes `~/.snoutspotter/motion-status.json` |
 | `snoutspotter-uploader` | `uploader.py` | Uploads clips to S3, writes `~/.snoutspotter/uploader-status.json` |
-| `snoutspotter-agent` | `agent.py` | Single MQTT connection: shadow reporting (health + camera + system metrics) + OTA updates |
+| `snoutspotter-agent` | `agent.py` | Single MQTT connection: shadow reporting, OTA updates, remote config, commands, live stream control |
 
 **Status files** (`~/.snoutspotter/`):
 - `motion-status.json` — `cameraOk`, `lastMotionAt`, `lastRecordingStartedAt`, `recordingsToday`
@@ -438,6 +444,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
       "uploadStats": {"uploadsToday": 5, "failedToday": 0, "totalUploaded": 120},
       "clipsPending": 0,
       "logShipping": true,
+      "streaming": false,
       "system": {
         "cpuTempC": 52.3,
         "memUsedPercent": 45.2,
@@ -489,6 +496,39 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 
 ---
 
+## ML Training Workflow
+
+Training runs locally (requires CUDA GPU). Scripts live in `src/ml/`.
+
+**Model architecture:** YOLOv8n fine-tuned on SnoutSpotter data. 2 classes: `my_dog` (0), `other_dog` (1). Output `[1, 6, 8400]`. AutoLabel Lambda uses stock `yolov8n.onnx` (COCO class 16) for generic dog detection to generate labels.
+
+**End-to-end flow:**
+1. Pi records clips → keyframes extracted → AutoLabel Lambda detects dogs + bounding boxes
+2. Human reviews labels in dashboard (Labels page) — confirms `my_dog`/`other_dog`/`no_dog` + breed
+3. Export dataset from dashboard (Training Exports page) → YOLO detection format zip in S3
+4. Train locally: `python src/ml/train_detector.py` (pulls latest export from S3 automatically)
+5. Verify: `python src/ml/verify_onnx.py --model-path src/ml/detector_<id>.onnx --sample-count 5`
+6. Upload via Models page → lands at `models/dog-classifier/best.onnx` → RunInference picks up on next cold start
+
+**Training script flags:**
+- `--data <dir>` — use an already-extracted dataset directory (skips S3 download)
+- `--zip <file>` — use a local export zip
+- `--resume <last.pt>` — resume an interrupted run
+- `--epochs`, `--batch`, `--imgsz`, `--workers` — hyperparameter overrides
+
+**Dataset format** (from ExportDataset Lambda):
+```
+dataset.yaml          ← path fixed to absolute by train_detector.py
+images/train/
+images/val/
+labels/train/         ← YOLO format: class cx cy w h (normalised)
+labels/val/
+manifest.json
+labels.csv
+```
+
+---
+
 ## CI/CD
 
 **Platform:** GitHub Actions with OIDC-based AWS auth (no long-lived credentials).
@@ -534,7 +574,7 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 - **Pi Management API has no auth** — Pi devices connect directly, cannot use Okta
 - **CORS** is locked to `allowedOrigin` on main API; open on Pi Management
 - **Naming:** IoT things prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
-- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-classifier/versions/`, `models/dog-classifier/best.onnx`, `models/yolov8n.onnx`, `releases/pi/`, `terraform/`
+- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-classifier/best.onnx`, `models/dog-detector/best.onnx`, `models/yolov8n.onnx`, `releases/pi/`, `terraform/`
 
 ---
 
@@ -574,8 +614,18 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 
 17. **System Health is split across two pages** — `/health` is a clean landing page with device summary table. `/device/:thingName` is the full device detail page. Sub-pages (config, logs, commands, shadow) link back to the detail page, not `/health`.
 
-18. **Detector model versioning** — Detector models (custom YOLOv8) are stored in S3 under `models/dog-classifier/versions/{version}.onnx`. The active model is copied to `models/dog-classifier/best.onnx` with metadata in `models/dog-classifier/active.json`. The RunInference Lambda reads from the `MODEL_KEY` env var. Activating a new version via the Models page does not automatically restart the Lambda — the new model is picked up on the next cold start.
+18. **Model deployment is direct-replace** — Both `models/dog-classifier/best.onnx` (RunInference) and `models/dog-detector/best.onnx` (AutoLabel) are managed via the Models page. Uploading replaces the file in place — there is no versioning or activate step. The Lambda picks up the new model on the next cold start. Use `src/ml/verify_onnx.py` to validate a model before uploading.
 
 19. **Custom YOLOv8 output format** — A fine-tuned YOLOv8 with 2 classes outputs tensor shape `[1, 6, 8400]` (4 bbox coords + 2 class scores). This differs from the pre-trained YOLOv8n which outputs `[1, 84, 8400]` (80 COCO classes). The RunInference Lambda dynamically reads the number of classes from the output tensor dimensions.
 
 20. **Keyframe detections are DynamoDB native** — Detection results are stored as a DynamoDB List of Maps (`keyframe_detections`) on the clips table, not as a JSON string. Each entry contains the keyframe key, overall label, and a list of detection boxes with bounding coordinates. The API parses these directly into typed DTOs.
+
+21. **Live streaming stops motion detection** — When `desired.streaming = true` is written to the shadow, `agent.py` stops `snoutspotter-motion` before starting `stream_manager.py` (both need exclusive camera access). Motion is restarted when streaming stops or times out. The stream runs via GStreamer + kvssink → Kinesis Video Streams. Stream name: `snoutspotter-{device}-live`.
+
+22. **GStreamer libcamerasrc does not output I420** — The `libcamerasrc` capsfilter must NOT include `format=I420`. libcamera outputs NV12/BGR natively; constraining to I420 before `videoconvert` causes caps negotiation failure and immediate pipeline exit. The correct pipeline lets `videoconvert` handle the format conversion before `x264enc`.
+
+23. **streaming.resolution config is stored as a string** — `config_schema.py` stores `streaming.resolution` as a string (`"640x480"`) but `defaults.yaml` stores it as a list `[640, 480]`. `stream_manager.py` handles both formats. Do not change one without the other.
+
+24. **RunInference model is a fine-tuned YOLOv8 detector, not a classifier** — The `dog-classifier/best.onnx` name is a misnomer. It is a YOLOv8n fine-tuned on the SnoutSpotter dataset with 2 detection classes (my_dog=0, other_dog=1). Output shape `[1, 6, 8400]`. Preprocessing is 640×640 resize, RGB /255 — no ImageNet normalisation. The old MobileNetV3 classifier approach (224×224, ImageNet norm, softmax logits) was abandoned. `src/ml/train_classifier.py` has been deleted.
+
+25. **ONNX export must use simplify=False** — Exporting YOLOv8 with `simplify=True` changes the output tensor layout and breaks RunInference's `[1, 4+num_classes, 8400]` parsing. Always export with `opset=12, simplify=False`.
