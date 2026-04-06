@@ -17,7 +17,11 @@ logger = logging.getLogger("snout-spotter-stream")
 
 def _build_pipeline_cmd(thing_name: str, config: dict) -> str:
     stream_cfg = config.get("streaming", {})
-    res = stream_cfg.get("resolution", [640, 480])
+    raw_res = stream_cfg.get("resolution", [640, 480])
+    if isinstance(raw_res, str):
+        res = [int(x) for x in raw_res.split("x")]
+    else:
+        res = raw_res
     fps = stream_cfg.get("framerate", 15)
     bitrate = stream_cfg.get("bitrate", 800)
     region = stream_cfg.get("kvs_region", "eu-west-1")
@@ -26,7 +30,7 @@ def _build_pipeline_cmd(thing_name: str, config: dict) -> str:
     return (
         f"gst-launch-1.0 -e "
         f"libcamerasrc ! "
-        f"video/x-raw,width={res[0]},height={res[1]},framerate={fps}/1,format=I420 ! "
+        f"video/x-raw,width={res[0]},height={res[1]},framerate={fps}/1 ! "
         f"videoconvert ! "
         f"x264enc speed-preset=ultrafast tune=zerolatency byte-stream=true "
         f"key-int-max={fps * 3} bitrate={bitrate} ! "
