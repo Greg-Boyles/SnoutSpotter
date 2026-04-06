@@ -84,12 +84,23 @@ export default function Labels() {
     }, { replace: true });
   };
 
-  const setFilter = (v: Filter) => setParam("filter", v, "unreviewed");
   const setBreedFilter = (v: string) => setParam("breed", v, "");
   const setDeviceFilter = (v: string) => setParam("device", v, "");
   const setConfidenceMin = (v: number) => setParam("confidence", String(v), "0");
   const setSortOrder = (v: "asc" | "desc" | "none") => setParam("sort", v, "none");
   const setBoxFilter = (v: "all" | "has_boxes" | "no_boxes") => setParam("boxes", v, "all");
+
+  // Switch filter tab — resets sub-filters in one setSearchParams call to avoid batching issues
+  const switchFilter = (v: Filter) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (v === "unreviewed") next.delete("filter"); else next.set("filter", v);
+      next.delete("breed");
+      next.delete("confidence");
+      next.delete("sort");
+      return next;
+    }, { replace: true });
+  };
 
   const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; breeds: Record<string, number> } | null>(null);
   const [labels, setLabels] = useState<LabelItem[]>([]);
@@ -573,7 +584,7 @@ export default function Labels() {
         {filters.map(({ key, label }) => (
           <button
             key={key}
-            onClick={() => { setFilter(key); setLabels([]); setNextPageKey(null); setSelected(new Set()); setConfidenceMin(0); setSortOrder("none"); setBreedFilter(""); setPendingConfirm(null); }}
+            onClick={() => { switchFilter(key); setLabels([]); setNextPageKey(null); setSelected(new Set()); setPendingConfirm(null); }}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg ${
               filter === key
                 ? "bg-blue-600 text-white"
