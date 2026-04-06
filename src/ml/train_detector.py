@@ -141,7 +141,11 @@ def check_cuda():
 
 def train(yaml_path: Path, output_dir: Path, epochs: int, batch: int,
           imgsz: int, workers: int, resume: str | None) -> Path:
+    # Use output_dir as the project root and "snoutspotter" as the run name.
+    # Avoids nesting: passing project="runs/detect" conflicts with Ultralytics'
+    # own default of runs/detect, causing it to nest as runs/detect/runs/detect/train.
     project = str(output_dir)
+    run_name = "snoutspotter"
 
     if resume:
         print(f"\nResuming from {resume} ...")
@@ -161,7 +165,7 @@ def train(yaml_path: Path, output_dir: Path, epochs: int, batch: int,
             batch=batch,
             workers=workers,
             project=project,
-            name="train",
+            name=run_name,
             exist_ok=True,
             patience=20,        # early stopping
             save=True,
@@ -170,7 +174,7 @@ def train(yaml_path: Path, output_dir: Path, epochs: int, batch: int,
             verbose=True,
         )
 
-    best_pt = output_dir / "train" / "weights" / "best.pt"
+    best_pt = output_dir / run_name / "weights" / "best.pt"
     if not best_pt.exists():
         raise RuntimeError(f"best.pt not found at {best_pt} — training may have failed")
 
@@ -224,7 +228,7 @@ def main():
 
     work_dir    = Path(tempfile.mkdtemp(prefix="snoutspotter-train-"))
     dataset_dir = work_dir / "dataset"
-    output_dir  = Path("runs/detect")
+    output_dir  = Path("runs")
     export_id   = "local"
 
     try:
