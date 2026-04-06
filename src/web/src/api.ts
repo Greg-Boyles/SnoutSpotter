@@ -76,9 +76,9 @@ export const api = {
   getActivity: (days = 14) =>
     fetchJson<{ activity: { date: string; count: number }[] }>(`/stats/activity?days=${days}`),
 
-  getClips: (limit = 20, nextPageKey?: string, device?: string) =>
+  getClips: (limit = 20, nextPageKey?: string, device?: string, date?: string, detectionType?: string) =>
     fetchJson<{ clips: Clip[]; nextPageKey: string | null; totalCount: number }>(
-      `/clips?limit=${limit}${nextPageKey ? `&nextPageKey=${encodeURIComponent(nextPageKey)}` : ""}${device ? `&device=${encodeURIComponent(device)}` : ""}`,
+      `/clips?limit=${limit}${nextPageKey ? `&nextPageKey=${encodeURIComponent(nextPageKey)}` : ""}${device ? `&device=${encodeURIComponent(device)}` : ""}${date ? `&date=${encodeURIComponent(date)}` : ""}${detectionType ? `&detectionType=${encodeURIComponent(detectionType)}` : ""}`,
     ),
 
   getClip: (id: string) => fetchJson<Clip>(`/clips/${id}`),
