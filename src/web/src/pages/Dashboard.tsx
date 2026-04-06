@@ -35,41 +35,25 @@ function StatCard({
   );
 }
 
-function buildActivityData(clips: Clip[]): { date: string; clips: number }[] {
-  const counts: Record<string, number> = {};
-  // Last 14 days
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    counts[key] = 0;
-  }
-  for (const clip of clips) {
-    const key = new Date(clip.timestamp * 1000).toISOString().slice(0, 10);
-    if (key in counts) counts[key]++;
-  }
-  return Object.entries(counts).map(([date, clips]) => ({
-    date: date.slice(5), // MM-DD
-    clips,
-  }));
-}
-
 export default function Dashboard() {
   const [stats, setStats] = useState<StatsOverview | null>(null);
   const [recentClips, setRecentClips] = useState<Clip[]>([]);
-  const [allClips, setAllClips] = useState<Clip[]>([]);
+  const [activityData, setActivityData] = useState<{ date: string; clips: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [labelStats, setLabelStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number } | null>(null);
   const [latestExport, setLatestExport] = useState<Record<string, string> | null>(null);
   const [runningAutoLabel, setRunningAutoLabel] = useState(false);
   const [loadingClips, setLoadingClips] = useState(true);
-  const [loadingAllClips, setLoadingAllClips] = useState(true);
+  const [loadingActivity, setLoadingActivity] = useState(true);
   const [loadingExport, setLoadingExport] = useState(true);
 
   const loadData = () => {
     api.getStats().then(setStats).catch((e: Error) => setError(e.message));
     api.getClips(8).then((data) => { setRecentClips(data.clips); setLoadingClips(false); }).catch(console.error);
-    api.getClips(500).then((data) => { setAllClips(data.clips); setLoadingAllClips(false); }).catch(console.error);
+    api.getActivity(14).then((data) => {
+      setActivityData(data.activity.map((d) => ({ date: d.date.slice(5), clips: d.count })));
+      setLoadingActivity(false);
+    }).catch(console.error);
     api.getLabelStats().then(setLabelStats).catch(console.error);
     api.listExports().then((data) => { setLatestExport(data.exports[0] || null); setLoadingExport(false); }).catch(console.error);
   };
@@ -87,8 +71,6 @@ export default function Dashboard() {
       </div>
     );
   }
-
-  const activityData = buildActivityData(allClips);
 
   return (
     <div>
@@ -127,7 +109,7 @@ export default function Dashboard() {
       {/* Activity chart */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
         <h2 className="text-sm font-semibold text-gray-900 mb-4">Clips — Last 14 Days</h2>
-        {loadingAllClips ? (
+        {loadingActivity ? (
           <div className="animate-pulse flex items-end gap-1 h-[200px] px-2">
             {Array.from({ length: 14 }).map((_, i) => (
               <div key={i} className="flex-1 bg-gray-200 rounded-t" style={{ height: `${20 + Math.random() * 60}%` }} />

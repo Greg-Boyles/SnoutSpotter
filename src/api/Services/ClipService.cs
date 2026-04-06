@@ -141,6 +141,32 @@ public class ClipService : IClipService
         return response.Items.Select(MapToDetectionSummary).ToList();
     }
 
+    public async Task<int> GetClipCountForDateAsync(string date)
+    {
+        int total = 0;
+        Dictionary<string, AttributeValue>? lastKey = null;
+        do
+        {
+            var response = await _dynamoClient.QueryAsync(new QueryRequest
+            {
+                TableName = TableName,
+                IndexName = "by-date",
+                KeyConditionExpression = "#d = :date",
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":date"] = new() { S = date }
+                },
+                Select = "COUNT",
+                ExclusiveStartKey = lastKey
+            });
+            total += response.Count;
+            lastKey = response.LastEvaluatedKey;
+        } while (lastKey != null && lastKey.Count > 0);
+
+        return total;
+    }
+
     private async Task<ClipListResponse> QueryByDateAsync(string date, string? device, int limit, string? nextPageKey)
     {
         string? filterExpression = null;

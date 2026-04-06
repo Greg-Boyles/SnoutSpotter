@@ -73,6 +73,9 @@ async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T> {
 export const api = {
   getStats: () => fetchJson<StatsOverview>("/stats"),
 
+  getActivity: (days = 14) =>
+    fetchJson<{ activity: { date: string; count: number }[] }>(`/stats/activity?days=${days}`),
+
   getClips: (limit = 20, nextPageKey?: string, device?: string) =>
     fetchJson<{ clips: Clip[]; nextPageKey: string | null; totalCount: number }>(
       `/clips?limit=${limit}${nextPageKey ? `&nextPageKey=${encodeURIComponent(nextPageKey)}` : ""}${device ? `&device=${encodeURIComponent(device)}` : ""}`,
