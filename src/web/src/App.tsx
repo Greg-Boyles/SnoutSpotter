@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Routes, Route, NavLink } from "react-router-dom";
-import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag } from "lucide-react";
+import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package } from "lucide-react";
 import { useOktaAuth, LoginCallback } from "@okta/okta-react";
 import Dashboard from "./pages/Dashboard";
 import ClipsBrowser from "./pages/ClipsBrowser";
@@ -25,6 +25,8 @@ const navItems = [
   { to: "/detections", icon: Search, label: "Detections" },
   { to: "/live", icon: Radio, label: "Live" },
   { to: "/labels", icon: Tag, label: "Labels" },
+  { to: "/exports", icon: Package, label: "Exports" },
+  { to: "/models", icon: Cpu, label: "Models" },
   { to: "/health", icon: Activity, label: "System" },
 ];
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Cpu, Crosshair, ExternalLink } from "lucide-react";
+import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, SlidersHorizontal, Crosshair, ExternalLink } from "lucide-react";
 import { api } from "../api";
 
 const DOG_BREEDS = [
@@ -110,7 +110,6 @@ export default function Labels() {
   const [updating, setUpdating] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
-  const [exporting, setExporting] = useState(false);
   const [backfillingBoxes, setBackfillingBoxes] = useState(false);
   const [backfillResult, setBackfillResult] = useState("");
   const [showUploadPicker, setShowUploadPicker] = useState(false);
@@ -449,30 +448,6 @@ export default function Labels() {
             {backfillingBoxes ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />}
             {backfillingBoxes ? "Queuing..." : "Add Missing Bounding Boxes"}
           </button>
-          <button
-            onClick={async () => {
-              setExporting(true);
-              try { await api.triggerExport(); } catch (e) { console.error(e); }
-              setExporting(false);
-            }}
-            disabled={exporting}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50"
-          >
-            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-            {exporting ? "Exporting..." : "Package Training Data"}
-          </button>
-          <Link
-            to="/exports"
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
-          >
-            Training Exports
-          </Link>
-          <Link
-            to="/models"
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg"
-          >
-            <Cpu className="w-4 h-4" /> Manage Models
-          </Link>
         </div>
       </div>
 
