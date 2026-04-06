@@ -439,7 +439,7 @@ export default function Labels() {
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
           >
             {labelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {labelling ? "Running..." : "Run Auto-Label"}
+            {labelling ? "Running..." : "Auto-Label Keyframes"}
           </button>
           <button
             onClick={handleBackfillBoxes}
@@ -447,7 +447,7 @@ export default function Labels() {
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg disabled:opacity-50"
           >
             {backfillingBoxes ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />}
-            {backfillingBoxes ? "Queuing..." : "Backfill Boxes"}
+            {backfillingBoxes ? "Queuing..." : "Add Missing Bounding Boxes"}
           </button>
           <button
             onClick={async () => {
@@ -459,19 +459,19 @@ export default function Labels() {
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50"
           >
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-            {exporting ? "Exporting..." : "Export Dataset"}
+            {exporting ? "Exporting..." : "Package Training Data"}
           </button>
           <Link
             to="/exports"
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
           >
-            View Exports
+            Training Exports
           </Link>
           <Link
             to="/models"
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg"
           >
-            <Cpu className="w-4 h-4" /> Deployed Models
+            <Cpu className="w-4 h-4" /> Manage Models
           </Link>
         </div>
       </div>
