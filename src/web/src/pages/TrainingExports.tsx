@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban, Cpu } from "lucide-react";
+import { Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban } from "lucide-react";
 
 function Skeleton({ className }: { className: string }) {
   return <div className={`animate-pulse bg-gray-200 rounded ${className}`} />;
@@ -44,6 +43,7 @@ function StatusBadge({ status }: { status: string }) {
 export default function TrainingExports() {
   const [exports, setExports] = useState<ExportItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [labelStats, setLabelStats] = useState<{ myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
 
@@ -83,18 +83,20 @@ export default function TrainingExports() {
 
   return (
     <div>
-      <Link to="/labels" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
-        <ArrowLeft className="w-4 h-4" /> Labels
-      </Link>
-
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Training Exports</h1>
-        <Link
-          to="/models"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg"
+        <button
+          onClick={async () => {
+            setExporting(true);
+            try { await api.triggerExport(); loadExports(); } catch (e) { console.error(e); }
+            setExporting(false);
+          }}
+          disabled={exporting}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50"
         >
-          <Cpu className="w-3.5 h-3.5" /> Deployed Models
-        </Link>
+          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+          {exporting ? "Exporting..." : "New Export"}
+        </button>
       </div>
 
       {/* Label Summary */}
@@ -194,7 +196,7 @@ export default function TrainingExports() {
         <div className="bg-gray-50 rounded-xl border border-gray-200 p-8 text-center">
           <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
           <p className="text-gray-500">No exports yet</p>
-          <p className="text-xs text-gray-400 mt-1">Go to Labels and click "Package Training Data"</p>
+          <p className="text-xs text-gray-400 mt-1">Click "New Export" to package your training data</p>
         </div>
       ) : (
         <div className="space-y-3">
