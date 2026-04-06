@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Loader2, Play, Tag, ExternalLink, CheckCircle, Clock } from "lucide-react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, Loader2, Play, Tag, ExternalLink, CheckCircle, Clock, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { Clip } from "../types";
 
@@ -31,10 +31,12 @@ function DetectionBadge({ label, type }: { label: string; type: "inference" | "a
 
 export default function ClipDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [clip, setClip] = useState<Clip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inferring, setInferring] = useState(false);
   const [autoLabelling, setAutoLabelling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Per-keyframe label data
   const [labels, setLabels] = useState<Record<string, LabelRecord>>({});
@@ -78,6 +80,19 @@ export default function ClipDetail() {
     setAutoLabelling(false);
   };
 
+  const handleDelete = async () => {
+    if (!id) return;
+    if (!window.confirm("Delete this clip and all associated keyframes and labels? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      await api.deleteClip(id);
+      navigate("/clips");
+    } catch (e) {
+      console.error(e);
+      setDeleting(false);
+    }
+  };
+
   if (error) return <div className="text-red-600 bg-red-50 p-4 rounded-lg">{error}</div>;
   if (!clip) return <div className="text-gray-400">Loading...</div>;
 
@@ -107,6 +122,14 @@ export default function ClipDetail() {
         >
           {autoLabelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Tag className="w-4 h-4" />}
           {autoLabelling ? "Labelling..." : "Auto-Label Keyframes"}
+        </button>
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg disabled:opacity-50"
+        >
+          {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+          {deleting ? "Deleting..." : "Delete Clip"}
         </button>
       </div>
 

@@ -61,12 +61,13 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T> {
+async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T | null> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "DELETE",
     headers: { ...authHeaders() },
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  if (res.status === 204) return null;
   return res.json() as Promise<T>;
 }
 
@@ -189,6 +190,9 @@ export const api = {
 
   deleteExport: (exportId: string) =>
     deleteJson<{ message: string }>(`/ml/exports/${exportId}`),
+
+  deleteClip: (id: string) =>
+    deleteJson<null>(`/clips/${id}`),
 
   // Models
   listModels: () =>

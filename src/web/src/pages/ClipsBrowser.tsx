@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { Video, Clock } from "lucide-react";
+import { Video, Clock, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { Clip } from "../types";
 
@@ -108,41 +108,51 @@ export default function ClipsBrowser() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {clips.map((clip) => (
-          <Link
-            key={clip.clipId}
-            to={`/clips/${clip.clipId}`}
-            className="group bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
-          >
-            <div className="aspect-video bg-gray-100 flex items-center justify-center">
-              {clip.thumbnailUrl ? (
-                <img
-                  src={clip.thumbnailUrl}
-                  alt="Clip thumbnail"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <Video className="w-10 h-10 text-gray-300" />
-              )}
-            </div>
-            <div className="p-3">
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Clock className="w-3 h-3" />
-                {formatDistanceToNow(new Date(clip.createdAt), { addSuffix: true })}
+          <div key={clip.clipId} className="group relative bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+            <Link to={`/clips/${clip.clipId}`} className="block">
+              <div className="aspect-video bg-gray-100 flex items-center justify-center">
+                {clip.thumbnailUrl ? (
+                  <img
+                    src={clip.thumbnailUrl}
+                    alt="Clip thumbnail"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <Video className="w-10 h-10 text-gray-300" />
+                )}
               </div>
-              <div className="flex items-center justify-between mt-1">
-                <span className="text-xs text-gray-400">{clip.durationSeconds}s</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  clip.detectionType === "my_dog"
-                    ? "bg-amber-50 text-amber-700"
-                    : clip.detectionType === "other_dog"
-                      ? "bg-blue-50 text-blue-700"
-                      : "bg-gray-50 text-gray-700"
-                }`}>
-                  {clip.detectionType}
-                </span>
+              <div className="p-3">
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <Clock className="w-3 h-3" />
+                  {formatDistanceToNow(new Date(clip.createdAt), { addSuffix: true })}
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-xs text-gray-400">{clip.durationSeconds}s</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    clip.detectionType === "my_dog"
+                      ? "bg-amber-50 text-amber-700"
+                      : clip.detectionType === "other_dog"
+                        ? "bg-blue-50 text-blue-700"
+                        : "bg-gray-50 text-gray-700"
+                  }`}>
+                    {clip.detectionType}
+                  </span>
+                </div>
               </div>
-            </div>
-          </Link>
+            </Link>
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!window.confirm("Delete this clip and all associated keyframes and labels? This cannot be undone.")) return;
+                await api.deleteClip(clip.clipId);
+                setClips((prev) => prev.filter((c) => c.clipId !== clip.clipId));
+              }}
+              className="absolute top-2 right-2 p-1.5 bg-white/80 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Delete clip"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
         ))}
       </div>
 

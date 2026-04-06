@@ -84,4 +84,11 @@ public class ClipsController : ControllerBase
 
         return Accepted(new { message = "Inference started", clipId = id });
     }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteClip(string id)
+    {
+        await _clipService.DeleteClipAsync(id);
+        return NoContent();
+    }
 }

@@ -1,5 +1,8 @@
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Amazon.S3;
+using Amazon.S3.Model;
+using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -9,12 +12,16 @@ public class ClipService : IClipService
 {
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly IS3UrlService _s3UrlService;
+    private readonly IAmazonS3 _s3;
+    private readonly AppConfig _config;
     private const string TableName = "snout-spotter-clips";
 
-    public ClipService(IAmazonDynamoDB dynamoClient, IS3UrlService s3UrlService)
+    public ClipService(IAmazonDynamoDB dynamoClient, IS3UrlService s3UrlService, IAmazonS3 s3, IOptions<AppConfig> config)
     {
         _dynamoClient = dynamoClient;
         _s3UrlService = s3UrlService;
+        _s3 = s3;
+        _config = config.Value;
     }
 
     public async Task<ClipListResponse> GetClipsAsync(string? date = null, string? device = null, string? detectionType = null, int limit = 20, string? nextPageKey = null)
@@ -320,6 +327,68 @@ public class ClipService : IClipService
         var lastKey2 = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
 
         return new ClipListResponse(clips2, lastKey2, response.Count);
+    }
+
+    public async Task DeleteClipAsync(string clipId)
+    {
+        // 1. Fetch clip to get s3_key and keyframe_keys
+        var result = await _dynamoClient.GetItemAsync(TableName,
+            new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
+        if (!result.IsItemSet) return;
+
+        var s3Key = result.Item.GetValueOrDefault("s3_key")?.S;
+        var keyframeKeys = result.Item.GetValueOrDefault("keyframe_keys")?.SS ?? [];
+
+        // 2. Batch-delete S3 objects (video + all keyframes) in one request
+        var objectsToDelete = new List<KeyVersion>();
+        if (!string.IsNullOrEmpty(s3Key))
+            objectsToDelete.Add(new KeyVersion { Key = s3Key });
+        objectsToDelete.AddRange(keyframeKeys.Select(k => new KeyVersion { Key = k }));
+
+        if (objectsToDelete.Count > 0)
+        {
+            try
+            {
+                await _s3.DeleteObjectsAsync(new DeleteObjectsRequest
+                {
+                    BucketName = _config.BucketName,
+                    Objects = objectsToDelete
+                });
+            }
+            catch { /* best effort */ }
+        }
+
+        // 3. Batch-delete label records — keyframe_key is the labels table primary key,
+        //    so no scan needed; use the clip's keyframe_keys directly
+        if (keyframeKeys.Count > 0)
+        {
+            foreach (var batch in keyframeKeys.Chunk(25))
+            {
+                var deleteRequests = batch.Select(kk => new WriteRequest
+                {
+                    DeleteRequest = new DeleteRequest
+                    {
+                        Key = new Dictionary<string, AttributeValue> { ["keyframe_key"] = new() { S = kk } }
+                    }
+                }).ToList();
+
+                try
+                {
+                    await _dynamoClient.BatchWriteItemAsync(new BatchWriteItemRequest
+                    {
+                        RequestItems = new Dictionary<string, List<WriteRequest>>
+                        {
+                            [_config.LabelsTable] = deleteRequests
+                        }
+                    });
+                }
+                catch { /* best effort */ }
+            }
+        }
+
+        // 4. Delete the clip record itself
+        await _dynamoClient.DeleteItemAsync(TableName,
+            new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
     }
 
     private ClipSummary MapToClipSummary(Dictionary<string, AttributeValue> item)
