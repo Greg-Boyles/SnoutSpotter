@@ -166,7 +166,7 @@ public class ApiStack : Stack
             CorsConfiguration = new CfnApi.CorsProperty
             {
                 AllowOrigins = new[] { props.AllowedOrigin },
-                AllowMethods = new[] { "*" },
+                AllowMethods = new[] { "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" },
                 AllowHeaders = new[] { "Authorization", "Content-Type" },
                 MaxAge = 3600
             }

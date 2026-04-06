@@ -83,9 +83,11 @@ public class LabelsController : ControllerBase
         return Ok(new { labels = enriched, nextPageKey = nextKey });
     }
 
-    [HttpPatch("labels/{*keyframeKey}/bounding-boxes")]
-    public async Task<ActionResult> UpdateBoundingBoxes(string keyframeKey, [FromBody] UpdateBoundingBoxesRequest request)
+    [HttpPatch("labels/bounding-boxes")]
+    public async Task<ActionResult> UpdateBoundingBoxes([FromBody] UpdateBoundingBoxesRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.KeyframeKey))
+            return BadRequest(new { error = "keyframeKey is required" });
         if (request.Boxes == null)
             return BadRequest(new { error = "boxes is required" });
 
@@ -96,7 +98,7 @@ public class LabelsController : ControllerBase
             return new float[] { b[0], b[1], b[2], b[3], 1.0f };
         }).ToList();
 
-        await _labelService.UpdateBoundingBoxesAsync(keyframeKey, boxes);
+        await _labelService.UpdateBoundingBoxesAsync(request.KeyframeKey, boxes);
         return Ok(new { message = "Bounding boxes updated", count = boxes.Count });
     }
 
@@ -292,4 +294,4 @@ public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
 public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
 public record BackfillBreedRequest(string ConfirmedLabel, string Breed);
 public record BackfillBoxesRequest(string? ConfirmedLabel = null, List<string>? Keys = null);
-public record UpdateBoundingBoxesRequest(List<float[]> Boxes);
+public record UpdateBoundingBoxesRequest(string KeyframeKey, List<float[]> Boxes);
