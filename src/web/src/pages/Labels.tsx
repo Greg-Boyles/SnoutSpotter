@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Cpu, Crosshair, ExternalLink } from "lucide-react";
+import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, Package, SlidersHorizontal, Crosshair, ExternalLink } from "lucide-react";
 import { api } from "../api";
 
 const DOG_BREEDS = [
@@ -466,12 +466,6 @@ export default function Labels() {
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
           >
             Training Exports
-          </Link>
-          <Link
-            to="/models"
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg"
-          >
-            <Cpu className="w-4 h-4" /> Manage Models
           </Link>
         </div>
       </div>
