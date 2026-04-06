@@ -1,18 +1,41 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { Video, Clock } from "lucide-react";
 import { api } from "../api";
 import type { Clip } from "../types";
 
+const DETECTION_OPTIONS = [
+  { value: "", label: "All detections" },
+  { value: "my_dog", label: "My Dog" },
+  { value: "other_dog", label: "Other Dog" },
+  { value: "no_dog", label: "No Dog" },
+  { value: "pending", label: "Pending" },
+];
+
 export default function ClipsBrowser() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const deviceFilter = searchParams.get("device") ?? "";
+  const dateFilter = searchParams.get("date") ?? "";
+  const detectionFilter = searchParams.get("detection") ?? "";
+
+  const setParam = (key: string, value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set(key, value); else next.delete(key);
+      // reset pagination when a filter changes
+      next.delete("page");
+      return next;
+    }, { replace: true });
+  };
+
   const [clips, setClips] = useState<Clip[]>([]);
   const [total, setTotal] = useState(0);
   const [nextPageKey, setNextPageKey] = useState<string | null>(null);
   const [pageKeys, setPageKeys] = useState<(string | undefined)[]>([undefined]);
   const [pageIndex, setPageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [deviceFilter, setDeviceFilter] = useState("");
   const [devices, setDevices] = useState<string[]>([]);
   const pageSize = 20;
 
@@ -20,16 +43,24 @@ export default function ClipsBrowser() {
     api.getDevices().then((data) => setDevices(data.devices.map((d) => d.thingName))).catch(console.error);
   }, []);
 
+  // Reset pagination when filters change
   useEffect(() => {
+    setPageKeys([undefined]);
+    setPageIndex(0);
+  }, [deviceFilter, dateFilter, detectionFilter]);
+
+  useEffect(() => {
+    // Convert date from YYYY-MM-DD (input) to YYYY/MM/DD (API)
+    const apiDate = dateFilter ? dateFilter.replace(/-/g, "/") : undefined;
     api
-      .getClips(pageSize, pageKeys[pageIndex], deviceFilter || undefined)
+      .getClips(pageSize, pageKeys[pageIndex], deviceFilter || undefined, apiDate, detectionFilter || undefined)
       .then((data) => {
         setClips(data.clips);
         setTotal(data.totalCount);
         setNextPageKey(data.nextPageKey);
       })
       .catch((e: Error) => setError(e.message));
-  }, [pageIndex, deviceFilter]);
+  }, [pageIndex, pageKeys, deviceFilter, dateFilter, detectionFilter]);
 
   if (error) {
     return (
@@ -41,21 +72,38 @@ export default function ClipsBrowser() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Clips</h1>
-        <div className="flex items-center gap-3">
-          {devices.length > 0 && (
-            <select
-              value={deviceFilter}
-              onChange={(e) => { setDeviceFilter(e.target.value); setPageIndex(0); setPageKeys([undefined]); }}
-              className="text-sm border border-gray-300 rounded-lg px-3 py-1.5"
-            >
-              <option value="">All devices</option>
-              {devices.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
-          )}
-          <span className="text-sm text-gray-500">{total} total</span>
-        </div>
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 mr-auto">Clips</h1>
+
+        <input
+          type="date"
+          value={dateFilter}
+          onChange={(e) => setParam("date", e.target.value)}
+          className="text-sm border border-gray-300 rounded-lg px-3 py-1.5"
+        />
+
+        <select
+          value={detectionFilter}
+          onChange={(e) => setParam("detection", e.target.value)}
+          className="text-sm border border-gray-300 rounded-lg px-3 py-1.5"
+        >
+          {DETECTION_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+
+        {devices.length > 0 && (
+          <select
+            value={deviceFilter}
+            onChange={(e) => setParam("device", e.target.value)}
+            className="text-sm border border-gray-300 rounded-lg px-3 py-1.5"
+          >
+            <option value="">All devices</option>
+            {devices.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        )}
+
+        <span className="text-sm text-gray-500">{total} total</span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -79,23 +127,17 @@ export default function ClipsBrowser() {
             <div className="p-3">
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <Clock className="w-3 h-3" />
-                {formatDistanceToNow(new Date(clip.createdAt), {
-                  addSuffix: true,
-                })}
+                {formatDistanceToNow(new Date(clip.createdAt), { addSuffix: true })}
               </div>
               <div className="flex items-center justify-between mt-1">
-                <span className="text-xs text-gray-400">
-                  {clip.durationSeconds}s
-                </span>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${
-                    clip.detectionType === "my_dog"
-                      ? "bg-amber-50 text-amber-700"
-                      : clip.detectionType === "other_dog"
-                        ? "bg-blue-50 text-blue-700"
-                        : "bg-gray-50 text-gray-700"
-                  }`}
-                >
+                <span className="text-xs text-gray-400">{clip.durationSeconds}s</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                  clip.detectionType === "my_dog"
+                    ? "bg-amber-50 text-amber-700"
+                    : clip.detectionType === "other_dog"
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-gray-50 text-gray-700"
+                }`}>
                   {clip.detectionType}
                 </span>
               </div>
@@ -113,16 +155,12 @@ export default function ClipsBrowser() {
           >
             Prev
           </button>
-          <span className="text-sm text-gray-500">
-            Page {pageIndex + 1}
-          </span>
+          <span className="text-sm text-gray-500">Page {pageIndex + 1}</span>
           <button
             onClick={() => {
               if (nextPageKey) {
                 const newKeys = [...pageKeys];
-                if (newKeys.length <= pageIndex + 1) {
-                  newKeys.push(nextPageKey);
-                }
+                if (newKeys.length <= pageIndex + 1) newKeys.push(nextPageKey);
                 setPageKeys(newKeys);
                 setPageIndex((i) => i + 1);
               }
