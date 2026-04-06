@@ -5,13 +5,13 @@ import { api } from "../api";
 
 const CONFIG_SECTIONS: {
   title: string;
-  keys: { key: string; label: string; type: "int" | "bool" | "str"; min?: number; max?: number; unit?: string; choices?: string[]; description: string }[];
+  keys: { key: string; label: string; type: "int" | "bool" | "str"; min?: number; max?: number; odd?: boolean; unit?: string; choices?: string[]; description: string }[];
 }[] = [
   {
     title: "Motion Detection",
     keys: [
       { key: "motion.threshold", label: "Threshold", type: "int", min: 500, max: 50000, unit: "px", description: "Number of changed pixels to trigger recording" },
-      { key: "motion.blur_kernel", label: "Blur kernel", type: "int", min: 3, max: 51, description: "Gaussian blur kernel size (must be odd)" },
+      { key: "motion.blur_kernel", label: "Blur kernel", type: "int", min: 3, max: 51, odd: true, description: "Gaussian blur kernel size (must be odd)" },
       { key: "motion.min_area", label: "Min area", type: "int", min: 100, max: 10000, unit: "px", description: "Minimum contour area to trigger recording (filters small movements)" },
     ],
   },
@@ -98,6 +98,32 @@ export default function DeviceConfig() {
 
   const updateDraft = (key: string, value: number | boolean | string) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
+    // Clear any existing backend error for this field when user edits it
+    setConfigErrors((prev) => {
+      if (!prev?.[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return Object.keys(next).length ? next : null;
+    });
+  };
+
+  // Client-side validation — mirrors backend ConfigurableKeys constraints
+  const getDraftErrors = (): Record<string, string> => {
+    const errors: Record<string, string> = {};
+    for (const section of CONFIG_SECTIONS) {
+      for (const { key, type, min, max, odd } of section.keys) {
+        const value = draft[key];
+        if (value === undefined || value === config?.[key]) continue; // only validate changed fields
+        if (type === "int") {
+          const n = Number(value);
+          if (!Number.isInteger(n)) { errors[key] = "Must be a whole number"; continue; }
+          if (min != null && n < min) { errors[key] = `Must be at least ${min}`; continue; }
+          if (max != null && n > max) { errors[key] = `Must be at most ${max}`; continue; }
+          if (odd && n % 2 === 0) { errors[key] = "Must be an odd number"; continue; }
+        }
+      }
+    }
+    return errors;
   };
 
   const hasChanges = () => {
@@ -107,11 +133,17 @@ export default function DeviceConfig() {
 
   const handleSave = async () => {
     if (!thingName || !config) return;
+
+    const clientErrors = getDraftErrors();
+    if (Object.keys(clientErrors).length > 0) {
+      setConfigErrors(clientErrors);
+      setSaveMessage({ text: "Fix validation errors before saving", error: true });
+      return;
+    }
+
     const changes: Record<string, number | boolean | string> = {};
     for (const [key, value] of Object.entries(draft)) {
-      if (value !== config[key]) {
-        changes[key] = value;
-      }
+      if (value !== config[key]) changes[key] = value;
     }
     if (Object.keys(changes).length === 0) return;
 
@@ -119,15 +151,17 @@ export default function DeviceConfig() {
     setSaveMessage(null);
     try {
       const result = await api.updatePiConfig(thingName, changes);
-      const errCount = Object.keys(result.errors || {}).length;
+      const backendErrors = result.errors || {};
+      const errCount = Object.keys(backendErrors).length;
       if (errCount > 0) {
-        setSaveMessage({ text: `Saved with ${errCount} validation error(s)`, error: true });
+        setConfigErrors(backendErrors);
+        setSaveMessage({ text: `${errCount} field${errCount !== 1 ? "s" : ""} rejected — see errors below`, error: true });
       } else {
+        setConfigErrors(null);
         setSaveMessage({ text: "Changes saved. Applying to device...", error: false });
+        setTimeout(loadConfig, 8000);
+        setTimeout(loadConfig, 20000);
       }
-      // Refresh config after Pi applies changes
-      setTimeout(loadConfig, 8000);
-      setTimeout(loadConfig, 20000);
     } catch (e) {
       setSaveMessage({ text: `Save failed: ${(e as Error).message}`, error: true });
     } finally {
@@ -187,8 +221,9 @@ export default function DeviceConfig() {
           <div key={section.title} className="bg-white rounded-xl border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-900 mb-4">{section.title}</h2>
             <div className="space-y-4">
-              {section.keys.map(({ key, label, type, min, max, unit, choices, description }) => {
-                const fieldError = configErrors?.[key];
+              {section.keys.map(({ key, label, type, min, max, odd, unit, choices, description }) => {
+                const draftErrors = getDraftErrors();
+                const fieldError = draftErrors[key] ?? configErrors?.[key];
                 const value = draft[key];
                 const changed = config && value !== config[key];
 
@@ -235,7 +270,7 @@ export default function DeviceConfig() {
                               value={value as number ?? ""}
                               onChange={(e) => updateDraft(key, Number(e.target.value))}
                               className={`w-24 px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                                changed ? "border-blue-400 bg-blue-50" : "border-gray-300"
+                                fieldError ? "border-red-400 bg-red-50" : changed ? "border-blue-400 bg-blue-50" : "border-gray-300"
                               }`}
                             />
                             {unit && <span className="text-xs text-gray-400">{unit}</span>}
@@ -247,7 +282,7 @@ export default function DeviceConfig() {
                       <p className="text-xs text-red-600 mt-1">{fieldError}</p>
                     )}
                     {type === "int" && min != null && max != null && (
-                      <p className="text-xs text-gray-300 mt-1">Range: {min} - {max}</p>
+                      <p className="text-xs text-gray-300 mt-1">Range: {min}–{max}{odd ? " · must be odd" : ""}</p>
                     )}
                   </div>
                 );
