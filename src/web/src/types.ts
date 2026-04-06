@@ -30,13 +30,13 @@ export interface DetectionBox {
 }
 
 export interface Detection {
-  detectionId: string;
   clipId: string;
-  timestamp: string;
-  confidence: number;
-  label: string;
-  boundingBox: { x: number; y: number; width: number; height: number };
-  isTargetDog: boolean;
+  detectionType: string;
+  detectionCount: number;
+  timestamp: number;
+  date: string;
+  device?: string;
+  firstKeyframeKey?: string;
 }
 
 export interface StatsOverview {

@@ -23,7 +23,9 @@ export default function Detections() {
   }
 
   const filtered =
-    filter === "target" ? detections.filter((d) => d.isTargetDog) : detections;
+    filter === "target"
+      ? detections.filter((d) => d.detectionType === "my_dog")
+      : detections;
 
   return (
     <div>
@@ -40,7 +42,7 @@ export default function Detections() {
                   : "text-gray-500"
               }`}
             >
-              {f === "all" ? "All" : "Target Dog"}
+              {f === "all" ? "All" : "My Dog"}
             </button>
           ))}
         </div>
@@ -50,8 +52,9 @@ export default function Detections() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 text-left text-gray-500">
-              <th className="px-4 py-3 font-medium">Label</th>
-              <th className="px-4 py-3 font-medium">Confidence</th>
+              <th className="px-4 py-3 font-medium">Type</th>
+              <th className="px-4 py-3 font-medium">Detections</th>
+              <th className="px-4 py-3 font-medium">Device</th>
               <th className="px-4 py-3 font-medium">Clip</th>
               <th className="px-4 py-3 font-medium">When</th>
             </tr>
@@ -59,28 +62,22 @@ export default function Detections() {
           <tbody>
             {filtered.map((d) => (
               <tr
-                key={d.detectionId}
+                key={d.clipId}
                 className="border-b border-gray-50 hover:bg-gray-50"
               >
                 <td className="px-4 py-3 flex items-center gap-2">
-                  {d.label}
-                  {d.isTargetDog && (
-                    <span className="text-amber-500 text-xs">★ Target</span>
-                  )}
+                  <span
+                    className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                      d.detectionType === "my_dog"
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    {d.detectionType === "my_dog" ? "My Dog" : "Other Dog"}
+                  </span>
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-amber-500 rounded-full"
-                        style={{ width: `${d.confidence * 100}%` }}
-                      />
-                    </div>
-                    <span className="text-gray-600">
-                      {(d.confidence * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                </td>
+                <td className="px-4 py-3 text-gray-700">{d.detectionCount}</td>
+                <td className="px-4 py-3 text-gray-500">{d.device ?? "—"}</td>
                 <td className="px-4 py-3">
                   <Link
                     to={`/clips/${d.clipId}`}
@@ -90,7 +87,7 @@ export default function Detections() {
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-gray-500">
-                  {formatDistanceToNow(new Date(d.timestamp), {
+                  {formatDistanceToNow(new Date(d.timestamp * 1000), {
                     addSuffix: true,
                   })}
                 </td>
@@ -98,7 +95,7 @@ export default function Detections() {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
                   No detections found
                 </td>
               </tr>
