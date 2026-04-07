@@ -36,17 +36,15 @@ public class ClipService : IClipService
             return await QueryByDetectionTypeAsync(detectionType, device, limit, nextPageKey);
         }
 
-        string? filterExpression = null;
+        if (!string.IsNullOrEmpty(device))
+        {
+            return await QueryByDeviceAsync(device, limit, nextPageKey);
+        }
+
         var exprValues = new Dictionary<string, AttributeValue>
         {
             [":pk"] = new() { S = "CLIP" }
         };
-
-        if (!string.IsNullOrEmpty(device))
-        {
-            filterExpression = "device = :device";
-            exprValues[":device"] = new() { S = device };
-        }
 
         Dictionary<string, AttributeValue>? exclusiveStartKey = null;
         if (nextPageKey != null)
@@ -67,35 +65,6 @@ public class ClipService : IClipService
             }
         }
 
-        // When using FilterExpression, loop until we have enough results
-        if (filterExpression != null)
-        {
-            var items = new List<Dictionary<string, AttributeValue>>();
-            var lastKey = exclusiveStartKey;
-            do
-            {
-                var resp = await _dynamoClient.QueryAsync(new QueryRequest
-                {
-                    TableName = TableName,
-                    IndexName = "all-by-time",
-                    KeyConditionExpression = "pk = :pk",
-                    FilterExpression = filterExpression,
-                    ExpressionAttributeValues = exprValues,
-                    ScanIndexForward = false,
-                    Limit = 100,
-                    ExclusiveStartKey = lastKey
-                });
-                items.AddRange(resp.Items);
-                lastKey = resp.LastEvaluatedKey;
-            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
-
-            var clips = items.Take(limit).Select(MapToClipSummary).ToList();
-            var nextKey = lastKey?.GetValueOrDefault("clip_id")?.S;
-            if (items.Count > limit)
-                nextKey = items[limit - 1].GetValueOrDefault("clip_id")?.S;
-            return new ClipListResponse(clips, nextKey, clips.Count);
-        }
-
         var response = await _dynamoClient.QueryAsync(new QueryRequest
         {
             TableName = TableName,
@@ -110,6 +79,47 @@ public class ClipService : IClipService
         var resultKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
 
         return new ClipListResponse(result, resultKey, response.Count);
+    }
+
+    private async Task<ClipListResponse> QueryByDeviceAsync(string device, int limit, string? nextPageKey)
+    {
+        var exprValues = new Dictionary<string, AttributeValue>
+        {
+            [":device"] = new() { S = device }
+        };
+
+        Dictionary<string, AttributeValue>? exclusiveStartKey = null;
+        if (nextPageKey != null)
+        {
+            var keyItem = await _dynamoClient.GetItemAsync(TableName, new Dictionary<string, AttributeValue>
+            {
+                ["clip_id"] = new() { S = nextPageKey }
+            });
+            if (keyItem.IsItemSet)
+            {
+                exclusiveStartKey = new Dictionary<string, AttributeValue>
+                {
+                    ["device"] = new() { S = device },
+                    ["timestamp"] = keyItem.Item["timestamp"],
+                    ["clip_id"] = new() { S = nextPageKey }
+                };
+            }
+        }
+
+        var response = await _dynamoClient.QueryAsync(new QueryRequest
+        {
+            TableName = TableName,
+            IndexName = "by-device",
+            KeyConditionExpression = "device = :device",
+            ExpressionAttributeValues = exprValues,
+            ScanIndexForward = false,
+            Limit = limit,
+            ExclusiveStartKey = exclusiveStartKey
+        });
+
+        var clips = response.Items.Select(MapToClipSummary).ToList();
+        var nextKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
+        return new ClipListResponse(clips, nextKey, response.Count);
     }
 
     public async Task<ClipDetail?> GetClipByIdAsync(string clipId)
