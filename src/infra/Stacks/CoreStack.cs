@@ -19,8 +19,11 @@ public class CoreStack : Stack
     public Repository CommandAckEcrRepo { get; }
     public Table LabelsTable { get; }
     public Table ExportsTable { get; }
+    public Table TrainingJobsTable { get; }
     public Repository AutoLabelEcrRepo { get; }
     public Repository ExportDatasetEcrRepo { get; }
+    public Repository TrainingAgentEcrRepo { get; }
+    public Repository UpdateTrainingProgressEcrRepo { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -272,6 +275,53 @@ public class CoreStack : Stack
         ExportDatasetEcrRepo = new Repository(this, "ExportDatasetEcrRepo", new RepositoryProps
         {
             RepositoryName = "snout-spotter-export-dataset",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        // DynamoDB table for training job metadata
+        TrainingJobsTable = new Table(this, "TrainingJobsTable", new TableProps
+        {
+            TableName = "snout-spotter-training-jobs",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "job_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.DESTROY,
+        });
+
+        TrainingJobsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "by-status",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "status", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "created_at", Type = AttributeType.STRING },
+            ProjectionType = ProjectionType.ALL
+        });
+
+        // ECR repository for Training Agent Docker image
+        TrainingAgentEcrRepo = new Repository(this, "TrainingAgentEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-training-agent",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 5,
+                    Description = "Keep only 5 most recent images"
+                }
+            }
+        });
+
+        // ECR repository for UpdateTrainingProgress Lambda
+        UpdateTrainingProgressEcrRepo = new Repository(this, "UpdateTrainingProgressEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-update-training-progress",
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {
