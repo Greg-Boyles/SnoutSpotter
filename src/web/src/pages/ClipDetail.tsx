@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Loader2, Play, Tag, ExternalLink, CheckCircle, Clock, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { Clip } from "../types";
+import { DetectionBadge } from "../components/LabelBadge";
 
 type OverlayMode = "inference" | "labels";
 
@@ -13,20 +14,6 @@ interface LabelRecord {
   reviewed?: string | null;
   bounding_boxes?: string | null;
   confidence?: string | null;
-}
-
-function DetectionBadge({ label, type }: { label: string; type: "inference" | "auto" | "confirmed" }) {
-  const colors =
-    label === "my_dog" ? "bg-amber-100 text-amber-700" :
-    label === "other_dog" ? "bg-blue-100 text-blue-700" :
-    label === "dog" ? "bg-amber-50 text-amber-600" :
-    "bg-gray-100 text-gray-600";
-  const prefix = type === "inference" ? "Detected" : type === "confirmed" ? "Confirmed" : "Auto";
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${colors}`}>
-      {prefix}: {label}
-    </span>
-  );
 }
 
 export default function ClipDetail() {

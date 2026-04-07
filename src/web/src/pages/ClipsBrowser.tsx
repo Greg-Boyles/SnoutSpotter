@@ -35,6 +35,7 @@ export default function ClipsBrowser() {
   const [nextPageKey, setNextPageKey] = useState<string | null>(null);
   const [pageKeys, setPageKeys] = useState<(string | undefined)[]>([undefined]);
   const [pageIndex, setPageIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<string[]>([]);
   const pageSize = 20;
@@ -52,6 +53,7 @@ export default function ClipsBrowser() {
   useEffect(() => {
     // Convert date from YYYY-MM-DD (input) to YYYY/MM/DD (API)
     const apiDate = dateFilter ? dateFilter.replace(/-/g, "/") : undefined;
+    setLoading(true);
     api
       .getClips(pageSize, pageKeys[pageIndex], deviceFilter || undefined, apiDate, detectionFilter || undefined)
       .then((data) => {
@@ -59,7 +61,8 @@ export default function ClipsBrowser() {
         setTotal(data.totalCount);
         setNextPageKey(data.nextPageKey);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
   }, [pageIndex, pageKeys, deviceFilter, dateFilter, detectionFilter]);
 
   if (error) {
@@ -107,7 +110,25 @@ export default function ClipsBrowser() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {clips.map((clip) => (
+        {loading ? (
+          Array.from({ length: pageSize }).map((_, i) => (
+            <div key={i} className="bg-white rounded-xl border border-gray-200 overflow-hidden animate-pulse">
+              <div className="aspect-video bg-gray-200" />
+              <div className="p-3 space-y-2">
+                <div className="h-3 bg-gray-200 rounded w-24" />
+                <div className="flex items-center justify-between">
+                  <div className="h-3 bg-gray-100 rounded w-8" />
+                  <div className="h-5 bg-gray-100 rounded-full w-16" />
+                </div>
+              </div>
+            </div>
+          ))
+        ) : clips.length === 0 ? (
+          <div className="col-span-full text-center py-12">
+            <Video className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm text-gray-400">No clips found</p>
+          </div>
+        ) : clips.map((clip) => (
           <div key={clip.clipId} className="group relative bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
             <Link to={`/clips/${clip.clipId}`} className="block">
               <div className="aspect-video bg-gray-100 flex items-center justify-center">
@@ -156,7 +177,7 @@ export default function ClipsBrowser() {
         ))}
       </div>
 
-      {(pageIndex > 0 || nextPageKey) && (
+      {!loading && (pageIndex > 0 || nextPageKey) && (
         <div className="flex items-center justify-center gap-2 mt-6">
           <button
             onClick={() => setPageIndex((i) => i - 1)}
