@@ -9,7 +9,28 @@
       "Bash(npm install:*)",
       "Bash(npm run:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(ls:*)",
+      "Bash(zsh:*)",
+      "Bash(python3 -m py_compile src/pi/agent.py)",
+      "Bash(python3 -m py_compile src/pi/config_loader.py)",
+      "Bash(python3 -m py_compile src/pi/motion_detector.py)",
+      "Bash(python3 -m py_compile src/pi/uploader.py)",
+      "Bash(python3 -m py_compile src/pi/config_schema.py)",
+      "Bash(grep:*)",
+      "Bash(python3 -m py_compile src/pi/watchdog.py)",
+      "Bash(python3 -m py_compile src/pi/health.py)",
+      "Bash(python3 -m py_compile src/pi/log_shipping.py)",
+      "Bash(python3 -m py_compile src/pi/commands.py)",
+      "Bash(python3 -m py_compile src/pi/shadow.py)",
+      "Bash(python3 -m py_compile src/pi/ota.py)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "playwright"
+  ]
 }
