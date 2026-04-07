@@ -2,6 +2,7 @@ using Amazon.CDK;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Logs;
 using Amazon.CDK.AWS.S3;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 using IoT = Amazon.CDK.AWS.IoT;
 
@@ -136,6 +137,25 @@ public class IoTStack : Stack
             LogGroupName = PiLogGroupName,
             Retention = RetentionDays.ONE_WEEK,
             RemovalPolicy = RemovalPolicy.DESTROY
+        });
+
+        // SSM parameters — allow other stacks to read these at deploy time without CDK cross-stack dependencies
+        _ = new StringParameter(this, "ThingGroupNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/thing-group-name",
+            StringValue = ThingGroupName
+        });
+
+        _ = new StringParameter(this, "PolicyNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/policy-name",
+            StringValue = PolicyName
+        });
+
+        _ = new StringParameter(this, "PiLogGroupNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/pi-log-group-name",
+            StringValue = PiLogGroupName
         });
 
         // Outputs

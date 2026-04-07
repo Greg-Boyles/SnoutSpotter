@@ -3,6 +3,7 @@ using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.Logs;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 using IoT = Amazon.CDK.AWS.IoT;
 
@@ -12,15 +13,17 @@ public class LogIngestionStackProps : StackProps
 {
     public required Repository LogIngestionEcrRepo { get; init; }
     public required string ImageTag { get; init; }
-    public required string PiLogGroupName { get; init; }
 }
 
 public class LogIngestionStack : Stack
 {
     public LogIngestionStack(Construct scope, string id, LogIngestionStackProps props) : base(scope, id, props)
     {
+        // Read from SSM — written by IoTStack, resolved at deploy time (no cross-stack dependency)
+        var piLogGroupName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/pi-log-group-name");
+
         // Import the log group created by IoTStack
-        var piLogGroup = LogGroup.FromLogGroupName(this, "PiLogsGroup", props.PiLogGroupName);
+        var piLogGroup = LogGroup.FromLogGroupName(this, "PiLogsGroup", piLogGroupName);
 
         // Log ingestion Lambda: routes MQTT log messages to per-device CloudWatch streams
         var logIngestionFunction = new DockerImageFunction(this, "LogIngestionFunction", new DockerImageFunctionProps
@@ -35,7 +38,7 @@ public class LogIngestionStack : Stack
             Timeout = Duration.Seconds(15),
             Environment = new Dictionary<string, string>
             {
-                ["LOG_GROUP_NAME"] = props.PiLogGroupName
+                ["LOG_GROUP_NAME"] = piLogGroupName
             }
         });
 
@@ -45,7 +48,7 @@ public class LogIngestionStack : Stack
         {
             Effect = Effect.ALLOW,
             Actions = new[] { "logs:CreateLogStream", "logs:DescribeLogStreams" },
-            Resources = new[] { $"arn:aws:logs:{Region}:{Account}:log-group:{props.PiLogGroupName}:*" }
+            Resources = new[] { $"arn:aws:logs:{Region}:{Account}:log-group:{piLogGroupName}:*" }
         }));
 
         // Allow IoT Rule to invoke the Lambda
