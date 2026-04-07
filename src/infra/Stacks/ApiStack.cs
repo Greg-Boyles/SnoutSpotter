@@ -111,7 +111,11 @@ public class ApiStack : Stack
         {
             Effect = Effect.ALLOW,
             Actions = new[] { "iot:ListThingsInThingGroup" },
-            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
+            Resources = new[]
+            {
+                $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}",
+                $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.TrainerThingGroupName}"
+            }
         }));
 
         // Lambda invoke for auto-label trigger
