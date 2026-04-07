@@ -1,7 +1,9 @@
 """OTA update logic — download, extract, install deps, restart services."""
 
+import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tarfile
@@ -176,6 +178,112 @@ def install_custom_debs(old_version: str | None, bucket: str, region: str, sessi
                 local_path.unlink()
 
 
+def verify_checksum(filepath: Path, expected_sha256: str) -> bool:
+    """Verify SHA256 checksum of a downloaded file."""
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    actual = sha256.hexdigest()
+    if actual != expected_sha256:
+        logger.error(f"Checksum mismatch: expected {expected_sha256}, got {actual}")
+        return False
+    logger.info(f"Checksum verified: {actual}")
+    return True
+
+
+def safe_extract(tar: tarfile.TarFile, dest: Path) -> list[tarfile.TarInfo]:
+    """Extract tar members, skipping config.yaml and rejecting path traversal."""
+    dest = dest.resolve()
+    safe_members = []
+    for member in tar.getmembers():
+        if member.name in ("./config.yaml", "config.yaml"):
+            continue
+        member_path = (dest / member.name).resolve()
+        if not str(member_path).startswith(str(dest) + os.sep) and member_path != dest:
+            logger.warning(f"Skipping tar member with path traversal: {member.name}")
+            continue
+        safe_members.append(member)
+    tar.extractall(path=dest, members=safe_members)
+    return safe_members
+
+
+# Maps service short name to its Python script and description.
+# Used to generate systemd service files for new services during OTA.
+SERVICE_MANIFEST = {
+    "motion":   {"script": "motion_detector.py", "desc": "Motion Detection"},
+    "uploader": {"script": "uploader.py",        "desc": "Upload"},
+    "agent":    {"script": "agent.py",           "desc": "Health & OTA Agent"},
+    "watchdog": {"script": "watchdog.py",        "desc": "Service Watchdog"},
+}
+
+SYSTEMD_UNIT_TEMPLATE = """\
+[Unit]
+Description=SnoutSpotter {desc} Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={work_dir}
+ExecStart=/usr/bin/python3 {work_dir}/{script}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def sync_service_files():
+    """Create and enable systemd service files for any services missing from /etc/systemd/system.
+
+    This allows OTA to deliver new services (e.g. watchdog) without requiring
+    a full re-run of setup-pi.sh.
+    """
+    user = os.environ.get("USER", "pi")
+    work_dir = str(INSTALL_DIR)
+    created = []
+
+    for short_name, info in SERVICE_MANIFEST.items():
+        svc_name = f"snoutspotter-{short_name}"
+        unit_path = Path(f"/etc/systemd/system/{svc_name}.service")
+
+        if unit_path.exists():
+            continue
+
+        # Only create if the script actually exists in the package
+        script_path = INSTALL_DIR / info["script"]
+        if not script_path.exists():
+            continue
+
+        unit_content = SYSTEMD_UNIT_TEMPLATE.format(
+            desc=info["desc"],
+            user=user,
+            work_dir=work_dir,
+            script=info["script"],
+        )
+
+        tmp_path = Path(f"/tmp/{svc_name}.service")
+        tmp_path.write_text(unit_content)
+        subprocess.run(["sudo", "cp", str(tmp_path), str(unit_path)], timeout=5, check=True)
+        tmp_path.unlink(missing_ok=True)
+
+        subprocess.run(["sudo", "systemctl", "enable", svc_name], timeout=10, check=True)
+        created.append(svc_name)
+        logger.info(f"Created and enabled new service: {svc_name}")
+
+    if created:
+        subprocess.run(["sudo", "systemctl", "daemon-reload"], timeout=10, check=True)
+        for svc_name in created:
+            subprocess.run(["sudo", "systemctl", "start", svc_name], timeout=30, check=True)
+            logger.info(f"Started new service: {svc_name}")
+        logger.info(f"Synced {len(created)} new service file(s): {created}")
+
+
 def restart_services():
     for svc in SERVICES:
         try:
@@ -198,12 +306,23 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
         s3 = (session or boto3).client("s3", region_name=region)
         s3.download_file(bucket, s3_key, str(local_path))
 
+        # Verify checksum if available (stored as S3 object metadata)
+        try:
+            head = s3.head_object(Bucket=bucket, Key=s3_key)
+            expected_sha256 = head.get("Metadata", {}).get("sha256")
+            if expected_sha256:
+                if not verify_checksum(local_path, expected_sha256):
+                    raise RuntimeError(f"Checksum verification failed for {s3_key}")
+            else:
+                logger.warning("No sha256 metadata on release — skipping checksum verification")
+        except s3.exceptions.ClientError as e:
+            logger.warning(f"Could not fetch object metadata for checksum: {e}")
+
         backup_current(old_version)
 
         logger.info(f"Extracting to {INSTALL_DIR}")
         with tarfile.open(local_path, "r:gz") as tar:
-            members = [m for m in tar.getmembers() if m.name not in ("./config.yaml", "config.yaml")]
-            tar.extractall(path=INSTALL_DIR, members=members)
+            safe_extract(tar, INSTALL_DIR)
 
         install_system_deps(old_version)
         install_custom_debs(old_version, bucket, region, session)
@@ -216,6 +335,7 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
         )
 
         save_version(version)
+        sync_service_files()
         restart_services()
 
         logger.info("Waiting 30 seconds for services to stabilize...")

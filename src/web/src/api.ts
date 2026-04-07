@@ -239,6 +239,14 @@ export const api = {
   cancelTrainingJob: (jobId: string) =>
     postJson<{ message: string }>(`/training/jobs/${jobId}/cancel`),
 
+  // Pi Releases
+  listPiReleases: () =>
+    fetchJson<{ releases: { version: string; s3Key: string; sizeBytes: number; lastModified: string; isLatest: boolean }[]; latestVersion: string | null }>("/pi/releases"),
+
+  deletePiRelease: (version: string) =>
+    deleteJson<{ message: string }>(`/pi/releases/${encodeURIComponent(version)}`),
+
+
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>
     postJson<DeviceRegistrationResult>("/api/devices/register", { name }, PI_MGMT_BASE),

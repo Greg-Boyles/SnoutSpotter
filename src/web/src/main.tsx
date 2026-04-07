@@ -4,6 +4,7 @@ import { BrowserRouter, useNavigate } from "react-router-dom";
 import { Security } from "@okta/okta-react";
 import oktaAuth from "./auth/oktaConfig";
 import App from "./App";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
 
 function OktaWrapper() {
@@ -24,8 +25,10 @@ function OktaWrapper() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <BrowserRouter>
-      <OktaWrapper />
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <OktaWrapper />
+      </BrowserRouter>
+    </ErrorBoundary>
   </StrictMode>,
 );

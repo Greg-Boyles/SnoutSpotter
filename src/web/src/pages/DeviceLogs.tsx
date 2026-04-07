@@ -12,7 +12,7 @@ const TIME_RANGES = [
 ];
 
 const LEVELS = ["All", "INFO", "WARNING", "ERROR"];
-const SERVICES = ["All", "motion", "uploader", "agent"];
+const SERVICES = ["All", "motion", "uploader", "agent", "watchdog"];
 
 function levelColor(level: string): string {
   switch (level.toUpperCase()) {

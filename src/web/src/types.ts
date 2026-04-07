@@ -45,7 +45,8 @@ export interface StatsOverview {
   totalDetections: number;
   myDogDetections: number;
   lastUploadTime: string | null;
-  piOnline: boolean;
+  piOnlineCount: number;
+  piTotalCount: number;
 }
 
 export interface CameraStatus {
@@ -115,4 +116,12 @@ export interface SystemHealth {
   checkedAt: string;
   latestVersion?: string;
   devices: PiDevice[];
+}
+
+export interface PiRelease {
+  version: string;
+  s3Key: string;
+  sizeBytes: number;
+  lastModified: string;
+  isLatest: boolean;
 }

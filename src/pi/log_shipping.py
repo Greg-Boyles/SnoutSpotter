@@ -46,6 +46,7 @@ def collect_and_ship_logs(connection, thing_name: str, config: dict, last_log_ti
             "-u", "snoutspotter-motion",
             "-u", "snoutspotter-uploader",
             "-u", "snoutspotter-agent",
+            "-u", "snoutspotter-watchdog",
             "-p", priority,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)

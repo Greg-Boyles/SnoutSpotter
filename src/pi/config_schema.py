@@ -37,6 +37,10 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": int, "min": 15, "max": 60,
         "affects": "motion",
     },
+    "camera.encoding_bitrate": {
+        "type": int, "min": 1000000, "max": 10000000,
+        "affects": "motion",
+    },
     "recording.max_clip_length": {
         "type": int, "min": 10, "max": 300,
         "affects": "motion",
@@ -53,6 +57,10 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": int, "min": 3, "max": 60,
         "affects": "motion",
     },
+    "recording.ffmpeg_timeout_seconds": {
+        "type": int, "min": 10, "max": 300,
+        "affects": "motion",
+    },
     "upload.max_retries": {
         "type": int, "min": 1, "max": 20,
         "affects": "uploader",
@@ -63,6 +71,18 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
     },
     "upload.delete_after_upload": {
         "type": bool,
+        "affects": "uploader",
+    },
+    "upload.file_stability_seconds": {
+        "type": int, "min": 1, "max": 60,
+        "affects": "uploader",
+    },
+    "upload.min_free_disk_mb": {
+        "type": int, "min": 100, "max": 10000,
+        "affects": "uploader",
+    },
+    "upload.ledger_retention_days": {
+        "type": int, "min": 1, "max": 90,
         "affects": "uploader",
     },
     "health.interval_seconds": {

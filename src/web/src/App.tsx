@@ -1,6 +1,6 @@
-import { useEffect } from "react";
-import { Routes, Route, NavLink } from "react-router-dom";
-import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, GraduationCap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Routes, Route, NavLink, useLocation } from "react-router-dom";
+import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, GraduationCap, HardDriveDownload } from "lucide-react";
 import { useOktaAuth, LoginCallback } from "@okta/okta-react";
 import Dashboard from "./pages/Dashboard";
 import ClipsBrowser from "./pages/ClipsBrowser";
@@ -17,6 +17,7 @@ import Labels from "./pages/Labels";
 import LabelDetail from "./pages/LabelDetail";
 import TrainingExports from "./pages/TrainingExports";
 import Models from "./pages/Models";
+import PiPackages from "./pages/PiPackages";
 import TrainingJobs from "./pages/TrainingJobs";
 import SubmitTraining from "./pages/SubmitTraining";
 import TrainingJobDetail from "./pages/TrainingJobDetail";
@@ -31,6 +32,7 @@ const navItems = [
   { to: "/exports", icon: Package, label: "Exports" },
   { to: "/models", icon: Cpu, label: "Models" },
   { to: "/training", icon: GraduationCap, label: "Training" },
+  { to: "/pi-packages", icon: HardDriveDownload, label: "Pi Packages" },
   { to: "/health", icon: Activity, label: "System" },
 ];
 
@@ -56,10 +58,17 @@ function RequiredAuth({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const { oktaAuth } = useOktaAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
 
   useEffect(() => {
     setAuthGetter(() => oktaAuth.getAccessToken());
   }, [oktaAuth]);
+
+  // Close sidebar on navigation (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
 
   return (
     <Routes>
@@ -69,12 +78,41 @@ export default function App() {
         element={
           <RequiredAuth>
             <div className="flex min-h-screen bg-gray-50">
-              <nav className="w-56 bg-white border-r border-gray-200 flex flex-col">
+              {/* Mobile header */}
+              <div className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 md:hidden">
+                <div className="flex items-center gap-2">
+                  <Dog className="w-6 h-6 text-amber-600" />
+                  <span className="text-lg font-bold text-gray-900">SnoutSpotter</span>
+                </div>
+                <button
+                  onClick={() => setSidebarOpen(!sidebarOpen)}
+                  className="p-1.5 rounded-lg text-gray-600 hover:bg-gray-100"
+                  aria-label="Toggle menu"
+                >
+                  {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+                </button>
+              </div>
+
+              {/* Backdrop */}
+              {sidebarOpen && (
+                <div
+                  className="fixed inset-0 z-30 bg-black bg-opacity-50 md:hidden"
+                  onClick={() => setSidebarOpen(false)}
+                />
+              )}
+
+              {/* Sidebar */}
+              <nav className={`
+                fixed inset-y-0 left-0 z-40 w-56 bg-white border-r border-gray-200 flex flex-col
+                transform transition-transform duration-200 ease-in-out
+                ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
+                md:translate-x-0 md:static md:z-auto
+              `}>
                 <div className="flex items-center gap-2 px-4 py-5 border-b border-gray-200">
                   <Dog className="w-7 h-7 text-amber-600" />
                   <span className="text-lg font-bold text-gray-900">SnoutSpotter</span>
                 </div>
-                <ul className="flex-1 px-2 py-4 space-y-1">
+                <ul className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
                   {navItems.map(({ to, icon: Icon, label }) => (
                     <li key={to}>
                       <NavLink
@@ -105,7 +143,7 @@ export default function App() {
                 </div>
               </nav>
 
-              <main className="flex-1 p-6 overflow-y-auto">
+              <main className="flex-1 p-4 pt-16 md:p-6 md:pt-6 overflow-y-auto">
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/clips" element={<ClipsBrowser />} />
@@ -119,6 +157,7 @@ export default function App() {
                   <Route path="/training" element={<TrainingJobs />} />
                   <Route path="/training/new" element={<SubmitTraining />} />
                   <Route path="/training/:jobId" element={<TrainingJobDetail />} />
+                  <Route path="/pi-packages" element={<PiPackages />} />
                   <Route path="/health" element={<SystemHealthPage />} />
                   <Route path="/device/:thingName" element={<DeviceDetail />} />
                   <Route path="/device/:thingName/shadow" element={<DeviceShadow />} />

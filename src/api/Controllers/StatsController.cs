@@ -11,13 +11,11 @@ namespace SnoutSpotter.Api.Controllers;
 public class StatsController : ControllerBase
 {
     private readonly IClipService _clipService;
-    private readonly IHealthService _healthService;
     private readonly IPiUpdateService _piUpdateService;
 
-    public StatsController(IClipService clipService, IHealthService healthService, IPiUpdateService piUpdateService)
+    public StatsController(IClipService clipService, IPiUpdateService piUpdateService)
     {
         _clipService = clipService;
-        _healthService = healthService;
         _piUpdateService = piUpdateService;
     }
 
@@ -30,15 +28,37 @@ public class StatsController : ControllerBase
         var todayClips = await _clipService.GetClipsAsync(date: today, limit: 1000);
         var detections = await _clipService.GetDetectionsAsync(limit: 1000);
 
-        var piOnline = await _healthService.IsPiOnlineAsync();
+        var thingNames = await _piUpdateService.ListPisAsync();
+        var piOnlineCount = 0;
+        string? lastUploadAcrossAll = null;
+
+        foreach (var thingName in thingNames)
+        {
+            var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
+            if (shadow?.LastHeartbeat != null &&
+                DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
+                (DateTime.UtcNow - lastHb).TotalMinutes < 5)
+            {
+                piOnlineCount++;
+            }
+
+            if (shadow?.LastUploadAt != null &&
+                (lastUploadAcrossAll == null || string.Compare(shadow.LastUploadAt, lastUploadAcrossAll, StringComparison.Ordinal) > 0))
+            {
+                lastUploadAcrossAll = shadow.LastUploadAt;
+            }
+        }
+
+        var lastUploadTime = lastUploadAcrossAll ?? allClips.Clips.MaxBy(c => c.Timestamp)?.CreatedAt;
 
         var stats = new DashboardStats(
             TotalClips: allClips.TotalCount,
             ClipsToday: todayClips.TotalCount,
             TotalDetections: detections.Count,
             MyDogDetections: detections.Count(d => d.DetectionType == "my_dog"),
-            LastUploadTime: allClips.Clips.MaxBy(c => c.Timestamp)?.CreatedAt,
-            PiOnline: piOnline);
+            LastUploadTime: lastUploadTime,
+            PiOnlineCount: piOnlineCount,
+            PiTotalCount: thingNames.Count);
 
         return Ok(stats);
     }

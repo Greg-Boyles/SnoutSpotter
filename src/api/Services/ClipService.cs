@@ -36,17 +36,15 @@ public class ClipService : IClipService
             return await QueryByDetectionTypeAsync(detectionType, device, limit, nextPageKey);
         }
 
-        string? filterExpression = null;
+        if (!string.IsNullOrEmpty(device))
+        {
+            return await QueryByDeviceAsync(device, limit, nextPageKey);
+        }
+
         var exprValues = new Dictionary<string, AttributeValue>
         {
             [":pk"] = new() { S = "CLIP" }
         };
-
-        if (!string.IsNullOrEmpty(device))
-        {
-            filterExpression = "device = :device";
-            exprValues[":device"] = new() { S = device };
-        }
 
         Dictionary<string, AttributeValue>? exclusiveStartKey = null;
         if (nextPageKey != null)
@@ -67,35 +65,6 @@ public class ClipService : IClipService
             }
         }
 
-        // When using FilterExpression, loop until we have enough results
-        if (filterExpression != null)
-        {
-            var items = new List<Dictionary<string, AttributeValue>>();
-            var lastKey = exclusiveStartKey;
-            do
-            {
-                var resp = await _dynamoClient.QueryAsync(new QueryRequest
-                {
-                    TableName = TableName,
-                    IndexName = "all-by-time",
-                    KeyConditionExpression = "pk = :pk",
-                    FilterExpression = filterExpression,
-                    ExpressionAttributeValues = exprValues,
-                    ScanIndexForward = false,
-                    Limit = 100,
-                    ExclusiveStartKey = lastKey
-                });
-                items.AddRange(resp.Items);
-                lastKey = resp.LastEvaluatedKey;
-            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
-
-            var clips = items.Take(limit).Select(MapToClipSummary).ToList();
-            var nextKey = lastKey?.GetValueOrDefault("clip_id")?.S;
-            if (items.Count > limit)
-                nextKey = items[limit - 1].GetValueOrDefault("clip_id")?.S;
-            return new ClipListResponse(clips, nextKey, clips.Count);
-        }
-
         var response = await _dynamoClient.QueryAsync(new QueryRequest
         {
             TableName = TableName,
@@ -112,6 +81,47 @@ public class ClipService : IClipService
         return new ClipListResponse(result, resultKey, response.Count);
     }
 
+    private async Task<ClipListResponse> QueryByDeviceAsync(string device, int limit, string? nextPageKey)
+    {
+        var exprValues = new Dictionary<string, AttributeValue>
+        {
+            [":device"] = new() { S = device }
+        };
+
+        Dictionary<string, AttributeValue>? exclusiveStartKey = null;
+        if (nextPageKey != null)
+        {
+            var keyItem = await _dynamoClient.GetItemAsync(TableName, new Dictionary<string, AttributeValue>
+            {
+                ["clip_id"] = new() { S = nextPageKey }
+            });
+            if (keyItem.IsItemSet)
+            {
+                exclusiveStartKey = new Dictionary<string, AttributeValue>
+                {
+                    ["device"] = new() { S = device },
+                    ["timestamp"] = keyItem.Item["timestamp"],
+                    ["clip_id"] = new() { S = nextPageKey }
+                };
+            }
+        }
+
+        var response = await _dynamoClient.QueryAsync(new QueryRequest
+        {
+            TableName = TableName,
+            IndexName = "by-device",
+            KeyConditionExpression = "device = :device",
+            ExpressionAttributeValues = exprValues,
+            ScanIndexForward = false,
+            Limit = limit,
+            ExclusiveStartKey = exclusiveStartKey
+        });
+
+        var clips = response.Items.Select(MapToClipSummary).ToList();
+        var nextKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
+        return new ClipListResponse(clips, nextKey, response.Count);
+    }
+
     public async Task<ClipDetail?> GetClipByIdAsync(string clipId)
     {
         var response = await _dynamoClient.GetItemAsync(TableName, new Dictionary<string, AttributeValue>
@@ -126,43 +136,39 @@ public class ClipService : IClipService
     public async Task<List<DetectionSummary>> GetDetectionsAsync(
         string? detectionType = null, string? dateFrom = null, string? dateTo = null, int limit = 50)
     {
-        var filterExpressions = new List<string>();
-        var expressionValues = new Dictionary<string, AttributeValue>();
-
         if (detectionType != null)
         {
-            filterExpressions.Add("detection_type = :dt");
-            expressionValues[":dt"] = new() { S = detectionType };
-        }
-        else
-        {
-            filterExpressions.Add("detection_type IN (:dt1, :dt2)");
-            expressionValues[":dt1"] = new() { S = "my_dog" };
-            expressionValues[":dt2"] = new() { S = "other_dog" };
+            return await QueryDetectionsByTypeAsync(detectionType, limit);
         }
 
-        // Scan with a filter: Limit controls items examined, not items returned.
-        // Paginate until we have enough matching items or the table is exhausted.
-        var items = new List<Dictionary<string, AttributeValue>>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-        do
-        {
-            var page = await _dynamoClient.ScanAsync(new ScanRequest
-            {
-                TableName = TableName,
-                FilterExpression = string.Join(" AND ", filterExpressions),
-                ExpressionAttributeValues = expressionValues,
-                ExclusiveStartKey = lastKey?.Count > 0 ? lastKey : null
-            });
-            items.AddRange(page.Items);
-            lastKey = page.LastEvaluatedKey;
-        } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
+        // No specific type — query both my_dog and other_dog via GSI, merge results
+        var myDogTask = QueryDetectionsByTypeAsync("my_dog", limit);
+        var otherDogTask = QueryDetectionsByTypeAsync("other_dog", limit);
+        await Task.WhenAll(myDogTask, otherDogTask);
 
-        return items
-            .OrderByDescending(i => long.TryParse(i.GetValueOrDefault("timestamp")?.N, out var t) ? t : 0)
+        return myDogTask.Result
+            .Concat(otherDogTask.Result)
+            .OrderByDescending(d => d.Timestamp)
             .Take(limit)
-            .Select(MapToDetectionSummary)
             .ToList();
+    }
+
+    private async Task<List<DetectionSummary>> QueryDetectionsByTypeAsync(string type, int limit)
+    {
+        var response = await _dynamoClient.QueryAsync(new QueryRequest
+        {
+            TableName = TableName,
+            IndexName = "by-detection",
+            KeyConditionExpression = "detection_type = :dt",
+            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            {
+                [":dt"] = new() { S = type }
+            },
+            ScanIndexForward = false,
+            Limit = limit
+        });
+
+        return response.Items.Select(MapToDetectionSummary).ToList();
     }
 
     public async Task<int> GetClipCountForDateAsync(string date)

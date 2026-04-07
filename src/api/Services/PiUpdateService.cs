@@ -191,6 +191,53 @@ public class PiUpdateService : IPiUpdateService
         }
     }
 
+    public async Task<List<PiRelease>> ListReleasesAsync()
+    {
+        var latest = await GetLatestVersionAsync();
+        var releases = new List<PiRelease>();
+
+        var request = new Amazon.S3.Model.ListObjectsV2Request
+        {
+            BucketName = _config.BucketName,
+            Prefix = "releases/pi/v"
+        };
+
+        Amazon.S3.Model.ListObjectsV2Response response;
+        do
+        {
+            response = await _s3Client.ListObjectsV2Async(request);
+            foreach (var obj in response.S3Objects)
+            {
+                if (!obj.Key.EndsWith(".tar.gz")) continue;
+
+                // Extract version from key: releases/pi/v1.0.2.tar.gz → v1.0.2
+                var filename = Path.GetFileName(obj.Key);
+                var version = filename.Replace(".tar.gz", "");
+
+                releases.Add(new PiRelease(
+                    Version: version,
+                    S3Key: obj.Key,
+                    SizeBytes: obj.Size,
+                    LastModified: obj.LastModified.ToString("O"),
+                    IsLatest: latest != null && version == $"v{latest}"
+                ));
+            }
+            request.ContinuationToken = response.NextContinuationToken;
+        } while (response.IsTruncated);
+
+        return releases.OrderByDescending(r => r.LastModified).ToList();
+    }
+
+    public async Task DeleteReleaseAsync(string version)
+    {
+        var latest = await GetLatestVersionAsync();
+        if (latest != null && version == $"v{latest}")
+            throw new InvalidOperationException($"Cannot delete the latest release ({version})");
+
+        var key = $"releases/pi/{version}.tar.gz";
+        await _s3Client.DeleteObjectAsync(_config.BucketName, key);
+    }
+
     private record ConfigKeySpec(string Type, int? Min = null, int? Max = null, bool Odd = false, string[]? Choices = null);
 
     private static readonly Dictionary<string, ConfigKeySpec> ConfigurableKeys = new()
@@ -202,13 +249,18 @@ public class PiUpdateService : IPiUpdateService
         ["camera.preview_resolution"]           = new("str", Choices: ["640x480", "1280x720"]),
         ["camera.record_resolution"]            = new("str", Choices: ["1280x720", "1920x1080"]),
         ["camera.record_fps"]                   = new("int", Min: 15,   Max: 60),
+        ["camera.encoding_bitrate"]             = new("int", Min: 1000000, Max: 10000000),
         ["recording.max_clip_length"]           = new("int", Min: 10,   Max: 300),
         ["recording.pre_buffer"]                = new("int", Min: 1,    Max: 10),
         ["recording.pre_buffer_enabled"]        = new("bool"),
         ["recording.post_motion_buffer"]        = new("int", Min: 3,    Max: 60),
+        ["recording.ffmpeg_timeout_seconds"]    = new("int", Min: 10,   Max: 300),
         ["upload.max_retries"]                  = new("int", Min: 1,    Max: 20),
         ["upload.retry_delay"]                  = new("int", Min: 1,    Max: 60),
         ["upload.delete_after_upload"]          = new("bool"),
+        ["upload.file_stability_seconds"]       = new("int", Min: 1,    Max: 60),
+        ["upload.min_free_disk_mb"]             = new("int", Min: 100, Max: 10000),
+        ["upload.ledger_retention_days"]        = new("int", Min: 1,   Max: 90),
         ["health.interval_seconds"]             = new("int", Min: 60,   Max: 3600),
         ["log_shipping.enabled"]                = new("bool"),
         ["log_shipping.batch_interval_seconds"] = new("int", Min: 30,   Max: 600),

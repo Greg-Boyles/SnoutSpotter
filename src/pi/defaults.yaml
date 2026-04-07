@@ -11,12 +11,14 @@ camera:
   record_resolution: [1920, 1080]
   detection_fps: 5
   record_fps: 30
+  encoding_bitrate: 5000000
 
 recording:
   pre_buffer: 3
   pre_buffer_enabled: true
   post_motion_buffer: 10
   max_clip_length: 60
+  ffmpeg_timeout_seconds: 30
   output_dir: /home/pi/clips
 
 upload:
@@ -26,6 +28,9 @@ upload:
   max_retries: 5
   retry_delay: 5
   delete_after_upload: true
+  file_stability_seconds: 5
+  min_free_disk_mb: 500
+  ledger_retention_days: 7
 
 health:
   namespace: SnoutSpotter
