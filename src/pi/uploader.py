@@ -131,14 +131,14 @@ class Uploader:
         except Exception as e:
             logger.warning(f"Failed to write status file: {e}")
 
-    def get_s3_key(self, filename: str) -> str:
-        """Generate S3 key: raw-clips/{thing_name}/YYYY/MM/DD/filename."""
-        now = datetime.now(timezone.utc)
-        return f"{self.prefix}/{self.thing_name}/{now.strftime('%Y/%m/%d')}/{filename}"
+    def get_s3_key(self, filepath: Path) -> str:
+        """Generate S3 key using file mtime: raw-clips/{thing_name}/YYYY/MM/DD/filename."""
+        mtime = datetime.fromtimestamp(filepath.stat().st_mtime, tz=timezone.utc)
+        return f"{self.prefix}/{self.thing_name}/{mtime.strftime('%Y/%m/%d')}/{filepath.name}"
 
     def upload_file(self, filepath: Path) -> bool:
         """Upload a single file to S3 with multipart upload."""
-        s3_key = self.get_s3_key(filepath.name)
+        s3_key = self.get_s3_key(filepath)
         self._check_today_reset()
         try:
             logger.info(f"Uploading {filepath.name} -> s3://{self.bucket}/{s3_key}")
