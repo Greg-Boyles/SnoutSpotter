@@ -196,12 +196,20 @@ class MotionDetector:
                         ["ffmpeg", "-y", "-i", self._raw_h264_path, "-c", "copy", filepath],
                         capture_output=True, timeout=30, check=True
                     )
+                    # Validate the output is a playable MP4
+                    probe = subprocess.run(
+                        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                         "-of", "csv=p=0", filepath],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if probe.returncode != 0 or not probe.stdout.strip():
+                        raise RuntimeError(f"ffprobe validation failed: {probe.stderr.strip()}")
                     Path(self._raw_h264_path).unlink(missing_ok=True)
                     logger.info(f"Remuxed H.264 to MP4: {filepath}")
                 except Exception as e:
-                    logger.warning(f"FFmpeg remux failed: {e}, keeping raw H.264")
-                    # Fall back to renaming raw file as .mp4
-                    Path(self._raw_h264_path).rename(filepath)
+                    logger.error(f"FFmpeg remux/validation failed: {e} — discarding clip")
+                    Path(self._raw_h264_path).unlink(missing_ok=True)
+                    Path(filepath).unlink(missing_ok=True)
                 self._raw_h264_path = None
         else:
             # No pre-buffer — stop the encoder entirely
@@ -211,10 +219,14 @@ class MotionDetector:
 
         duration = int(time.time() - self.record_start_time)
 
-        # Rename file to include duration
+        # Rename file to include duration (skip if clip was discarded)
         src = Path(filepath)
-        dst = src.with_name(f"{src.stem}_{duration}s.mp4")
-        src.rename(dst)
+        if src.exists():
+            dst = src.with_name(f"{src.stem}_{duration}s.mp4")
+            src.rename(dst)
+            logger.info(f"Recording stopped: {dst} ({duration}s)")
+        else:
+            logger.warning(f"Recording stopped: clip was discarded ({duration}s)")
 
         self.recording = False
 
@@ -222,8 +234,6 @@ class MotionDetector:
         self._recordings_today += 1
         self._write_status()
         self._touch_shadow_dirty()
-
-        logger.info(f"Recording stopped: {dst} ({duration}s)")
 
     def run(self):
         """Main detection loop."""
