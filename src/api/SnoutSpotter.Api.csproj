@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\shared\SnoutSpotter.Shared.Training.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="3.7.400" />
     <PackageReference Include="AWSSDK.KinesisVideo" Version="3.7.400" />
     <PackageReference Include="AWSSDK.KinesisVideoArchivedMedia" Version="3.7.400" />
