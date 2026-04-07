@@ -4,8 +4,11 @@ namespace SnoutSpotter.Shared.Training;
 
 public class TrainingProgress
 {
-    [JsonPropertyName("epoch")]        public int    Epoch       { get; init; }
-    [JsonPropertyName("total_epochs")] public int    TotalEpochs { get; init; }
+    [JsonPropertyName("epoch")]
+    public int Epoch { get; init; }
+
+    [JsonPropertyName("total_epochs")]
+    public int TotalEpochs { get; init; }
 
     [JsonPropertyName("train_loss")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

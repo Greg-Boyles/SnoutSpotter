@@ -8,8 +8,11 @@ namespace SnoutSpotter.Shared.Training;
 /// </summary>
 public class TrainingProgressMessage
 {
-    [JsonPropertyName("job_id")] public string JobId  { get; init; } = "";
-    [JsonPropertyName("status")] public string Status { get; init; } = "";
+    [JsonPropertyName("job_id")]
+    public string JobId { get; init; } = "";
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
 
     [JsonPropertyName("progress")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
