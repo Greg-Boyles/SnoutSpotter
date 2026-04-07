@@ -882,28 +882,31 @@ Before activating, show a comparison table:
 
 | Step | Phase | Description | Effort | Dependencies |
 |------|-------|-------------|--------|--------------|
-| 1 | 2.1 | Create training-jobs DynamoDB table + ECR repo | 1h | None |
+| 1 | 2.1 | Create training-jobs DynamoDB table + ECR repos | 1h | None |
 | 2 | 1.1 | Refactor DeviceProvisioningService + add TrainersController | 3h | None |
 | 3 | 1.2 | Add IoT thing group + policy + env vars for training agents | 1h | Step 2 |
-| 4 | 3.1 | Create TrainingController API endpoints | 3h | Step 1 |
-| 5 | 4.1 | Build Docker image (multi-stage .NET + Python/CUDA) | 3h | None |
-| 6 | 5.1-5.5 | Build .NET training agent (MQTT, job runner, progress parser, GPU info) | 8h | Steps 2, 3 |
-| 7 | 6.2-6.4 | Update handler with mid-training deferral + updater.sh | 2h | Step 6 |
-| 8 | 4.3 | GitHub Actions workflow for image build + ECR push | 1h | Step 5 |
-| 9 | 7.1 | Setup script for agent registration + Docker setup | 2h | Steps 5, 6 |
-| 10 | 8.1 | Training Agents page (agent status + GPU info + update) | 2h | Step 4 |
-| 11 | 8.2 | Submit Training Job form | 2h | Step 4 |
-| 12 | 8.3 | Training Job Detail with live progress | 3h | Step 4 |
-| 13 | 8.4 | Training Jobs list page | 1h | Step 4 |
-| 14 | 8.5 | Navigation + routing | 30m | Steps 10-13 |
-| 15 | 9.1 | One-click model activation from job detail | 1h | Step 12 |
-| 16 | — | End-to-end testing | 3h | All |
+| 4 | — | UpdateTrainingProgress Lambda + IoT Rule + CDK stack | 3h | Step 1 |
+| 5 | 3.1 | Create TrainingController API endpoints | 3h | Step 1 |
+| 6 | 4.1 | Build Docker image (multi-stage .NET + Python/CUDA) | 3h | None |
+| 7 | 5.1-5.5 | Build .NET training agent (MQTT, job runner, progress parser, GPU info) | 8h | Steps 2, 3 |
+| 8 | 6.2-6.4 | Update handler with mid-training deferral + updater.sh | 2h | Step 7 |
+| 9 | 4.3 | GitHub Actions workflow for image build + ECR push | 1h | Step 6 |
+| 10 | 7.1 | Setup script for agent registration + Docker setup | 2h | Steps 6, 7 |
+| 11 | 8.1 | Training Agents page (agent status + GPU info + update) | 2h | Step 5 |
+| 12 | 8.2 | Submit Training Job form | 2h | Step 5 |
+| 13 | 8.3 | Training Job Detail with live progress | 3h | Steps 4, 5 |
+| 14 | 8.4 | Training Jobs list page | 1h | Step 5 |
+| 15 | 8.5 | Navigation + routing | 30m | Steps 11-14 |
+| 16 | 9.1 | One-click model activation from job detail | 1h | Step 13 |
+| 17 | — | End-to-end testing | 3h | All |
 
-**Total estimated effort: ~36 hours across 16 steps**
+**Total estimated effort: ~39 hours across 17 steps**
 
 ---
 
-## MQTT Topics
+## MQTT Topics & Progress Pipeline
+
+### Topics
 
 | Topic | Direction | Purpose |
 |-------|-----------|---------|
@@ -912,8 +915,180 @@ Before activating, show a comparison table:
 | `snoutspotter/trainer/{agentThing}/progress` | Agent → Cloud | Per-epoch training progress |
 | `snoutspotter/trainer/{agentThing}/logs` | Agent → Cloud | Training agent logs (optional) |
 
-**IoT Rules:**
-- `snoutspotter/trainer/+/progress` → DynamoDB action: update training-jobs table progress field
+### Progress Pipeline: IoT Rule → Lambda → DynamoDB UpdateItem
+
+IoT Rules DynamoDB actions only support `Put` (full item overwrite), not partial updates.
+Writing progress would overwrite the entire job record (config, timestamps, result, etc.).
+Instead, route progress messages through a lightweight Lambda that does a targeted
+`UpdateItemAsync` on just the `progress` and `status` fields — same pattern as the
+command ack system (`snoutspotter/{thingName}/commands/ack` → Lambda → commands table).
+
+```
+Agent publishes to MQTT:
+  snoutspotter/trainer/{agentThing}/progress
+    {
+      "job_id": "tj-20260407-001",
+      "status": "training",
+      "progress": { "epoch": 45, "total_epochs": 100, "mAP50": 0.89, ... }
+    }
+        │
+        ▼
+  IoT Rule: SELECT * FROM 'snoutspotter/trainer/+/progress'
+        │
+        ▼
+  Lambda: UpdateTrainingProgress
+        │
+        ▼
+  DynamoDB UpdateItemAsync:
+    Key:    { job_id: "tj-20260407-001" }
+    Update: SET #s = :status, progress = :progress, updated_at = :now
+    (patches only these fields — rest of the record untouched)
+```
+
+#### Lambda: UpdateTrainingProgress
+
+**File:** `src/lambdas/SnoutSpotter.Lambda.UpdateTrainingProgress/Function.cs` (new)
+
+Lightweight Lambda (~30 lines of logic). Receives the MQTT payload via IoT Rule,
+does a single DynamoDB `UpdateItemAsync`.
+
+```csharp
+public class Function
+{
+    private readonly IAmazonDynamoDB _dynamoClient;
+    private readonly string _tableName;
+
+    public Function()
+    {
+        _dynamoClient = new AmazonDynamoDBClient();
+        _tableName = Environment.GetEnvironmentVariable("TRAINING_JOBS_TABLE")!;
+    }
+
+    public async Task FunctionHandler(JsonElement input, ILambdaContext context)
+    {
+        var jobId = input.GetProperty("job_id").GetString()!;
+        var status = input.GetProperty("status").GetString()!;
+        var progress = input.GetProperty("progress");
+
+        var updateExpr = "SET #s = :status, progress = :progress, updated_at = :now";
+        var exprValues = new Dictionary<string, AttributeValue>
+        {
+            [":status"] = new() { S = status },
+            [":progress"] = new() { S = progress.GetRawText() },
+            [":now"] = new() { S = DateTime.UtcNow.ToString("O") }
+        };
+        var exprNames = new Dictionary<string, string> { ["#s"] = "status" };
+
+        // If status is "training" and no started_at yet, set it
+        if (status == "training" || status == "downloading")
+        {
+            updateExpr += ", started_at = if_not_exists(started_at, :now)";
+        }
+
+        // If terminal status, set completed_at
+        if (status is "complete" or "failed" or "cancelled" or "interrupted")
+        {
+            updateExpr += ", completed_at = :now";
+        }
+
+        await _dynamoClient.UpdateItemAsync(new UpdateItemRequest
+        {
+            TableName = _tableName,
+            Key = new Dictionary<string, AttributeValue>
+            {
+                ["job_id"] = new() { S = jobId }
+            },
+            UpdateExpression = updateExpr,
+            ExpressionAttributeValues = exprValues,
+            ExpressionAttributeNames = exprNames,
+            ConditionExpression = "attribute_exists(job_id)"
+        });
+
+        context.Logger.LogInformation($"Updated job {jobId}: status={status}");
+    }
+}
+```
+
+This Lambda also handles the **final result** message. When the agent publishes
+`status: "complete"` with a `result` field, the Lambda writes both:
+
+```csharp
+if (input.TryGetProperty("result", out var result))
+{
+    updateExpr += ", #r = :result";
+    exprValues[":result"] = new() { S = result.GetRawText() };
+    exprNames["#r"] = "result";
+}
+```
+
+#### CDK Stack: TrainingProgressStack
+
+**File:** `src/infra/Stacks/TrainingProgressStack.cs` (new)
+
+- Docker Lambda: `snout-spotter-update-training-progress`
+- ECR repo: `snout-spotter-update-training-progress`
+- IoT Rule: `snoutspotter_trainer_progress`
+  - SQL: `SELECT * FROM 'snoutspotter/trainer/+/progress'`
+  - Action: Lambda invoke
+- DynamoDB write permissions on `snout-spotter-training-jobs` table
+
+Same pattern as the existing command ack IoT Rule + Lambda.
+
+#### Agent progress messages
+
+The agent publishes progress at three stages:
+
+**1. Per-epoch progress** (every epoch):
+```json
+{
+  "job_id": "tj-20260407-001",
+  "status": "training",
+  "progress": {
+    "epoch": 45,
+    "total_epochs": 100,
+    "train_loss": 0.0234,
+    "val_loss": 0.0312,
+    "mAP50": 0.89,
+    "mAP50_95": 0.72,
+    "best_mAP50": 0.91,
+    "elapsed_seconds": 1823,
+    "eta_seconds": 2230,
+    "gpu_util_percent": 95,
+    "gpu_temp_c": 72
+  }
+}
+```
+
+**2. Status transitions** (downloading, training, uploading):
+```json
+{
+  "job_id": "tj-20260407-001",
+  "status": "uploading",
+  "progress": { "epoch": 100, "total_epochs": 100, "mAP50": 0.91 }
+}
+```
+
+**3. Final result** (complete/failed):
+```json
+{
+  "job_id": "tj-20260407-001",
+  "status": "complete",
+  "progress": { "epoch": 100, "total_epochs": 100 },
+  "result": {
+    "model_s3_key": "models/dog-classifier/versions/v3.0/best.onnx",
+    "model_size_mb": 12.4,
+    "final_mAP50": 0.91,
+    "precision": 0.88,
+    "recall": 0.93,
+    "best_epoch": 87,
+    "training_time_seconds": 4053
+  }
+}
+```
+
+### Log Shipping
+
+**IoT Rule:**
 - `snoutspotter/trainer/+/logs` → CloudWatch Logs (same pattern as Pi log shipping)
 
 ---
