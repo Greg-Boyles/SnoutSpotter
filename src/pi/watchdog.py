@@ -111,9 +111,9 @@ class Watchdog:
             self._failure_counts[svc] += 1
             logger.warning(f"{svc} is down (failure #{self._failure_counts[svc]})")
 
-            # Check if all services have hit the max — reboot
-            if all(c >= MAX_FAILURES for c in self._failure_counts.values()):
-                self._record_event("reboot", "all", f"All services failed {MAX_FAILURES}+ times")
+            # Check if this service has hit the max consecutive failures — reboot
+            if self._failure_counts[svc] >= MAX_FAILURES:
+                self._record_event("reboot", svc, f"Failed {MAX_FAILURES} consecutive times")
                 self._total_reboots += 1
                 self._write_status()
                 self._touch_shadow_dirty()
