@@ -152,7 +152,7 @@ class Watchdog:
                 # Log an all-healthy confirmation on first check and every 10 thereafter (~5 minutes)
                 if check_count == 1 or check_count % 10 == 0:
                     statuses = {svc: ("active" if is_service_active(svc) else "down") for svc in MONITORED_SERVICES}
-                    logger.info(f"Services status: {statuses}")
+                    logger.debug(f"Services status: {statuses}")
             except Exception as e:
                 logger.error(f"Watchdog check failed: {e}")
             time.sleep(CHECK_INTERVAL)
