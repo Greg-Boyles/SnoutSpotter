@@ -6,31 +6,53 @@ namespace SnoutSpotter.Lambda.PiMgmt.Services;
 public class DeviceProvisioningService
 {
     private readonly IAmazonIoT _iot;
-    private readonly string _thingGroupName;
-    private readonly string _policyName;
-    private readonly string _region;
+    private readonly string _piThingGroupName;
+    private readonly string _piPolicyName;
+    private readonly string _trainerThingGroupName;
+    private readonly string _trainerPolicyName;
 
     public DeviceProvisioningService(IAmazonIoT iot, IConfiguration configuration)
     {
         _iot = iot;
-        _thingGroupName = configuration["IOT_THING_GROUP"]
+        _piThingGroupName = configuration["IOT_THING_GROUP"]
             ?? throw new InvalidOperationException("IOT_THING_GROUP not configured");
-        _policyName = configuration["IOT_POLICY_NAME"]
+        _piPolicyName = configuration["IOT_POLICY_NAME"]
             ?? throw new InvalidOperationException("IOT_POLICY_NAME not configured");
-        _region = configuration["AWS_REGION"] ?? "eu-west-1";
+        _trainerThingGroupName = configuration["IOT_TRAINER_THING_GROUP"] ?? "snoutspotter-trainers";
+        _trainerPolicyName = configuration["IOT_TRAINER_POLICY_NAME"] ?? "snoutspotter-trainer-policy";
     }
 
-    public async Task<DeviceRegistrationResult> RegisterAsync(string thingName)
+    // ── Pi devices ──
+
+    public Task<DeviceRegistrationResult> RegisterAsync(string thingName)
+        => ProvisionThingAsync(thingName, _piThingGroupName, _piPolicyName);
+
+    public Task DeregisterAsync(string thingName)
+        => DeprovisionThingAsync(thingName, _piThingGroupName, _piPolicyName);
+
+    public Task<List<string>> ListDevicesAsync()
+        => ListThingsInGroupAsync(_piThingGroupName);
+
+    // ── Training agents ──
+
+    public Task<DeviceRegistrationResult> RegisterTrainerAsync(string thingName)
+        => ProvisionThingAsync(thingName, _trainerThingGroupName, _trainerPolicyName);
+
+    public Task DeregisterTrainerAsync(string thingName)
+        => DeprovisionThingAsync(thingName, _trainerThingGroupName, _trainerPolicyName);
+
+    public Task<List<string>> ListTrainersAsync()
+        => ListThingsInGroupAsync(_trainerThingGroupName);
+
+    // ── Shared provisioning logic ──
+
+    private async Task<DeviceRegistrationResult> ProvisionThingAsync(
+        string thingName, string thingGroupName, string policyName)
     {
         try
         {
-            // 1. Create IoT Thing
-            await _iot.CreateThingAsync(new CreateThingRequest
-            {
-                ThingName = thingName
-            });
+            await _iot.CreateThingAsync(new CreateThingRequest { ThingName = thingName });
 
-            // 2. Create keys and certificate
             var certResponse = await _iot.CreateKeysAndCertificateAsync(new CreateKeysAndCertificateRequest
             {
                 SetAsActive = true
@@ -42,28 +64,24 @@ public class DeviceProvisioningService
 
             try
             {
-                // 3. Attach policy to certificate
                 await _iot.AttachPolicyAsync(new AttachPolicyRequest
                 {
-                    PolicyName = _policyName,
+                    PolicyName = policyName,
                     Target = certificateArn
                 });
 
-                // 4. Attach certificate to thing
                 await _iot.AttachThingPrincipalAsync(new AttachThingPrincipalRequest
                 {
                     ThingName = thingName,
                     Principal = certificateArn
                 });
 
-                // 5. Add thing to group
                 await _iot.AddThingToThingGroupAsync(new AddThingToThingGroupRequest
                 {
-                    ThingGroupName = _thingGroupName,
+                    ThingGroupName = thingGroupName,
                     ThingName = thingName
                 });
 
-                // Get IoT endpoints
                 var dataEndpointTask = _iot.DescribeEndpointAsync(new DescribeEndpointRequest
                 {
                     EndpointType = "iot:Data-ATS"
@@ -88,7 +106,6 @@ public class DeviceProvisioningService
             }
             catch
             {
-                // Cleanup on failure
                 try
                 {
                     await _iot.UpdateCertificateAsync(new UpdateCertificateRequest
@@ -103,7 +120,7 @@ public class DeviceProvisioningService
                     });
                 }
                 catch { /* Best effort cleanup */ }
-                
+
                 throw;
             }
         }
@@ -113,9 +130,8 @@ public class DeviceProvisioningService
         }
     }
 
-    public async Task DeregisterAsync(string thingName)
+    private async Task DeprovisionThingAsync(string thingName, string thingGroupName, string policyName)
     {
-        // 1. List and detach all principals (certificates)
         var principalsResponse = await _iot.ListThingPrincipalsAsync(new ListThingPrincipalsRequest
         {
             ThingName = thingName
@@ -123,25 +139,22 @@ public class DeviceProvisioningService
 
         foreach (var principal in principalsResponse.Principals)
         {
-            // Detach certificate from thing
             await _iot.DetachThingPrincipalAsync(new DetachThingPrincipalRequest
             {
                 ThingName = thingName,
                 Principal = principal
             });
 
-            // Detach policy from certificate
             try
             {
                 await _iot.DetachPolicyAsync(new DetachPolicyRequest
                 {
-                    PolicyName = _policyName,
+                    PolicyName = policyName,
                     Target = principal
                 });
             }
             catch { /* Policy may not be attached */ }
 
-            // Deactivate and delete certificate
             var certificateId = principal.Split('/').Last();
             try
             {
@@ -150,7 +163,6 @@ public class DeviceProvisioningService
                     CertificateId = certificateId,
                     NewStatus = CertificateStatus.INACTIVE
                 });
-
                 await _iot.DeleteCertificateAsync(new DeleteCertificateRequest
                 {
                     CertificateId = certificateId,
@@ -160,29 +172,24 @@ public class DeviceProvisioningService
             catch { /* Certificate may already be deleted */ }
         }
 
-        // 2. Remove thing from group
         try
         {
             await _iot.RemoveThingFromThingGroupAsync(new RemoveThingFromThingGroupRequest
             {
-                ThingGroupName = _thingGroupName,
+                ThingGroupName = thingGroupName,
                 ThingName = thingName
             });
         }
         catch { /* Thing may not be in group */ }
 
-        // 3. Delete thing
-        await _iot.DeleteThingAsync(new DeleteThingRequest
-        {
-            ThingName = thingName
-        });
+        await _iot.DeleteThingAsync(new DeleteThingRequest { ThingName = thingName });
     }
 
-    public async Task<List<string>> ListDevicesAsync()
+    private async Task<List<string>> ListThingsInGroupAsync(string thingGroupName)
     {
         var response = await _iot.ListThingsInThingGroupAsync(new ListThingsInThingGroupRequest
         {
-            ThingGroupName = _thingGroupName
+            ThingGroupName = thingGroupName
         });
         return response.Things;
     }

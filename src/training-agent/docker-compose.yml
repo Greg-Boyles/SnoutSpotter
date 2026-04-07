@@ -1,0 +1,25 @@
+services:
+  trainer:
+    image: ${ECR_REGISTRY:-local}/snout-spotter-training-agent:${IMAGE_TAG:-latest}
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CONFIG_PATH=/app/config.yaml
+    volumes:
+      - ./certs:/app/certs:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - trainer-data:/app/data
+      - trainer-models:/app/models
+      - trainer-ml:/app/ml
+      # Dev: uncomment to use local training scripts instead of S3
+      # - ../../src/ml:/app/ml:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+volumes:
+  trainer-data:
+  trainer-models:
+  trainer-ml:

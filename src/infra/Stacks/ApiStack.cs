@@ -17,6 +17,8 @@ public class ApiStackProps : StackProps
     public required Table CommandsTable { get; init; }
     public required Table LabelsTable { get; init; }
     public required Table ExportsTable { get; init; }
+    public required Table TrainingJobsTable { get; init; }
+    public string TrainerThingGroupName { get; init; } = "snoutspotter-trainers";
     public required Repository ApiEcrRepo { get; init; }
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
@@ -62,7 +64,9 @@ public class ApiStack : Stack
                 ["BACKFILL_QUEUE_URL"] = backfillQueueUrl,
                 ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
                 ["EXPORT_DATASET_FUNCTION"] = props.ExportDatasetFunctionName,
-                ["INFERENCE_FUNCTION"] = props.InferenceFunctionName
+                ["INFERENCE_FUNCTION"] = props.InferenceFunctionName,
+                ["TRAINING_JOBS_TABLE"] = props.TrainingJobsTable.TableName,
+                ["TRAINER_THING_GROUP"] = props.TrainerThingGroupName
             }
         });
 
@@ -70,6 +74,7 @@ public class ApiStack : Stack
         props.CommandsTable.GrantReadWriteData(apiFunction);
         props.LabelsTable.GrantReadWriteData(apiFunction);
         props.ExportsTable.GrantReadWriteData(apiFunction);
+        props.TrainingJobsTable.GrantReadWriteData(apiFunction);
         props.DataBucket.GrantRead(apiFunction);
         props.DataBucket.GrantPut(apiFunction, "training-uploads/*");
         props.DataBucket.GrantPut(apiFunction, "models/*");

@@ -217,12 +217,35 @@ export const api = {
   getStreamStatus: (thingName: string) =>
     fetchJson<{ thingName: string; streaming: boolean; streamError?: string }>(`/stream/${thingName}/status`),
 
+  // Training
+  listTrainingAgents: () =>
+    fetchJson<{ agents: { thingName: string; online: boolean; version: string | null; hostname: string | null; lastHeartbeat: string | null }[] }>("/training/agents"),
+
+  getTrainingAgentStatus: (thingName: string) =>
+    fetchJson<{ thingName: string; online: boolean; reported: Record<string, unknown> | null }>(`/training/agents/${thingName}`),
+
+  triggerAgentUpdate: (thingName: string, version: string) =>
+    postJson<{ message: string }>(`/training/agents/${thingName}/update`, { version }),
+
+  submitTrainingJob: (config: { exportId: string; exportS3Key: string; epochs?: number; batchSize?: number; imageSize?: number; learningRate?: number; workers?: number; modelBase?: string; resumeFrom?: string | null; notes?: string }) =>
+    postJson<{ jobId: string }>("/training/jobs", config),
+
+  listTrainingJobs: (status?: string, limit = 50) =>
+    fetchJson<{ jobs: { jobId: string; status: string; agentThingName: string | null; exportId: string | null; epochs: number | null; createdAt: string | null; completedAt: string | null }[] }>(`/training/jobs?${status ? `status=${status}&` : ""}limit=${limit}`),
+
+  getTrainingJob: (jobId: string) =>
+    fetchJson<{ jobId: string; status: string; agentThingName: string | null; exportId: string | null; exportS3Key: string | null; config: string | null; progress: string | null; result: string | null; checkpointS3Key: string | null; error: string | null; createdAt: string | null; startedAt: string | null; completedAt: string | null }>(`/training/jobs/${jobId}`),
+
+  cancelTrainingJob: (jobId: string) =>
+    postJson<{ message: string }>(`/training/jobs/${jobId}/cancel`),
+
   // Pi Releases
   listPiReleases: () =>
     fetchJson<{ releases: { version: string; s3Key: string; sizeBytes: number; lastModified: string; isLatest: boolean }[]; latestVersion: string | null }>("/pi/releases"),
 
   deletePiRelease: (version: string) =>
     deleteJson<{ message: string }>(`/pi/releases/${encodeURIComponent(version)}`),
+
 
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>

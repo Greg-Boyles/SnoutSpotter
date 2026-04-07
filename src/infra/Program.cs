@@ -63,6 +63,14 @@ var piMgmtStack = new PiMgmtStack(app, "SnoutSpotter-PiMgmt", new PiMgmtStackPro
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
+var trainingProgressStack = new TrainingProgressStack(app, "SnoutSpotter-TrainingProgress", new TrainingProgressStackProps
+{
+    Env = env,
+    UpdateTrainingProgressEcrRepo = coreStack.UpdateTrainingProgressEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    TrainingJobsTable = coreStack.TrainingJobsTable
+});
+
 var autoLabelStack = new AutoLabelStack(app, "SnoutSpotter-AutoLabel", new AutoLabelStackProps
 {
     Env = env,
@@ -80,6 +88,8 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     CommandsTable = coreStack.CommandsTable,
     LabelsTable = coreStack.LabelsTable,
     ExportsTable = coreStack.ExportsTable,
+    TrainingJobsTable = coreStack.TrainingJobsTable,
+    TrainerThingGroupName = iotStack.TrainerThingGroupName,
     ApiEcrRepo = coreStack.ApiEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     OktaIssuer = oktaIssuer,

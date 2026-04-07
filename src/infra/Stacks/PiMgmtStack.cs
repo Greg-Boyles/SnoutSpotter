@@ -12,6 +12,7 @@ public class PiMgmtStackProps : StackProps
 {
     public required Repository PiMgmtEcrRepo { get; init; }
     public required string ImageTag { get; init; }
+
 }
 
 public class PiMgmtStack : Stack
@@ -23,6 +24,8 @@ public class PiMgmtStack : Stack
         // Read from SSM — written by IoTStack, resolved at deploy time (no cross-stack dependency)
         var iotThingGroupName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/thing-group-name");
         var iotPolicyName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/policy-name");
+        var trainerThingGroupName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/trainer-thing-group-name");
+        var trainerPolicyName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/trainer-policy-name");
 
         // Lambda function for Pi Management API
         var piMgmtFunction = new DockerImageFunction(this, "PiMgmtFunction", new DockerImageFunctionProps
@@ -39,6 +42,8 @@ public class PiMgmtStack : Stack
             {
                 ["IOT_THING_GROUP"] = iotThingGroupName,
                 ["IOT_POLICY_NAME"] = iotPolicyName,
+                ["IOT_TRAINER_THING_GROUP"] = trainerThingGroupName,
+                ["IOT_TRAINER_POLICY_NAME"] = trainerPolicyName,
                 ["AWS_LWA_PORT"] = "8080"
             }
         });

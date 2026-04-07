@@ -19,6 +19,8 @@ public class IoTStack : Stack
     public string PolicyName { get; }
     public string PiLogGroupName { get; }
     public string RoleAliasName { get; }
+    public string TrainerThingGroupName { get; }
+    public string TrainerPolicyName { get; }
 
     public IoTStack(Construct scope, string id, IoTStackProps props) : base(scope, id, props)
     {
@@ -26,6 +28,8 @@ public class IoTStack : Stack
         PolicyName = "snoutspotter-pi-policy";
         PiLogGroupName = "/snoutspotter/pi-logs";
         RoleAliasName = "snoutspotter-pi-role-alias";
+        TrainerThingGroupName = "snoutspotter-trainers";
+        TrainerPolicyName = "snoutspotter-trainer-policy";
 
         // Thing Group for all SnoutSpotter Pi devices
         // Individual things will be registered dynamically via Pi Management API
@@ -139,7 +143,73 @@ public class IoTStack : Stack
             RemovalPolicy = RemovalPolicy.DESTROY
         });
 
-        // SSM parameters — allow other stacks to read these at deploy time without CDK cross-stack dependencies
+        // ── Training Agent IoT Resources ──
+
+        var trainerThingGroup = new IoT.CfnThingGroup(this, "TrainerThingGroup", new IoT.CfnThingGroupProps
+        {
+            ThingGroupName = TrainerThingGroupName,
+            ThingGroupProperties = new IoT.CfnThingGroup.ThingGroupPropertiesProperty
+            {
+                ThingGroupDescription = "SnoutSpotter training agent machines"
+            }
+        });
+
+        var trainerCredentialsRole = new Role(this, "TrainerCredentialsRole", new RoleProps
+        {
+            RoleName = "snoutspotter-trainer-credentials",
+            AssumedBy = new ServicePrincipal("credentials.iot.amazonaws.com"),
+        });
+
+        props.DataBucket.GrantRead(trainerCredentialsRole, "training-exports/*");
+        props.DataBucket.GrantRead(trainerCredentialsRole, "releases/ml-training/*");
+        props.DataBucket.GrantPut(trainerCredentialsRole, "models/*");
+
+        var trainerPolicy = new IoT.CfnPolicy(this, "TrainerPolicy", new IoT.CfnPolicyProps
+        {
+            PolicyName = TrainerPolicyName,
+            PolicyDocument = new Dictionary<string, object>
+            {
+                ["Version"] = "2012-10-17",
+                ["Statement"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["Effect"] = "Allow",
+                        ["Action"] = "iot:Connect",
+                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:client/${{iot:Connection.Thing.ThingName}}*"
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["Effect"] = "Allow",
+                        ["Action"] = new[] { "iot:Subscribe", "iot:Receive" },
+                        ["Resource"] = new[]
+                        {
+                            $"arn:aws:iot:{Region}:{Account}:topicfilter/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
+                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*"
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["Effect"] = "Allow",
+                        ["Action"] = "iot:Publish",
+                        ["Resource"] = new[]
+                        {
+                            $"arn:aws:iot:{Region}:{Account}:topic/$aws/things/${{iot:Connection.Thing.ThingName}}/shadow/*",
+                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/trainer/${{iot:Connection.Thing.ThingName}}/progress",
+                            $"arn:aws:iot:{Region}:{Account}:topic/snoutspotter/trainer/${{iot:Connection.Thing.ThingName}}/logs"
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["Effect"] = "Allow",
+                        ["Action"] = "iot:AssumeRoleWithCertificate",
+                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:rolealias/{RoleAliasName}"
+                    }
+                }
+            }
+        });
+
+        // SSM parameters
         _ = new StringParameter(this, "ThingGroupNameParam", new StringParameterProps
         {
             ParameterName = "/snoutspotter/iot/thing-group-name",
@@ -156,6 +226,18 @@ public class IoTStack : Stack
         {
             ParameterName = "/snoutspotter/iot/pi-log-group-name",
             StringValue = PiLogGroupName
+        });
+
+        _ = new StringParameter(this, "TrainerThingGroupNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/trainer-thing-group-name",
+            StringValue = TrainerThingGroupName
+        });
+
+        _ = new StringParameter(this, "TrainerPolicyNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/trainer-policy-name",
+            StringValue = TrainerPolicyName
         });
 
         // Outputs
