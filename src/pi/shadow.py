@@ -11,9 +11,22 @@ import config_schema
 from health import (
     SERVICES, get_camera_status, get_clips_pending, get_last_motion_time,
     get_last_upload_time, get_service_status, get_system_health, get_upload_stats,
+    _read_status_file,
 )
 
 logger = logging.getLogger("snout-spotter-agent")
+
+
+def _get_watchdog_summary() -> dict | None:
+    """Read watchdog status file and return a summary for the shadow."""
+    status = _read_status_file("watchdog-status.json")
+    if not status:
+        return None
+    return {
+        "totalRestarts": status.get("totalRestarts", 0),
+        "totalReboots": status.get("totalReboots", 0),
+        "recentEvents": status.get("recentEvents", [])[-5:],
+    }
 
 
 def build_shadow_state(version: str, config: dict, streaming: bool = False) -> dict:
@@ -35,6 +48,7 @@ def build_shadow_state(version: str, config: dict, streaming: bool = False) -> d
                 "clipsPending": get_clips_pending(config),
                 "system": get_system_health(),
                 "config": config_schema.get_configurable_values(config),
+                "watchdog": _get_watchdog_summary(),
                 "logShipping": log_cfg.get("enabled", True),
                 "streaming": streaming,
             }
