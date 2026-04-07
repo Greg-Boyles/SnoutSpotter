@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Amazon.S3;
+using SnoutSpotter.Shared.Training;
 using SnoutSpotter.TrainingAgent;
 using SnoutSpotter.TrainingAgent.Models;
 using YamlDotNet.Serialization;
@@ -34,6 +35,7 @@ if (!File.Exists(ConfigPath))
 var deserializer = new DeserializerBuilder()
     .WithNamingConvention(UnderscoredNamingConvention.Instance)
     .Build();
+
 var config = deserializer.Deserialize<AgentConfig>(File.ReadAllText(ConfigPath));
 
 var thingName = config.IoT.ThingName;
@@ -65,53 +67,40 @@ await mqtt.ConnectAsync();
 
 // State
 var jobRunner = new JobRunner(s3, config.S3.Bucket, mqtt, thingName, logger);
-TrainingJobConfig? pendingJob = null;
+TrainingJobDesired? pendingJob = null;
 string? pendingCancel = null;
 string? pendingUpdate = null;
-bool forceUpdate = false;
+var forceUpdate = false;
 var cts = new CancellationTokenSource();
 var jobCts = new CancellationTokenSource();
-bool isTraining = false;
+var isTraining = false;
 
 // Shadow delta handler
 async Task OnShadowDelta(string topic, string payload)
 {
     try
     {
-        var doc = JsonDocument.Parse(payload);
-        var state = doc.RootElement.GetProperty("state");
+        var delta = JsonSerializer.Deserialize<ShadowDeltaMessage<AgentDesiredState>>(payload);
+        if (delta?.State == null) return;
+        var state = delta.State;
 
-        if (state.TryGetProperty("trainingJob", out var jobElem))
+        if (state.TrainingJob is { } job)
         {
-            var jobId = jobElem.GetProperty("jobId").GetString()!;
-            var exportKey = jobElem.GetProperty("exportS3Key").GetString()!;
-            var cfg = jobElem.TryGetProperty("config", out var cfgElem) ? cfgElem : default;
-
-            pendingJob = new TrainingJobConfig(
-                JobId: jobId,
-                ExportS3Key: exportKey,
-                Epochs: cfg.TryGetProperty("epochs", out var ep) ? ep.GetInt32() : 100,
-                BatchSize: cfg.TryGetProperty("batch_size", out var bs) ? bs.GetInt32() : 16,
-                ImageSize: cfg.TryGetProperty("image_size", out var ims) ? ims.GetInt32() : 640,
-                LearningRate: cfg.TryGetProperty("learning_rate", out var lr) ? lr.GetDouble() : 0.01,
-                Workers: cfg.TryGetProperty("workers", out var w) ? w.GetInt32() : 8,
-                ModelBase: cfg.TryGetProperty("model_base", out var mb) ? mb.GetString()! : "yolov8n.pt",
-                ResumeFrom: cfg.TryGetProperty("resume_from", out var rf) ? rf.GetString() : null);
-
-            logger.LogInformation("Training job received: {JobId}", jobId);
+            pendingJob = job;
+            logger.LogInformation("Training job received: {JobId}", job.JobId);
         }
 
-        if (state.TryGetProperty("cancelJob", out var cancelElem))
+        if (state.CancelJob is { } cancelJobId)
         {
-            pendingCancel = cancelElem.GetString();
-            logger.LogInformation("Cancel requested for: {JobId}", pendingCancel);
+            pendingCancel = cancelJobId;
+            logger.LogInformation("Cancel requested for: {JobId}", cancelJobId);
         }
 
-        if (state.TryGetProperty("agentVersion", out var versionElem))
+        if (state.AgentVersion is { } version)
         {
-            pendingUpdate = versionElem.GetString();
-            forceUpdate = state.TryGetProperty("forceUpdate", out var fu) && fu.GetBoolean();
-            logger.LogInformation("Agent update requested: v{Version} (force={Force})", pendingUpdate, forceUpdate);
+            pendingUpdate = version;
+            forceUpdate = state.ForceUpdate;
+            logger.LogInformation("Agent update requested: v{Version} (force={Force})", version, forceUpdate);
         }
     }
     catch (Exception ex)
@@ -149,37 +138,18 @@ logger.LogInformation("Requested current shadow for pending deltas");
 // Report initial shadow
 async Task ReportShadow(string status = "idle", string? updateStatus = null, string? deferredVersion = null, string? deferReason = null)
 {
-    var gpu = GpuInfo.GetStatus();
-    var reported = new Dictionary<string, object?>
+    var reported = new AgentReportedState
     {
-        ["agentType"] = "training-agent",
-        ["agentVersion"] = "1.0.0",
-        ["hostname"] = Dns.GetHostName(),
-        ["lastHeartbeat"] = DateTime.UtcNow.ToString("O"),
-        ["status"] = status,
-        ["updateStatus"] = updateStatus ?? "idle",
+        AgentVersion    = "1.0.0",
+        Hostname        = Dns.GetHostName(),
+        LastHeartbeat   = DateTime.UtcNow.ToString("O"),
+        Status          = status,
+        UpdateStatus    = updateStatus ?? "idle",
+        Gpu             = GpuInfo.GetStatus(),
+        DeferredVersion = deferredVersion,
+        DeferReason     = deferReason
     };
-
-    if (gpu != null)
-    {
-        reported["gpu"] = new
-        {
-            name = gpu.Name,
-            vramMb = gpu.VramMb,
-            cudaVersion = gpu.CudaVersion,
-            driverVersion = gpu.DriverVersion,
-            temperatureC = gpu.TemperatureC,
-            utilizationPercent = gpu.UtilizationPercent
-        };
-    }
-
-    if (deferredVersion != null)
-    {
-        reported["deferredVersion"] = deferredVersion;
-        reported["deferReason"] = deferReason;
-    }
-
-    var payload = JsonSerializer.Serialize(new { state = new { reported } });
+    var payload = JsonSerializer.Serialize(ShadowReportedUpdate<AgentReportedState>.From(reported));
     await mqtt.PublishAsync($"$aws/things/{thingName}/shadow/update", payload);
 }
 

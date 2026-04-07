@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using SnoutSpotter.TrainingAgent.Models;
+using SnoutSpotter.Shared.Training;
 
 namespace SnoutSpotter.TrainingAgent;
 
@@ -58,18 +58,19 @@ public class ProgressParser
 
             var gpu = GpuInfo.GetStatus();
 
-            return new TrainingProgress(
-                Epoch: _lastEpoch,
-                TotalEpochs: _totalEpochs,
-                TrainLoss: _lastTrainLoss,
-                ValLoss: null,
-                MAP50: _lastMAP50,
-                MAP50_95: _lastMAP50_95,
-                BestMAP50: _bestMAP50,
-                ElapsedSeconds: elapsed,
-                EtaSeconds: eta,
-                GpuUtilPercent: gpu?.UtilizationPercent,
-                GpuTempC: gpu?.TemperatureC);
+            return new TrainingProgress
+            {
+                Epoch          = _lastEpoch,
+                TotalEpochs    = _totalEpochs,
+                TrainLoss      = _lastTrainLoss,
+                MAP50          = _lastMAP50,
+                MAP50_95       = _lastMAP50_95,
+                BestMAP50      = _bestMAP50,
+                ElapsedSeconds = elapsed,
+                EtaSeconds     = eta,
+                GpuUtilPercent = gpu?.UtilizationPercent,
+                GpuTempC       = gpu?.TemperatureC
+            };
         }
 
         return null;
