@@ -2,6 +2,7 @@ using Amazon.CDK;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Logs;
 using Amazon.CDK.AWS.S3;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 using IoT = Amazon.CDK.AWS.IoT;
 
@@ -153,7 +154,6 @@ public class IoTStack : Stack
             }
         });
 
-        // IAM Role for training agents via IoT Credentials Provider
         var trainerCredentialsRole = new Role(this, "TrainerCredentialsRole", new RoleProps
         {
             RoleName = "snoutspotter-trainer-credentials",
@@ -164,7 +164,6 @@ public class IoTStack : Stack
         props.DataBucket.GrantRead(trainerCredentialsRole, "releases/ml-training/*");
         props.DataBucket.GrantPut(trainerCredentialsRole, "models/*");
 
-        // IoT Policy for training agents — scoped to trainer shadow + progress topics
         var trainerPolicy = new IoT.CfnPolicy(this, "TrainerPolicy", new IoT.CfnPolicyProps
         {
             PolicyName = TrainerPolicyName,
@@ -208,6 +207,37 @@ public class IoTStack : Stack
                     }
                 }
             }
+        });
+
+        // SSM parameters
+        _ = new StringParameter(this, "ThingGroupNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/thing-group-name",
+            StringValue = ThingGroupName
+        });
+
+        _ = new StringParameter(this, "PolicyNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/policy-name",
+            StringValue = PolicyName
+        });
+
+        _ = new StringParameter(this, "PiLogGroupNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/pi-log-group-name",
+            StringValue = PiLogGroupName
+        });
+
+        _ = new StringParameter(this, "TrainerThingGroupNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/trainer-thing-group-name",
+            StringValue = TrainerThingGroupName
+        });
+
+        _ = new StringParameter(this, "TrainerPolicyNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/trainer-policy-name",
+            StringValue = TrainerPolicyName
         });
 
         // Outputs

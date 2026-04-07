@@ -5,6 +5,7 @@ using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.Lambda.EventSources;
 using Amazon.CDK.AWS.S3;
 using Amazon.CDK.AWS.SQS;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -71,6 +72,13 @@ public class AutoLabelStack : Stack
             BatchSize = 1,
             MaxConcurrency = 2
         }));
+
+        // SSM parameter — allows ApiStack to read the queue URL without a CDK cross-stack dependency
+        _ = new StringParameter(this, "BackfillQueueUrlParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/auto-label/backfill-queue-url",
+            StringValue = BackfillQueue.QueueUrl
+        });
 
         _ = new CfnOutput(this, "AutoLabelFunctionArn", new CfnOutputProps
         {

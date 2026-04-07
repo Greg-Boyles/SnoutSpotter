@@ -45,8 +45,7 @@ var logIngestionStack = new LogIngestionStack(app, "SnoutSpotter-LogIngestion", 
 {
     Env = env,
     LogIngestionEcrRepo = coreStack.LogIngestionEcrRepo,
-    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
-    PiLogGroupName = iotStack.PiLogGroupName
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
 var commandAckStack = new CommandAckStack(app, "SnoutSpotter-CommandAck", new CommandAckStackProps
@@ -61,11 +60,7 @@ var piMgmtStack = new PiMgmtStack(app, "SnoutSpotter-PiMgmt", new PiMgmtStackPro
 {
     Env = env,
     PiMgmtEcrRepo = coreStack.PiMgmtEcrRepo,
-    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
-    IoTThingGroupName = iotStack.ThingGroupName,
-    IoTPolicyName = iotStack.PolicyName,
-    TrainerThingGroupName = iotStack.TrainerThingGroupName,
-    TrainerPolicyName = iotStack.TrainerPolicyName
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
 var trainingProgressStack = new TrainingProgressStack(app, "SnoutSpotter-TrainingProgress", new TrainingProgressStackProps
@@ -98,8 +93,7 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     ApiEcrRepo = coreStack.ApiEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     OktaIssuer = oktaIssuer,
-    AllowedOrigin = allowedOrigin,
-    BackfillQueueUrl = autoLabelStack.BackfillQueue.QueueUrl
+    AllowedOrigin = allowedOrigin
 });
 
 var exportDatasetStack = new ExportDatasetStack(app, "SnoutSpotter-ExportDataset", new ExportDatasetStackProps
