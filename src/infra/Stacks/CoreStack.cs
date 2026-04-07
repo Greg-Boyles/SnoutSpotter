@@ -94,6 +94,15 @@ public class CoreStack : Stack
             ProjectionType = ProjectionType.ALL
         });
 
+        // GSI for querying clips by device
+        ClipsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "by-device",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "device", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "timestamp", Type = AttributeType.NUMBER },
+            ProjectionType = ProjectionType.ALL
+        });
+
         // GSI for querying detections
         ClipsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
         {

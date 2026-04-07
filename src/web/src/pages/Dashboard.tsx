@@ -94,14 +94,38 @@ export default function Dashboard() {
             <StatCard icon={Video} label="Total Clips" value={stats.totalClips} sub={`${stats.clipsToday} today`} />
             <StatCard icon={Search} label="Detections" value={stats.totalDetections} color="bg-blue-50" iconColor="text-blue-600" />
             <StatCard icon={Dog} label="My Dog" value={stats.myDogDetections} color="bg-green-50" iconColor="text-green-600" />
-            <StatCard
-              icon={HardDrive}
-              label="Pi Status"
-              value={stats.piOnline ? "Online" : "Offline"}
-              sub={stats.lastUploadTime ? `Last upload ${formatDistanceToNow(new Date(stats.lastUploadTime), { addSuffix: true })}` : undefined}
-              color={stats.piOnline ? "bg-green-50" : "bg-red-50"}
-              iconColor={stats.piOnline ? "text-green-600" : "text-red-600"}
-            />
+            <Link to="/health" className="block">
+              <StatCard
+                icon={HardDrive}
+                label="Pi Devices"
+                value={`${stats.piOnlineCount} / ${stats.piTotalCount}`}
+                sub={
+                  stats.piTotalCount === 0
+                    ? "No devices registered"
+                    : stats.piOnlineCount === stats.piTotalCount
+                    ? `All online${stats.lastUploadTime ? ` · Last upload ${formatDistanceToNow(new Date(stats.lastUploadTime), { addSuffix: true })}` : ""}`
+                    : `${stats.piTotalCount - stats.piOnlineCount} offline${stats.lastUploadTime ? ` · Last upload ${formatDistanceToNow(new Date(stats.lastUploadTime), { addSuffix: true })}` : ""}`
+                }
+                color={
+                  stats.piTotalCount === 0
+                    ? "bg-gray-50"
+                    : stats.piOnlineCount === stats.piTotalCount
+                    ? "bg-green-50"
+                    : stats.piOnlineCount > 0
+                    ? "bg-amber-50"
+                    : "bg-red-50"
+                }
+                iconColor={
+                  stats.piTotalCount === 0
+                    ? "text-gray-400"
+                    : stats.piOnlineCount === stats.piTotalCount
+                    ? "text-green-600"
+                    : stats.piOnlineCount > 0
+                    ? "text-amber-600"
+                    : "text-red-600"
+                }
+              />
+            </Link>
           </>
         )}
       </div>

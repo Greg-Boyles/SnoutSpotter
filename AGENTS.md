@@ -98,25 +98,29 @@ SnoutSpotter/
 │   │   │   │   ├── DeviceLogs.tsx     # Per-device log viewer with filters
 │   │   │   │   ├── DeviceShadow.tsx   # Raw IoT device shadow JSON viewer
 │   │   │   │   └── CommandHistory.tsx # Per-device command history
+│   │   │   ├── constants.ts            # Shared constants: DOG_BREEDS
 │   │   │   └── components/
 │   │   │       ├── BoundingBoxOverlay.tsx
+│   │   │       ├── ErrorBoundary.tsx   # Global error boundary with fallback UI
+│   │   │       ├── LabelBadge.tsx      # Shared LabelBadge and DetectionBadge components
 │   │   │       └── health/            # Shared: StatusBadge, UsageBar, AddDeviceDialog, formatUptime
 │   │   ├── vite.config.ts
 │   │   └── package.json
 │   │
 │   ├── pi/                            # Raspberry Pi Python scripts
-│   │   ├── agent.py                   # Thin orchestrator: MQTT connection, shadow delta dispatch, main loop
+│   │   ├── agent.py                   # Thin orchestrator: MqttManager, event queue, shadow delta dispatch, main loop
+│   │   ├── watchdog.py                # Service watchdog: monitors core services, restarts on failure, reboots on persistent failure
 │   │   ├── health.py                  # System health gathering: CPU, memory, disk, camera, upload stats
 │   │   ├── shadow.py                  # IoT shadow building and reporting
-│   │   ├── ota.py                     # OTA update: download, extract, deps, rollback, service restart
+│   │   ├── ota.py                     # OTA update: download, checksum verify, extract, deps, service sync, rollback
 │   │   ├── remote_config.py           # Remote config validation and application from shadow delta
 │   │   ├── log_shipping.py            # Journald log collection and MQTT publish
 │   │   ├── commands.py                # Device command execution via MQTT (restart, reboot, clear-clips, etc.)
 │   │   ├── iot_credential_provider.py # IoT Credentials Provider: temp STS creds via X.509 certs
 │   │   ├── motion_detector.py         # Frame-differencing motion detection + recording + status file
 │   │   ├── stream_manager.py          # Live stream: GStreamer/kvssink pipeline to Kinesis Video Streams
-│   │   ├── uploader.py                # S3 multipart upload with retry + status file
-│   │   ├── config_loader.py           # Shared config loading: deep-merges defaults.yaml + config.yaml
+│   │   ├── uploader.py                # S3 multipart upload with retry + status file + ledger pruning + disk quota
+│   │   ├── config_loader.py           # Shared config loading: deep-merges defaults.yaml + config.yaml + schema validation
 │   │   ├── config_schema.py           # Allow-list and validation for remotely configurable settings
 │   │   ├── defaults.yaml              # Default config values (shipped via OTA)
 │   │   ├── config.yaml                # Device-specific overrides (NOT included in OTA packages)
@@ -364,6 +368,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 **GSIs:**
 - `all-by-time` — PK: fixed value, SK: `timestamp` (server-side ordering across all clips)
 - `by-date` — PK: `date`, SK: `timestamp`
+- `by-device` — PK: `device`, SK: `timestamp`
 - `by-detection` — PK: `detection_type`, SK: `timestamp`
 
 ### Labels Table
@@ -418,12 +423,14 @@ All main API endpoints require a valid Okta JWT Bearer token.
 | Service | Script | Purpose |
 |---------|--------|---------|
 | `snoutspotter-motion` | `motion_detector.py` | Motion detection, records 1080p H.264 clips, writes `~/.snoutspotter/motion-status.json` |
-| `snoutspotter-uploader` | `uploader.py` | Uploads clips to S3, writes `~/.snoutspotter/uploader-status.json` |
-| `snoutspotter-agent` | `agent.py` | Single MQTT connection: shadow reporting, OTA updates, remote config, commands, live stream control |
+| `snoutspotter-uploader` | `uploader.py` | Uploads clips to S3, writes `~/.snoutspotter/uploader-status.json`, ledger pruning, disk quota |
+| `snoutspotter-agent` | `agent.py` | Single MQTT connection (MqttManager): shadow reporting, OTA updates, remote config, commands, live stream control |
+| `snoutspotter-watchdog` | `watchdog.py` | Monitors core services every 30s, restarts on failure (60s cooldown), reboots if all fail 5+ times |
 
 **Status files** (`~/.snoutspotter/`):
 - `motion-status.json` — `cameraOk`, `lastMotionAt`, `lastRecordingStartedAt`, `recordingsToday`
 - `uploader-status.json` — `lastUploadAt`, `uploadsToday`, `failedToday`
+- `watchdog-status.json` — `failureCounts`, `totalRestarts`, `totalReboots`, `recentEvents`
 
 **IoT shadow reported state:**
 ```json
@@ -434,7 +441,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
       "hostname": "snoutspotter-01",
       "lastHeartbeat": "2026-03-29T10:00:00Z",
       "updateStatus": "idle",
-      "services": {"motion": "active", "uploader": "active", "agent": "active"},
+      "services": {"motion": "active", "uploader": "active", "agent": "active", "watchdog": "active"},
       "camera": {
         "connected": true,
         "healthy": true,
@@ -470,26 +477,28 @@ All main API endpoints require a valid Okta JWT Bearer token.
 1. Dashboard triggers update → API writes `desired.version` to shadow
 2. Agent receives delta (or detects it on startup via `shadow/get`)
 3. Downloads `releases/pi/v{version}.tar.gz` from S3
-4. Backs up current version to `~/.snoutspotter/backups/{version}/`
-5. Extracts package (skipping `config.yaml` to preserve device-specific overrides; `defaults.yaml` is updated)
-6. Installs system apt packages if `system-deps.txt` has changed (compares against backup)
-7. Downloads and installs custom `.deb` packages from S3 if `custom-debs.txt` has changed
-8. Installs Python dependencies from `requirements.txt`
-9. Restarts services, waits 30s, checks health
-10. Reports `updateStatus: success` or rolls back on failure
+4. Verifies SHA256 checksum against S3 object metadata (warns if no metadata present)
+5. Backs up current version to `~/.snoutspotter/backups/{version}/`
+6. Extracts package with path traversal protection (skipping `config.yaml`; `defaults.yaml` is updated)
+7. Installs system apt packages if `system-deps.txt` has changed (compares against backup)
+8. Downloads and installs custom `.deb` packages from S3 if `custom-debs.txt` has changed
+9. Installs Python dependencies from `requirements.txt`
+10. Syncs systemd service files — creates and enables any new services from `SERVICE_MANIFEST`
+11. Restarts services, waits 30s, checks health
+12. Reports `updateStatus: success` or rolls back on failure
 
 **Pi version bumping:** `package-pi.yml` reads the current version from the S3 manifest and increments the patch number — guarantees a unique version every run.
 
-### Remote Config (24 settings)
+### Remote Config (29 settings)
 
 Settings are validated in two places: API-side (`PiUpdateService.ConfigurableKeys`) and Pi-side (`config_schema.CONFIGURABLE_KEYS`). Both must match.
 
 | Section | Settings |
 |---------|----------|
 | Motion | `threshold`, `blur_kernel`, `min_area` |
-| Camera | `detection_fps`, `preview_resolution`, `record_resolution`, `record_fps` |
-| Recording | `max_clip_length`, `pre_buffer`, `pre_buffer_enabled`, `post_motion_buffer` |
-| Upload | `max_retries`, `retry_delay`, `delete_after_upload` |
+| Camera | `detection_fps`, `preview_resolution`, `record_resolution`, `record_fps`, `encoding_bitrate` |
+| Recording | `max_clip_length`, `pre_buffer`, `pre_buffer_enabled`, `post_motion_buffer`, `ffmpeg_timeout_seconds` |
+| Upload | `max_retries`, `retry_delay`, `delete_after_upload`, `file_stability_seconds`, `min_free_disk_mb`, `ledger_retention_days` |
 | Health | `interval_seconds` |
 | Log Shipping | `enabled`, `batch_interval_seconds`, `max_lines_per_batch`, `min_level` |
 | Streaming | `timeout_seconds`, `resolution`, `framerate`, `bitrate` |
@@ -591,7 +600,7 @@ labels.csv
 
 4. **OTA delta notifications are not replayed** — the agent must call `shadow/get` on startup to catch any delta that arrived while it was offline.
 
-5. **Only one MQTT connection per client ID** — the old separate `health.py` + `ota_agent.py` conflicted. The merged `agent.py` uses a single connection.
+5. **Only one MQTT connection per client ID** — the old separate `health.py` + `ota_agent.py` conflicted. The merged `agent.py` uses a single connection via `MqttManager`, which tracks connection state and re-subscribes on reconnect.
 
 6. **`config.yaml` must not be in OTA packages** — it contains device-specific overrides (bucket, certs, IoT endpoint) that differ per device. Excluded via `--exclude='config.yaml'` in `package-pi.yml` and filtered in `apply_update()`. Default values live in `defaults.yaml` (shipped via OTA); `config_loader.py` deep-merges defaults + overrides at load time.
 
@@ -632,3 +641,15 @@ labels.csv
 24. **RunInference model is a fine-tuned YOLOv8 detector, not a classifier** — The `dog-classifier/best.onnx` name is a misnomer. It is a YOLOv8n fine-tuned on the SnoutSpotter dataset with 2 detection classes (my_dog=0, other_dog=1). Output shape `[1, 6, 8400]`. Preprocessing is 640×640 resize, RGB /255 — no ImageNet normalisation. The old MobileNetV3 classifier approach (224×224, ImageNet norm, softmax logits) was abandoned. `src/ml/train_classifier.py` has been deleted.
 
 25. **ONNX export must use simplify=False** — Exporting YOLOv8 with `simplify=True` changes the output tensor layout and breaks RunInference's `[1, 4+num_classes, 8400]` parsing. Always export with `opset=12, simplify=False`.
+
+26. **Agent uses MqttManager + event queue** — `agent.py` wraps the CRT MQTT connection in `MqttManager` which tracks connection state and re-subscribes on reconnect. All MQTT callbacks enqueue typed events to a `queue.Queue`; the main loop drains sequentially. No mutable function attributes.
+
+27. **OTA can deliver new systemd services** — `ota.py` has a `SERVICE_MANIFEST` dict mapping service names to scripts. `sync_service_files()` runs after extraction and creates/enables any missing `.service` files in `/etc/systemd/system/` before restarting. New services (e.g. watchdog) are delivered via OTA without re-running `setup-pi.sh`.
+
+28. **Config loader validates schema on startup** — `config_loader.py` checks all required sections, keys, and types after merging `defaults.yaml` + `config.yaml`. Raises `ValueError` with all errors listed if validation fails. Only checks structure — value ranges are validated by `config_schema.py`.
+
+29. **Uploader uses file mtime for S3 key path** — `get_s3_key()` uses the file's `st_mtime` instead of `datetime.now()`. Clips queued during WiFi outages land in the correct `YYYY/MM/DD` folder based on when they were recorded.
+
+30. **Motion detector discards invalid clips** — After FFmpeg remux, `ffprobe` validates the output MP4. If remux or validation fails, both raw H.264 and partial MP4 are deleted. No more unplayable files getting uploaded.
+
+31. **Watchdog reboots only when ALL monitored services fail** — `snoutspotter-watchdog` tracks per-service failure counts independently. Individual services are restarted with 60s cooldown. A device-wide reboot only triggers when all three core services (motion, uploader, agent) fail 5+ consecutive times.

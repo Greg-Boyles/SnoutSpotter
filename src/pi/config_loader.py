@@ -1,9 +1,24 @@
 """Shared config loading: deep-merges defaults.yaml with device-specific config.yaml overrides."""
 
+import logging
 from pathlib import Path
+
 import yaml
 
+logger = logging.getLogger(__name__)
+
 INSTALL_DIR = Path(__file__).parent
+
+# Required config sections and their required keys with expected types.
+# Only validates structure — value ranges are checked by config_schema.py.
+REQUIRED_SCHEMA: dict[str, dict[str, type]] = {
+    "motion": {"threshold": int, "blur_kernel": int, "min_area": int},
+    "camera": {"preview_resolution": list, "record_resolution": list, "detection_fps": int, "record_fps": int},
+    "recording": {"output_dir": str, "max_clip_length": int, "post_motion_buffer": int},
+    "upload": {"bucket_name": str, "region": str, "prefix": str, "max_retries": int},
+    "health": {"namespace": str, "metric_name": str, "interval_seconds": int},
+    "iot": {"endpoint": str, "thing_name": str, "cert_path": str, "key_path": str, "root_ca_path": str},
+}
 
 
 def deep_merge(base: dict, overrides: dict) -> dict:
@@ -14,6 +29,28 @@ def deep_merge(base: dict, overrides: dict) -> dict:
         else:
             base[key] = value
     return base
+
+
+def validate_config(config: dict) -> list[str]:
+    """Validate that required sections and keys exist with correct types.
+
+    Returns a list of error messages (empty if valid).
+    """
+    errors = []
+    for section, keys in REQUIRED_SCHEMA.items():
+        if section not in config:
+            errors.append(f"Missing required config section: {section}")
+            continue
+        if not isinstance(config[section], dict):
+            errors.append(f"Config section '{section}' must be a dict, got {type(config[section]).__name__}")
+            continue
+        for key, expected_type in keys.items():
+            if key not in config[section]:
+                errors.append(f"Missing required key: {section}.{key}")
+            elif not isinstance(config[section][key], expected_type):
+                actual = type(config[section][key]).__name__
+                errors.append(f"Wrong type for {section}.{key}: expected {expected_type.__name__}, got {actual}")
+    return errors
 
 
 def load_config() -> dict:
@@ -30,5 +67,11 @@ def load_config() -> dict:
         with open(config_path) as f:
             overrides = yaml.safe_load(f) or {}
         deep_merge(config, overrides)
+
+    errors = validate_config(config)
+    if errors:
+        for err in errors:
+            logger.error(f"Config validation: {err}")
+        raise ValueError(f"Invalid configuration ({len(errors)} errors): {'; '.join(errors)}")
 
     return config

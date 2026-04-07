@@ -3,6 +3,7 @@
 
 import json
 import os
+import queue
 import subprocess
 import sys
 import time
@@ -29,6 +30,14 @@ STATUS_DIR = Path.home() / ".snoutspotter"
 SHADOW_DIRTY_FLAG = STATUS_DIR / "shadow-dirty"
 
 
+# ── Event types for the main-loop queue ──────────────────────────────
+
+EVENT_OTA = "ota"
+EVENT_CONFIG = "config"
+EVENT_STREAMING = "streaming"
+EVENT_COMMAND = "command"
+
+
 # ── CloudWatch heartbeat ──────────────────────────────────────────────
 
 def send_heartbeat(cloudwatch, namespace: str, metric_name: str):
@@ -46,75 +55,65 @@ def send_heartbeat(cloudwatch, namespace: str, metric_name: str):
     logger.info("CloudWatch heartbeat sent")
 
 
-# ── Shadow delta handler ──────────────────────────────────────────────
+# ── MQTT connection manager ──────────────────────────────────────────
 
-def on_shadow_delta(topic, payload, **kwargs):
-    """Called when a shadow delta is received (push notification)."""
-    try:
-        if on_shadow_delta.updating:
-            logger.info("Shadow delta received but OTA in progress — ignoring")
-            return
-        delta = json.loads(payload)
-        state = delta.get("state", {})
+class MqttManager:
+    """Wraps the CRT MQTT connection with reconnect tracking and re-subscription."""
 
-        desired_version = state.get("version")
-        if desired_version:
-            current_version = load_version()
-            if desired_version != current_version:
-                logger.info(f"Shadow delta: OTA requested {current_version} -> {desired_version}")
-                on_shadow_delta.pending_version = desired_version
-            else:
-                logger.info(f"Shadow delta version {desired_version} matches current — ignoring")
+    def __init__(self, endpoint, cert_path, key_path, root_ca_path, thing_name):
+        self.thing_name = thing_name
+        self.connected = False
+        self._subscriptions = []  # list of (topic, qos, callback)
 
-        desired_config = state.get("config")
-        if desired_config:
-            logger.info(f"Shadow delta: config change requested for {list(desired_config.keys())}")
-            on_shadow_delta.pending_config = desired_config
+        self.connection = mqtt_connection_builder.mtls_from_path(
+            endpoint=endpoint,
+            cert_filepath=cert_path,
+            pri_key_filepath=key_path,
+            ca_filepath=root_ca_path,
+            client_id=thing_name,
+            clean_session=False,
+            keep_alive_secs=30,
+            on_connection_interrupted=self._on_interrupted,
+            on_connection_resumed=self._on_resumed,
+        )
 
-        if "streaming" in state:
-            on_shadow_delta.pending_streaming = state["streaming"]
-            logger.info(f"Shadow delta: streaming={'start' if state['streaming'] else 'stop'}")
+    def connect(self, timeout=10):
+        self.connection.connect().result(timeout=timeout)
+        self.connected = True
+        logger.info("Connected to IoT Core")
 
-    except Exception as e:
-        logger.error(f"Error processing shadow delta: {e}")
+    def _on_interrupted(self, connection, error, **kwargs):
+        self.connected = False
+        logger.warning(f"MQTT connection interrupted: {error}")
 
+    def _on_resumed(self, connection, return_code, session_present, **kwargs):
+        self.connected = True
+        logger.info(f"MQTT connection resumed (session_present={session_present})")
+        if not session_present:
+            self._resubscribe()
 
-def on_shadow_get_accepted(topic, payload, **kwargs):
-    """Called when shadow/get/accepted is received — check for pending delta on startup."""
-    try:
-        shadow = json.loads(payload)
-        state = shadow.get("state", {})
-        delta = state.get("delta", {})
+    def subscribe(self, topic, qos, callback):
+        self._subscriptions.append((topic, qos, callback))
+        future, _ = self.connection.subscribe(topic=topic, qos=qos, callback=callback)
+        future.result(timeout=10)
+        logger.info(f"Subscribed to {topic}")
 
-        desired_version = delta.get("version")
-        if desired_version:
-            current_version = load_version()
-            if desired_version != current_version:
-                logger.info(f"Pending OTA delta on startup: {current_version} -> {desired_version}")
-                on_shadow_delta.pending_version = desired_version
-            else:
-                logger.info("Shadow delta version matches current — no OTA needed")
+    def _resubscribe(self):
+        logger.info(f"Re-subscribing to {len(self._subscriptions)} topics after reconnect")
+        for topic, qos, callback in self._subscriptions:
+            try:
+                future, _ = self.connection.subscribe(topic=topic, qos=qos, callback=callback)
+                future.result(timeout=10)
+                logger.info(f"Re-subscribed to {topic}")
+            except Exception as e:
+                logger.error(f"Failed to re-subscribe to {topic}: {e}")
 
-        desired_config = delta.get("config")
-        if desired_config:
-            logger.info(f"Pending config delta on startup: {list(desired_config.keys())}")
-            on_shadow_delta.pending_config = desired_config
+    def publish(self, topic, payload, qos=mqtt.QoS.AT_LEAST_ONCE):
+        self.connection.publish(topic=topic, payload=payload, qos=qos)
 
-        if "streaming" in delta:
-            on_shadow_delta.pending_streaming = delta["streaming"]
-            logger.info(f"Pending streaming delta on startup: {delta['streaming']}")
-
-        if not desired_version and not desired_config and "streaming" not in delta:
-            logger.info("No pending shadow delta")
-
-    except Exception as e:
-        logger.error(f"Error processing shadow get response: {e}")
-
-
-on_shadow_delta.pending_version = None
-on_shadow_delta.pending_config = None
-on_shadow_delta.pending_streaming = None
-on_shadow_delta.updating = False
+    def disconnect(self, timeout=5):
+        self.connection.disconnect().result(timeout=timeout)
+        self.connected = False
 
 
 # ── Main loop ─────────────────────────────────────────────────────────
@@ -147,57 +146,97 @@ def main():
     cloudwatch = iot_session.client("cloudwatch", region_name=upload_cfg["region"])
     heartbeat_ref = [health_cfg["interval_seconds"]]
 
-    # Single MQTT connection for shadow + OTA
-    connection = mqtt_connection_builder.mtls_from_path(
-        endpoint=endpoint,
-        cert_filepath=cert_path,
-        pri_key_filepath=key_path,
-        ca_filepath=root_ca_path,
-        client_id=thing_name,
-        clean_session=False,
-        keep_alive_secs=30,
-    )
+    # Thread-safe event queue — MQTT callbacks enqueue, main loop dequeues
+    events = queue.Queue()
+    updating = False  # only read/written from main loop
 
-    connect_future = connection.connect()
-    connect_future.result(timeout=10)
-    logger.info(f"Connected to IoT Core at {endpoint}")
+    # ── MQTT connection with reconnect tracking ──
+    mqttm = MqttManager(endpoint, cert_path, key_path, root_ca_path, thing_name)
+    mqttm.connect()
 
-    # Subscribe to shadow delta
-    delta_topic = f"$aws/things/{thing_name}/shadow/update/delta"
-    subscribe_future, _ = connection.subscribe(
-        topic=delta_topic, qos=mqtt.QoS.AT_LEAST_ONCE, callback=on_shadow_delta,
-    )
-    subscribe_future.result(timeout=10)
-    logger.info(f"Subscribed to {delta_topic}")
+    # ── Shadow delta callback ──
+    def on_shadow_delta(topic, payload, **kwargs):
+        try:
+            delta = json.loads(payload)
+            state = delta.get("state", {})
 
-    # Request current shadow to catch any pending delta from while offline
-    get_accepted_topic = f"$aws/things/{thing_name}/shadow/get/accepted"
-    sub_future, _ = connection.subscribe(
-        topic=get_accepted_topic, qos=mqtt.QoS.AT_LEAST_ONCE, callback=on_shadow_get_accepted,
-    )
-    sub_future.result(timeout=10)
-    connection.publish(topic=f"$aws/things/{thing_name}/shadow/get", payload="", qos=mqtt.QoS.AT_LEAST_ONCE)
-    logger.info("Requested current shadow to check for pending updates")
+            desired_version = state.get("version")
+            if desired_version:
+                current_version = load_version()
+                if desired_version != current_version:
+                    logger.info(f"Shadow delta: OTA requested {current_version} -> {desired_version}")
+                    events.put((EVENT_OTA, desired_version))
+                else:
+                    logger.info(f"Shadow delta version {desired_version} matches current — ignoring")
 
-    # Subscribe to commands topic (MQTT direct publish, not shadow)
-    pending_commands = []  # list used as thread-safe append-only queue
+            desired_config = state.get("config")
+            if desired_config:
+                logger.info(f"Shadow delta: config change requested for {list(desired_config.keys())}")
+                events.put((EVENT_CONFIG, desired_config))
 
+            if "streaming" in state:
+                logger.info(f"Shadow delta: streaming={'start' if state['streaming'] else 'stop'}")
+                events.put((EVENT_STREAMING, state["streaming"]))
+
+        except Exception as e:
+            logger.error(f"Error processing shadow delta: {e}")
+
+    # ── Shadow get/accepted callback (startup catch-up) ──
+    def on_shadow_get_accepted(topic, payload, **kwargs):
+        try:
+            shadow = json.loads(payload)
+            state = shadow.get("state", {})
+            delta = state.get("delta", {})
+
+            desired_version = delta.get("version")
+            if desired_version:
+                current_version = load_version()
+                if desired_version != current_version:
+                    logger.info(f"Pending OTA delta on startup: {current_version} -> {desired_version}")
+                    events.put((EVENT_OTA, desired_version))
+                else:
+                    logger.info("Shadow delta version matches current — no OTA needed")
+
+            desired_config = delta.get("config")
+            if desired_config:
+                logger.info(f"Pending config delta on startup: {list(desired_config.keys())}")
+                events.put((EVENT_CONFIG, desired_config))
+
+            if "streaming" in delta:
+                logger.info(f"Pending streaming delta on startup: {delta['streaming']}")
+                events.put((EVENT_STREAMING, delta["streaming"]))
+
+            if not desired_version and not desired_config and "streaming" not in delta:
+                logger.info("No pending shadow delta")
+
+        except Exception as e:
+            logger.error(f"Error processing shadow get response: {e}")
+
+    # ── Command callback ──
     def on_command(topic, payload, **kwargs):
         try:
             cmd = json.loads(payload)
             logger.info(f"Command received via MQTT: {cmd.get('action')}")
-            pending_commands.append(cmd)
+            events.put((EVENT_COMMAND, cmd))
         except Exception as e:
             logger.error(f"Error parsing command: {e}")
 
+    # ── Subscribe to topics ──
+    delta_topic = f"$aws/things/{thing_name}/shadow/update/delta"
+    mqttm.subscribe(delta_topic, mqtt.QoS.AT_LEAST_ONCE, on_shadow_delta)
+
+    get_accepted_topic = f"$aws/things/{thing_name}/shadow/get/accepted"
+    mqttm.subscribe(get_accepted_topic, mqtt.QoS.AT_LEAST_ONCE, on_shadow_get_accepted)
+
+    mqttm.publish(f"$aws/things/{thing_name}/shadow/get", "")
+    logger.info("Requested current shadow to check for pending updates")
+
     cmd_topic = f"snoutspotter/{thing_name}/commands"
-    cmd_sub, _ = connection.subscribe(topic=cmd_topic, qos=mqtt.QoS.AT_LEAST_ONCE, callback=on_command)
-    cmd_sub.result(timeout=10)
-    logger.info(f"Subscribed to {cmd_topic}")
+    mqttm.subscribe(cmd_topic, mqtt.QoS.AT_LEAST_ONCE, on_command)
 
     # Report initial state
     version = load_version()
-    report_full_shadow(connection, thing_name, version, config)
+    report_full_shadow(mqttm.connection, thing_name, version, config)
 
     # Log shipping state
     log_ship_cfg = config.get("log_shipping", {})
@@ -216,16 +255,19 @@ def main():
 
             # ── Heartbeat + shadow report ──
             if now - last_heartbeat >= heartbeat_ref[0]:
-                try:
-                    send_heartbeat(cloudwatch, health_cfg["namespace"], health_cfg["metric_name"])
-                except Exception as e:
-                    logger.error(f"Failed to send CloudWatch heartbeat: {e}")
-                try:
-                    version = load_version()
-                    is_streaming = stream_proc is not None and stream_proc.poll() is None
-                    report_full_shadow(connection, thing_name, version, config, streaming=is_streaming)
-                except Exception as e:
-                    logger.error(f"Failed to update shadow: {e}")
+                if mqttm.connected:
+                    try:
+                        send_heartbeat(cloudwatch, health_cfg["namespace"], health_cfg["metric_name"])
+                    except Exception as e:
+                        logger.error(f"Failed to send CloudWatch heartbeat: {e}")
+                    try:
+                        version = load_version()
+                        is_streaming = stream_proc is not None and stream_proc.poll() is None
+                        report_full_shadow(mqttm.connection, thing_name, version, config, streaming=is_streaming)
+                    except Exception as e:
+                        logger.error(f"Failed to update shadow: {e}")
+                else:
+                    logger.warning("Skipping heartbeat/shadow — MQTT disconnected")
                 last_heartbeat = now
 
             # ── Shadow dirty flag ──
@@ -234,77 +276,83 @@ def main():
                     SHADOW_DIRTY_FLAG.unlink(missing_ok=True)
                     version = load_version()
                     is_streaming = stream_proc is not None and stream_proc.poll() is None
-                    report_full_shadow(connection, thing_name, version, config, streaming=is_streaming)
+                    report_full_shadow(mqttm.connection, thing_name, version, config, streaming=is_streaming)
                     last_heartbeat = now
                 except Exception as e:
                     logger.error(f"Failed to process shadow dirty flag: {e}")
 
-            # ── OTA updates ──
-            if on_shadow_delta.pending_version:
-                pending = on_shadow_delta.pending_version
-                on_shadow_delta.pending_version = None
-                if pending == load_version():
-                    logger.info(f"Skipping update to {pending} — already running this version")
-                else:
-                    on_shadow_delta.updating = True
-                    try:
-                        apply_update(
-                            version=pending,
-                            bucket=upload_cfg["bucket_name"],
-                            region=upload_cfg["region"],
-                            connection=connection,
-                            thing_name=thing_name,
-                            session=iot_session,
+            # ── Drain event queue ──
+            while not events.empty():
+                try:
+                    event_type, data = events.get_nowait()
+                except queue.Empty:
+                    break
+
+                # ── OTA updates ──
+                if event_type == EVENT_OTA:
+                    if data == load_version():
+                        logger.info(f"Skipping update to {data} — already running this version")
+                    else:
+                        updating = True
+                        try:
+                            apply_update(
+                                version=data,
+                                bucket=upload_cfg["bucket_name"],
+                                region=upload_cfg["region"],
+                                connection=mqttm.connection,
+                                thing_name=thing_name,
+                                session=iot_session,
+                            )
+                        finally:
+                            updating = False
+
+                # ── Config changes ──
+                elif event_type == EVENT_CONFIG:
+                    if updating:
+                        logger.info("Config change received during OTA — will re-apply on next startup via shadow/get")
+                    else:
+                        was_shipping = config.get("log_shipping", {}).get("enabled", True)
+                        apply_remote_config(data, config, mqttm.connection, thing_name, heartbeat_ref)
+                        new_log_cfg = config.get("log_shipping", {})
+                        log_ship_interval_ref[0] = new_log_cfg.get("batch_interval_seconds", 60)
+                        if not was_shipping and new_log_cfg.get("enabled", True):
+                            last_log_timestamp[0] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                            logger.info("Log shipping enabled — shipping logs from now")
+
+                # ── Streaming ──
+                elif event_type == EVENT_STREAMING:
+                    want_stream = data
+                    if want_stream and stream_proc is None:
+                        logger.info("Starting live stream — stopping motion detection")
+                        try:
+                            subprocess.run(["sudo", "systemctl", "stop", "snoutspotter-motion"], timeout=10)
+                        except Exception as e:
+                            logger.warning(f"Failed to stop motion service: {e}")
+                        stream_proc = subprocess.Popen(
+                            [sys.executable, str(INSTALL_DIR / "stream_manager.py")],
+                            cwd=str(INSTALL_DIR),
                         )
-                    finally:
-                        on_shadow_delta.updating = False
+                        logger.info(f"stream_manager.py started (pid={stream_proc.pid})")
+                        update_shadow(mqttm.connection, thing_name, {"streaming": True})
+                    elif not want_stream and stream_proc is not None:
+                        logger.info("Stopping live stream")
+                        stream_proc.terminate()
+                        try:
+                            stream_proc.wait(timeout=15)
+                        except subprocess.TimeoutExpired:
+                            stream_proc.kill()
+                            stream_proc.wait()
+                        stream_proc = None
+                        logger.info("Restarting motion detection")
+                        try:
+                            subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
+                        except Exception as e:
+                            logger.warning(f"Failed to start motion service: {e}")
+                        update_shadow(mqttm.connection, thing_name, {"streaming": False})
 
-            # ── Config changes ──
-            if on_shadow_delta.pending_config:
-                pending = on_shadow_delta.pending_config
-                on_shadow_delta.pending_config = None
-                if on_shadow_delta.updating:
-                    logger.info("Config change received during OTA — will re-apply on next startup via shadow/get")
-                else:
-                    was_shipping = config.get("log_shipping", {}).get("enabled", True)
-                    apply_remote_config(pending, config, connection, thing_name, heartbeat_ref)
-                    new_log_cfg = config.get("log_shipping", {})
-                    log_ship_interval_ref[0] = new_log_cfg.get("batch_interval_seconds", 60)
-                    if not was_shipping and new_log_cfg.get("enabled", True):
-                        last_log_timestamp[0] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                        logger.info("Log shipping enabled — shipping logs from now")
-
-            # ── Streaming ──
-            if on_shadow_delta.pending_streaming is not None:
-                want_stream = on_shadow_delta.pending_streaming
-                on_shadow_delta.pending_streaming = None
-                if want_stream and stream_proc is None:
-                    logger.info("Starting live stream — stopping motion detection")
-                    try:
-                        subprocess.run(["sudo", "systemctl", "stop", "snoutspotter-motion"], timeout=10)
-                    except Exception as e:
-                        logger.warning(f"Failed to stop motion service: {e}")
-                    stream_proc = subprocess.Popen(
-                        [sys.executable, str(INSTALL_DIR / "stream_manager.py")],
-                        cwd=str(INSTALL_DIR),
-                    )
-                    logger.info(f"stream_manager.py started (pid={stream_proc.pid})")
-                    update_shadow(connection, thing_name, {"streaming": True})
-                elif not want_stream and stream_proc is not None:
-                    logger.info("Stopping live stream")
-                    stream_proc.terminate()
-                    try:
-                        stream_proc.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        stream_proc.kill()
-                        stream_proc.wait()
-                    stream_proc = None
-                    logger.info("Restarting motion detection")
-                    try:
-                        subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
-                    except Exception as e:
-                        logger.warning(f"Failed to start motion service: {e}")
-                    update_shadow(connection, thing_name, {"streaming": False})
+                # ── Commands ──
+                elif event_type == EVENT_COMMAND:
+                    execute_command(data, config, mqttm.connection, thing_name, updating=updating)
 
             # ── Stream exit detection ──
             if stream_proc is not None and stream_proc.poll() is not None:
@@ -320,20 +368,16 @@ def main():
                     "reported": {"streaming": False}
                 }})
                 topic = f"$aws/things/{thing_name}/shadow/update"
-                connection.publish(topic=topic, payload=payload, qos=mqtt.QoS.AT_LEAST_ONCE)
+                mqttm.publish(topic, payload)
                 logger.info("Streaming stopped — cleared desired and reported shadow state")
-
-            # ── Commands (via MQTT topic, not shadow) ──
-            while pending_commands:
-                cmd = pending_commands.pop(0)
-                execute_command(cmd, config, connection, thing_name, updating=on_shadow_delta.updating)
 
             # ── Log shipping ──
             if now - last_log_ship >= log_ship_interval_ref[0]:
-                try:
-                    collect_and_ship_logs(connection, thing_name, config, last_log_timestamp)
-                except Exception as e:
-                    logger.error(f"Log shipping error: {e}")
+                if mqttm.connected:
+                    try:
+                        collect_and_ship_logs(mqttm.connection, thing_name, config, last_log_timestamp)
+                    except Exception as e:
+                        logger.error(f"Log shipping error: {e}")
                 last_log_ship = now
 
             time.sleep(5)
@@ -342,12 +386,16 @@ def main():
         logger.info("Shutting down agent...")
         if stream_proc is not None and stream_proc.poll() is None:
             stream_proc.terminate()
-            stream_proc.wait(timeout=10)
+            try:
+                stream_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                stream_proc.kill()
+                stream_proc.wait()
             try:
                 subprocess.run(["sudo", "systemctl", "start", "snoutspotter-motion"], timeout=10)
             except Exception:
                 pass
-        connection.disconnect().result(timeout=5)
+        mqttm.disconnect()
 
 
 if __name__ == "__main__":

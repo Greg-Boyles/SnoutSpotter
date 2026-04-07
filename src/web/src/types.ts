@@ -45,7 +45,8 @@ export interface StatsOverview {
   totalDetections: number;
   myDogDetections: number;
   lastUploadTime: string | null;
-  piOnline: boolean;
+  piOnlineCount: number;
+  piTotalCount: number;
 }
 
 export interface CameraStatus {
