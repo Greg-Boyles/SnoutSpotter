@@ -137,6 +137,20 @@ public class Function
 
     private static (string clipId, bool isEventBridge) ParseInput(JsonElement input)
     {
+        // SQS event: { "Records": [{ "body": "{\"clipId\":\"...\"}" }] }
+        if (input.TryGetProperty("Records", out var records) && records.GetArrayLength() > 0)
+        {
+            var body = records[0].GetProperty("body").GetString()!;
+            var msg = JsonDocument.Parse(body).RootElement;
+            if (msg.TryGetProperty("clipId", out var sqsClipId) ||
+                msg.TryGetProperty("ClipId", out sqsClipId))
+            {
+                return (sqsClipId.GetString()!, false);
+            }
+            throw new ArgumentException("SQS message body missing clipId");
+        }
+
+        // EventBridge event
         if (input.TryGetProperty("detail", out var detail) &&
             detail.TryGetProperty("object", out var obj) &&
             obj.TryGetProperty("key", out var key))
@@ -144,13 +158,14 @@ public class Function
             return (ExtractClipId(key.GetString()!), true);
         }
 
+        // Direct invocation
         if (input.TryGetProperty("ClipId", out var clipIdProp) ||
             input.TryGetProperty("clipId", out clipIdProp))
         {
             return (clipIdProp.GetString()!, false);
         }
 
-        throw new ArgumentException("Unrecognised input: expected EventBridge event or { ClipId: \"...\" }");
+        throw new ArgumentException("Unrecognised input: expected SQS event, EventBridge event, or { ClipId: \"...\" }");
     }
 
     private async Task<Dictionary<string, AttributeValue>?> GetClipRecord(
