@@ -278,6 +278,9 @@ def sync_service_files():
 
     if created:
         subprocess.run(["sudo", "systemctl", "daemon-reload"], timeout=10, check=True)
+        for svc_name in created:
+            subprocess.run(["sudo", "systemctl", "start", svc_name], timeout=30, check=True)
+            logger.info(f"Started new service: {svc_name}")
         logger.info(f"Synced {len(created)} new service file(s): {created}")
 
 
