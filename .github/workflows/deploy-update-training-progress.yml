@@ -42,7 +42,7 @@ jobs:
         working-directory: src/infra
 
       - name: CDK deploy TrainingProgress stack
-        run: cdk deploy SnoutSpotter-TrainingProgress --require-approval never --method=direct
+        run: cdk deploy SnoutSpotter-TrainingProgress --require-approval never
         working-directory: src/infra
         env:
           IMAGE_TAG: ${{ github.sha }}
