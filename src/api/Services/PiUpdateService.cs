@@ -191,6 +191,53 @@ public class PiUpdateService : IPiUpdateService
         }
     }
 
+    public async Task<List<PiRelease>> ListReleasesAsync()
+    {
+        var latest = await GetLatestVersionAsync();
+        var releases = new List<PiRelease>();
+
+        var request = new Amazon.S3.Model.ListObjectsV2Request
+        {
+            BucketName = _config.BucketName,
+            Prefix = "releases/pi/v"
+        };
+
+        Amazon.S3.Model.ListObjectsV2Response response;
+        do
+        {
+            response = await _s3Client.ListObjectsV2Async(request);
+            foreach (var obj in response.S3Objects)
+            {
+                if (!obj.Key.EndsWith(".tar.gz")) continue;
+
+                // Extract version from key: releases/pi/v1.0.2.tar.gz → v1.0.2
+                var filename = Path.GetFileName(obj.Key);
+                var version = filename.Replace(".tar.gz", "");
+
+                releases.Add(new PiRelease(
+                    Version: version,
+                    S3Key: obj.Key,
+                    SizeBytes: obj.Size,
+                    LastModified: obj.LastModified.ToString("O"),
+                    IsLatest: latest != null && version == $"v{latest}"
+                ));
+            }
+            request.ContinuationToken = response.NextContinuationToken;
+        } while (response.IsTruncated);
+
+        return releases.OrderByDescending(r => r.LastModified).ToList();
+    }
+
+    public async Task DeleteReleaseAsync(string version)
+    {
+        var latest = await GetLatestVersionAsync();
+        if (latest != null && version == $"v{latest}")
+            throw new InvalidOperationException($"Cannot delete the latest release ({version})");
+
+        var key = $"releases/pi/{version}.tar.gz";
+        await _s3Client.DeleteObjectAsync(_config.BucketName, key);
+    }
+
     private record ConfigKeySpec(string Type, int? Min = null, int? Max = null, bool Odd = false, string[]? Choices = null);
 
     private static readonly Dictionary<string, ConfigKeySpec> ConfigurableKeys = new()

@@ -14,4 +14,13 @@ public interface IPiUpdateService
     Task<string> SendCommandAsync(string thingName, string action);
     Task<Dictionary<string, string>?> GetCommandFromLedgerAsync(string commandId);
     Task<List<Dictionary<string, string>>> GetCommandHistoryAsync(string thingName, int limit = 50);
+    Task<List<PiRelease>> ListReleasesAsync();
+    Task DeleteReleaseAsync(string version);
 }
+
+public record PiRelease(
+    string Version,
+    string S3Key,
+    long SizeBytes,
+    string LastModified,
+    bool IsLatest);

@@ -153,6 +153,28 @@ public class PiController : ControllerBase
             return BadRequest(new { error = ex.Message });
         }
     }
+    [HttpGet("releases")]
+    public async Task<ActionResult> ListReleases()
+    {
+        var releases = await _piUpdateService.ListReleasesAsync();
+        var latest = await _piUpdateService.GetLatestVersionAsync();
+        return Ok(new { releases, latestVersion = latest });
+    }
+
+    [HttpDelete("releases/{version}")]
+    public async Task<ActionResult> DeleteRelease(string version)
+    {
+        try
+        {
+            await _piUpdateService.DeleteReleaseAsync(version);
+            return Ok(new { message = $"Release {version} deleted" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpGet("{thingName}/logs")]
     public async Task<ActionResult> GetLogs(
         string thingName,
