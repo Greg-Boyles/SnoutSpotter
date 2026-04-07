@@ -13,6 +13,8 @@ public class PiMgmtStackProps : StackProps
     public required string ImageTag { get; init; }
     public required string IoTThingGroupName { get; init; }
     public required string IoTPolicyName { get; init; }
+    public required string TrainerThingGroupName { get; init; }
+    public required string TrainerPolicyName { get; init; }
 }
 
 public class PiMgmtStack : Stack
@@ -36,6 +38,8 @@ public class PiMgmtStack : Stack
             {
                 ["IOT_THING_GROUP"] = props.IoTThingGroupName,
                 ["IOT_POLICY_NAME"] = props.IoTPolicyName,
+                ["IOT_TRAINER_THING_GROUP"] = props.TrainerThingGroupName,
+                ["IOT_TRAINER_POLICY_NAME"] = props.TrainerPolicyName,
                 ["AWS_LWA_PORT"] = "8080"
             }
         });

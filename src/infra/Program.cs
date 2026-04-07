@@ -63,7 +63,9 @@ var piMgmtStack = new PiMgmtStack(app, "SnoutSpotter-PiMgmt", new PiMgmtStackPro
     PiMgmtEcrRepo = coreStack.PiMgmtEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     IoTThingGroupName = iotStack.ThingGroupName,
-    IoTPolicyName = iotStack.PolicyName
+    IoTPolicyName = iotStack.PolicyName,
+    TrainerThingGroupName = iotStack.TrainerThingGroupName,
+    TrainerPolicyName = iotStack.TrainerPolicyName
 });
 
 var autoLabelStack = new AutoLabelStack(app, "SnoutSpotter-AutoLabel", new AutoLabelStackProps
