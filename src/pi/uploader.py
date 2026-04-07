@@ -3,10 +3,11 @@
 
 import json
 import os
+import shutil
 import time
 import sqlite3
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import boto3
@@ -84,6 +85,20 @@ class UploadLedger:
         )
         return cursor.fetchall()
 
+    def prune_old_entries(self, days: int = 7) -> int:
+        """Delete uploaded/exhausted ledger entries older than `days` days."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cursor = self.conn.execute(
+            "DELETE FROM uploads WHERE (status = 'uploaded' AND uploaded_at < ?) "
+            "OR (status = 'failed' AND last_attempt < ?)",
+            (cutoff, cutoff),
+        )
+        self.conn.commit()
+        deleted = cursor.rowcount
+        if deleted:
+            logger.info(f"Pruned {deleted} old ledger entries (>{days}d)")
+        return deleted
+
 
 class Uploader:
     def __init__(self, config: dict):
@@ -95,6 +110,7 @@ class Uploader:
         self.prefix = self.config["prefix"]
         self.thing_name = config["iot"]["thing_name"]
         self.ledger = UploadLedger()
+        self._last_housekeeping = 0.0
 
         # Status tracking
         self._last_upload_at = None
@@ -182,6 +198,50 @@ class Uploader:
                 logger.info(f"Retrying failed upload: {filename}")
                 self.upload_file(filepath)
 
+    def _enforce_disk_quota(self):
+        """Delete oldest clips when free disk space drops below threshold."""
+        min_free_mb = self.config.get("min_free_disk_mb", 500)
+        disk = shutil.disk_usage(self.clips_dir)
+        free_mb = disk.free / (1024 * 1024)
+
+        if free_mb >= min_free_mb:
+            return
+
+        logger.warning(f"Disk free {free_mb:.0f} MB < {min_free_mb} MB threshold — removing oldest clips")
+        clips = sorted(self.clips_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
+        removed = 0
+        for clip in clips:
+            try:
+                size_mb = clip.stat().st_size / (1024 * 1024)
+                clip.unlink()
+                free_mb += size_mb
+                removed += 1
+                logger.info(f"Disk quota: removed {clip.name} ({size_mb:.1f} MB)")
+                if free_mb >= min_free_mb:
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to remove {clip.name}: {e}")
+
+        if removed:
+            logger.info(f"Disk quota: removed {removed} clips, free now ~{free_mb:.0f} MB")
+
+    def _housekeeping(self):
+        """Periodic maintenance: ledger pruning + disk quota. Runs every hour."""
+        now = time.time()
+        if now - self._last_housekeeping < 3600:
+            return
+        self._last_housekeeping = now
+        try:
+            self.ledger.prune_old_entries(
+                days=self.config.get("ledger_retention_days", 7)
+            )
+        except Exception as e:
+            logger.warning(f"Ledger prune failed: {e}")
+        try:
+            self._enforce_disk_quota()
+        except Exception as e:
+            logger.warning(f"Disk quota check failed: {e}")
+
     def watch_and_upload(self):
         """Main loop: watch for new clips and upload them."""
         logger.info(f"Watching {self.clips_dir} for new clips...")
@@ -196,6 +256,9 @@ class Uploader:
 
                 # Retry any previously failed uploads
                 self.retry_failed()
+
+                # Periodic ledger prune + disk quota enforcement
+                self._housekeeping()
 
             except Exception as e:
                 logger.error(f"Error in upload loop: {e}")

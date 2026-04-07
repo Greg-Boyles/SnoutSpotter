@@ -26,6 +26,8 @@ upload:
   max_retries: 5
   retry_delay: 5
   delete_after_upload: true
+  min_free_disk_mb: 500
+  ledger_retention_days: 7
 
 health:
   namespace: SnoutSpotter

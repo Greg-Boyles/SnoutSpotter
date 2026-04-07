@@ -209,6 +209,8 @@ public class PiUpdateService : IPiUpdateService
         ["upload.max_retries"]                  = new("int", Min: 1,    Max: 20),
         ["upload.retry_delay"]                  = new("int", Min: 1,    Max: 60),
         ["upload.delete_after_upload"]          = new("bool"),
+        ["upload.min_free_disk_mb"]             = new("int", Min: 100, Max: 10000),
+        ["upload.ledger_retention_days"]        = new("int", Min: 1,   Max: 90),
         ["health.interval_seconds"]             = new("int", Min: 60,   Max: 3600),
         ["log_shipping.enabled"]                = new("bool"),
         ["log_shipping.batch_interval_seconds"] = new("int", Min: 30,   Max: 600),
