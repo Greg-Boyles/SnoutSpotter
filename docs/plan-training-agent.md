@@ -411,14 +411,24 @@ RUN apt-get install -y python3.11 python3-pip
 COPY src/ml/requirements-training.txt /tmp/
 RUN pip3 install -r /tmp/requirements-training.txt
 
-# Copy .NET agent
+# Copy .NET agent only — training scripts are NOT baked into the image.
+# They are downloaded from S3 at job start so they can be updated
+# independently without rebuilding the Docker image.
 COPY --from=build /app /app
-
-# Copy training scripts
-COPY src/ml/ /app/ml/
 
 WORKDIR /app
 ENTRYPOINT ["dotnet", "SnoutSpotter.TrainingAgent.dll"]
+```
+
+**Note:** Training scripts (`train_detector.py`, `verify_onnx.py`) are **not** in the Docker
+image. They are downloaded from S3 at the start of each training job (see Phase 5.3).
+This means you can update training scripts without rebuilding or redeploying the agent.
+
+For **local development**, mount scripts from the host to skip S3 download:
+```yaml
+# In docker-compose.yml, uncomment for dev:
+# volumes:
+#   - ~/Dev/SnoutSpotter/src/ml:/app/ml:ro
 ```
 
 ### 4.2 ECR Repository
@@ -427,14 +437,80 @@ ENTRYPOINT ["dotnet", "SnoutSpotter.TrainingAgent.dll"]
 
 Add ECR repo: `snout-spotter-training-agent` (same pattern as other ECR repos).
 
-### 4.3 GitHub Actions Workflow
+### 4.3 GitHub Actions: Docker Image Build
 
 **File:** `.github/workflows/build-training-agent-image.yml`
 
-Triggered on changes to `src/training-agent/**` or `src/ml/**`:
+Triggered on changes to `src/training-agent/**` only (not `src/ml/`):
 1. Build Docker image
 2. Push to ECR with version tag + `:latest`
-3. Optionally tag with git SHA for traceability
+3. Tag with git SHA for traceability
+
+### 4.4 GitHub Actions: ML Scripts Package
+
+**File:** `.github/workflows/package-ml-scripts.yml`
+
+Triggered on changes to `src/ml/**`:
+1. Package training scripts into a versioned tarball
+2. Upload to S3: `releases/ml-scripts/v{version}.tar.gz`
+3. Write version manifest: `releases/ml-scripts/latest.json`
+
+```yaml
+name: Package ML Scripts
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/ml/**']
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-west-1
+
+      - name: Get next version
+        id: version
+        run: |
+          CURRENT=$(aws s3 cp s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-scripts/latest.json - 2>/dev/null | jq -r '.version // "0"')
+          NEXT=$((CURRENT + 1))
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Package scripts
+        run: |
+          tar -czf ml-scripts-v${{ steps.version.outputs.version }}.tar.gz \
+            -C src/ml \
+            train_detector.py verify_onnx.py requirements-training.txt
+
+      - name: Upload to S3
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          aws s3 cp ml-scripts-v${VERSION}.tar.gz \
+            s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-scripts/v${VERSION}.tar.gz
+          echo "{\"version\":\"${VERSION}\",\"published_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" | \
+            aws s3 cp - s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-scripts/latest.json
+```
+
+**S3 layout:**
+```
+releases/
+├── pi/                          # Pi software releases (existing)
+│   ├── v1.0.0.tar.gz
+│   └── manifest.json
+└── ml-scripts/                  # ML training scripts (new)
+    ├── v1.tar.gz
+    ├── v2.tar.gz
+    └── latest.json              # { "version": "2", "published_at": "..." }
+```
 
 ---
 
@@ -484,21 +560,27 @@ agent.Run(); // blocking main loop
 ```csharp
 public class JobRunner
 {
+    private const string MlScriptsDir = "/app/ml";
+    private const string MlScriptsManifestKey = "releases/ml-scripts/latest.json";
+
     public async Task RunJobAsync(TrainingJobConfig job, CancellationToken ct)
     {
         // 1. Update status: downloading
         ReportStatus("downloading");
 
-        // 2. Download export zip from S3
+        // 2. Download latest ML training scripts from S3 (if not already cached)
+        await EnsureMlScriptsAsync(ct);
+
+        // 3. Download export zip from S3
         await DownloadDatasetAsync(job.ExportS3Key, ct);
 
-        // 3. Extract dataset
+        // 4. Extract dataset
         ExtractDataset();
 
-        // 4. Update status: training
+        // 5. Update status: training
         ReportStatus("training");
 
-        // 5. Spawn: python3 /app/ml/train_detector.py
+        // 6. Spawn: python3 /app/ml/train_detector.py
         //    --data /app/data/dataset
         //    --epochs {job.Epochs}
         //    --batch {job.BatchSize}
@@ -506,18 +588,54 @@ public class JobRunner
         //    --workers {job.Workers}
         var process = StartTrainingProcess(job);
 
-        // 6. Read stdout line by line, parse with ProgressParser
+        // 7. Read stdout line by line, parse with ProgressParser
         //    Publish progress via MQTT on each epoch
         await MonitorTrainingAsync(process, job.JobId, ct);
 
-        // 7. Update status: uploading
+        // 8. Update status: uploading
         ReportStatus("uploading");
 
-        // 8. Upload best.onnx + last.pt to S3
+        // 9. Upload best.onnx + last.pt to S3
         await UploadResultsAsync(job);
 
-        // 9. Report final metrics
+        // 10. Report final metrics
         ReportComplete(job);
+    }
+
+    /// <summary>
+    /// Downloads training scripts from S3 if a newer version is available.
+    /// Checks releases/ml-scripts/latest.json for current version, compares
+    /// against a local version file in /app/ml/version.json. Skips download
+    /// if already up to date (fast path for back-to-back jobs).
+    /// </summary>
+    private async Task EnsureMlScriptsAsync(CancellationToken ct)
+    {
+        // 1. Read latest.json from S3
+        var manifest = await _s3.GetObjectAsync(_bucket, MlScriptsManifestKey, ct);
+        var latest = JsonSerializer.Deserialize<MlScriptsManifest>(manifest.ResponseStream);
+
+        // 2. Check local version
+        var localVersionPath = Path.Combine(MlScriptsDir, "version.json");
+        if (File.Exists(localVersionPath))
+        {
+            var local = JsonSerializer.Deserialize<MlScriptsManifest>(
+                File.ReadAllText(localVersionPath));
+            if (local.Version == latest.Version)
+            {
+                _logger.LogInformation($"ML scripts v{latest.Version} already cached");
+                return;
+            }
+        }
+
+        // 3. Download and extract
+        _logger.LogInformation($"Downloading ML scripts v{latest.Version}");
+        var tarKey = $"releases/ml-scripts/v{latest.Version}.tar.gz";
+        // Download tar.gz, extract to /app/ml/
+        await DownloadAndExtractAsync(tarKey, MlScriptsDir, ct);
+
+        // 4. Write local version marker
+        File.WriteAllText(localVersionPath,
+            JsonSerializer.Serialize(latest));
     }
 }
 ```
@@ -888,19 +1006,20 @@ Before activating, show a comparison table:
 | 4 | — | UpdateTrainingProgress Lambda + IoT Rule + CDK stack | 3h | Step 1 |
 | 5 | 3.1 | Create TrainingController API endpoints | 3h | Step 1 |
 | 6 | 4.1 | Build Docker image (multi-stage .NET + Python/CUDA) | 3h | None |
-| 7 | 5.1-5.5 | Build .NET training agent (MQTT, job runner, progress parser, GPU info) | 8h | Steps 2, 3 |
-| 8 | 6.2-6.4 | Update handler with mid-training deferral + updater.sh | 2h | Step 7 |
-| 9 | 4.3 | GitHub Actions workflow for image build + ECR push | 1h | Step 6 |
-| 10 | 7.1 | Setup script for agent registration + Docker setup | 2h | Steps 6, 7 |
-| 11 | 8.1 | Training Agents page (agent status + GPU info + update) | 2h | Step 5 |
-| 12 | 8.2 | Submit Training Job form | 2h | Step 5 |
-| 13 | 8.3 | Training Job Detail with live progress | 3h | Steps 4, 5 |
-| 14 | 8.4 | Training Jobs list page | 1h | Step 5 |
-| 15 | 8.5 | Navigation + routing | 30m | Steps 11-14 |
-| 16 | 9.1 | One-click model activation from job detail | 1h | Step 13 |
-| 17 | — | End-to-end testing | 3h | All |
+| 7 | 4.4 | GitHub Actions workflow: package ML scripts → S3 | 1h | None |
+| 8 | 5.1-5.5 | Build .NET training agent (MQTT, job runner with S3 script download, progress parser, GPU info) | 8h | Steps 2, 3 |
+| 9 | 6.2-6.4 | Update handler with mid-training deferral + updater.sh | 2h | Step 8 |
+| 10 | 4.3 | GitHub Actions workflow: Docker image build + ECR push | 1h | Step 6 |
+| 11 | 7.1 | Setup script for agent registration + Docker setup | 2h | Steps 6, 8 |
+| 12 | 8.1 | Training Agents page (agent status + GPU info + update) | 2h | Step 5 |
+| 13 | 8.2 | Submit Training Job form | 2h | Step 5 |
+| 14 | 8.3 | Training Job Detail with live progress | 3h | Steps 4, 5 |
+| 15 | 8.4 | Training Jobs list page | 1h | Step 5 |
+| 16 | 8.5 | Navigation + routing | 30m | Steps 12-15 |
+| 17 | 9.1 | One-click model activation from job detail | 1h | Step 14 |
+| 18 | — | End-to-end testing | 3h | All |
 
-**Total estimated effort: ~39 hours across 17 steps**
+**Total estimated effort: ~40 hours across 18 steps**
 
 ---
 
