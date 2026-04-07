@@ -248,10 +248,11 @@ class Uploader:
 
         while True:
             try:
-                # Find completed clips (files that haven't been modified in 5 seconds)
+                # Find completed clips (files that haven't been modified recently)
+                stability = self.config.get("file_stability_seconds", 5)
                 for filepath in sorted(self.clips_dir.glob("*.mp4")):
                     age = time.time() - filepath.stat().st_mtime
-                    if age > 5 and not self.ledger.is_uploaded(filepath.name):
+                    if age > stability and not self.ledger.is_uploaded(filepath.name):
                         self.upload_file(filepath)
 
                 # Retry any previously failed uploads

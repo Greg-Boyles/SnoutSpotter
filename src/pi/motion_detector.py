@@ -117,7 +117,8 @@ class MotionDetector:
             record_fps = self.camera_cfg.get("record_fps", 30)
             buffersize = record_fps * pre_buffer
 
-            self.encoder = H264Encoder(bitrate=5_000_000)
+            bitrate = self.camera_cfg.get("encoding_bitrate", 5_000_000)
+            self.encoder = H264Encoder(bitrate=bitrate)
             self.circular_output = CircularOutput(buffersize=buffersize)
             self.picam2.start_encoder(self.encoder, self.circular_output)
             logger.info(f"Camera started: preview={preview_w}x{preview_h}, record={record_w}x{record_h}, pre_buffer={pre_buffer}s ({buffersize} frames)")
@@ -163,7 +164,8 @@ class MotionDetector:
             self.circular_output.start()
         else:
             # No pre-buffer — start encoder on demand with FfmpegOutput for proper MP4
-            self.encoder = H264Encoder(bitrate=5_000_000)
+            bitrate = self.camera_cfg.get("encoding_bitrate", 5_000_000)
+            self.encoder = H264Encoder(bitrate=bitrate)
             output = FfmpegOutput(str(filepath))
             self.picam2.start_encoder(self.encoder, output)
 
@@ -192,9 +194,10 @@ class MotionDetector:
             if self._raw_h264_path and Path(self._raw_h264_path).exists():
                 try:
                     import subprocess
+                    ffmpeg_timeout = self.record_cfg.get("ffmpeg_timeout_seconds", 30)
                     subprocess.run(
                         ["ffmpeg", "-y", "-i", self._raw_h264_path, "-c", "copy", filepath],
-                        capture_output=True, timeout=30, check=True
+                        capture_output=True, timeout=ffmpeg_timeout, check=True
                     )
                     # Validate the output is a playable MP4
                     probe = subprocess.run(

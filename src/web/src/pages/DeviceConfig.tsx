@@ -22,6 +22,7 @@ const CONFIG_SECTIONS: {
       { key: "camera.preview_resolution", label: "Preview resolution", type: "str", choices: ["640x480", "1280x720"], description: "Resolution for motion detection preview (restarts motion service)" },
       { key: "camera.record_resolution", label: "Record resolution", type: "str", choices: ["1280x720", "1920x1080"], description: "Resolution for recorded clips (restarts motion service)" },
       { key: "camera.record_fps", label: "Record FPS", type: "int", min: 15, max: 60, unit: "fps", description: "Frame rate for recorded clips (restarts motion service)" },
+      { key: "camera.encoding_bitrate", label: "Encoding bitrate", type: "int", min: 1000000, max: 10000000, unit: "bps", description: "H.264 encoder bitrate for recorded clips (restarts motion service)" },
     ],
   },
   {
@@ -31,6 +32,7 @@ const CONFIG_SECTIONS: {
       { key: "recording.pre_buffer", label: "Pre-buffer duration", type: "int", min: 1, max: 10, unit: "s", description: "Seconds of pre-motion footage to include in clips" },
       { key: "recording.max_clip_length", label: "Max clip length", type: "int", min: 10, max: 300, unit: "s", description: "Maximum recording duration per clip" },
       { key: "recording.post_motion_buffer", label: "Post-motion buffer", type: "int", min: 3, max: 60, unit: "s", description: "Keep recording after last motion detected" },
+      { key: "recording.ffmpeg_timeout_seconds", label: "FFmpeg timeout", type: "int", min: 10, max: 300, unit: "s", description: "Timeout for remuxing H.264 to MP4 — increase for slow storage" },
     ],
   },
   {
@@ -39,6 +41,7 @@ const CONFIG_SECTIONS: {
       { key: "upload.max_retries", label: "Max retries", type: "int", min: 1, max: 20, description: "Retry count for failed uploads" },
       { key: "upload.retry_delay", label: "Retry delay", type: "int", min: 1, max: 60, unit: "s", description: "Seconds between upload retry attempts" },
       { key: "upload.delete_after_upload", label: "Delete after upload", type: "bool", description: "Remove local clip file after successful upload" },
+      { key: "upload.file_stability_seconds", label: "File stability wait", type: "int", min: 1, max: 60, unit: "s", description: "Wait for file to stop being written before uploading — increase for slow storage" },
     ],
   },
   {
