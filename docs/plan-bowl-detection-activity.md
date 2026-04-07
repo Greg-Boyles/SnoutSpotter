@@ -53,18 +53,77 @@ Color mapping (configurable via Lambda environment variables):
 
 **Note:** HSV hue in OpenCV uses 0-180 range (not 0-360). Blue is ~100-130, red is ~0-10 and ~170-180.
 
+### 1.2b Alternative: Position-Based Bowl Classification
+
+If using stainless steel or same-color bowls (no hue to detect), classify by **fixed position zones** instead of color. This works well when:
+- Bowls stay in the same location (e.g. against a wall near appliances)
+- Camera angle is fixed (typical for Pi deployments)
+- Bowl colors are too similar or metallic/gray
+
+**How it works:**
+
+```
+1. Define two rectangular zones in config (normalised 0-1 coordinates):
+   - water_bowl_zone: [x1, y1, x2, y2]  (e.g. left bowl area)
+   - food_bowl_zone:  [x1, y1, x2, y2]  (e.g. right bowl area)
+
+2. When COCO class 45 (bowl) is detected, check which zone the
+   bowl bbox center falls into:
+   - Center in water_bowl_zone → water_bowl
+   - Center in food_bowl_zone  → food_bowl
+   - Neither zone              → unknown_bowl
+
+3. Also filter out false positives (e.g. washer/dryer doors):
+   - Ignore detections in the top 50% of the frame (appliances)
+   - Ignore detections with bbox area > 15% of frame (too large for a bowl)
+```
+
+**Pros:**
+- Works with any bowl color (including stainless steel)
+- Simpler than HSV — no color tuning needed
+- Naturally filters out appliance false positives via zones
+
+**Cons:**
+- Breaks if bowls are moved to a different spot
+- Needs reconfiguration per camera/device
+- Both bowls must be visible and spatially separated in the frame
+
+**Zone configuration** — stored per-device via the remote config system:
+
+```yaml
+# In device config (shadow desired state or config.yaml)
+bowl_detection:
+  mode: position          # "position" or "color"
+  confidence_threshold: 0.3
+  min_y_ratio: 0.5        # ignore top 50% of frame
+  max_bbox_area_ratio: 0.15
+  water_bowl_zone: [0.0, 0.6, 0.4, 1.0]   # left side, bottom 40%
+  food_bowl_zone:  [0.6, 0.6, 1.0, 1.0]   # right side, bottom 40%
+```
+
+A future UI enhancement could let users draw these zones on a reference keyframe in the Device Config page.
+
 ### 1.3 Environment Variables
 
-Add to AutoLabel Lambda:
+Add to AutoLabel Lambda (supports both modes):
 ```
+BOWL_DETECTION_ENABLED=true
+BOWL_CONFIDENCE_THRESHOLD=0.3
+BOWL_CLASSIFICATION_MODE=color   # "color" or "position"
+
+# Color mode settings
 WATER_BOWL_HUE_MIN=100
 WATER_BOWL_HUE_MAX=130
 FOOD_BOWL_HUE_MIN=0
 FOOD_BOWL_HUE_MAX=10
 FOOD_BOWL_HUE_MIN2=170
 FOOD_BOWL_HUE_MAX2=180
-BOWL_DETECTION_ENABLED=true
-BOWL_CONFIDENCE_THRESHOLD=0.3
+
+# Position mode settings (normalised coordinates)
+BOWL_MIN_Y_RATIO=0.5
+BOWL_MAX_BBOX_AREA_RATIO=0.15
+WATER_BOWL_ZONE=0.0,0.6,0.4,1.0
+FOOD_BOWL_ZONE=0.6,0.6,1.0,1.0
 ```
 
 ### 1.4 Labels Table Schema Update
@@ -78,7 +137,8 @@ Bowl labels use the same `snout-spotter-labels` table:
 | `confirmed_label` | `food_bowl`, `water_bowl`, or `not_bowl` (human review) |
 | `confidence` | COCO bowl detection confidence |
 | `bounding_boxes` | JSON array of bowl bounding boxes |
-| `bowl_color_hue` | Dominant hue value (for debugging) |
+| `bowl_classification_mode` | `color` or `position` (how the bowl type was determined) |
+| `bowl_color_hue` | Dominant hue value (color mode only, for debugging) |
 
 ---
 
@@ -279,11 +339,21 @@ Activity is orthogonal — stored separately, not as a detection type
 
 ## Camera Placement Notes
 
-Bowl detection works best when:
+The current elevated, angled-down camera position (e.g. mounted on a shelf above the feeding area looking down) is ideal. It provides:
+- Clear view of both bowls and the dog
+- Visible head position (can see when head dips into bowl vs walking past)
+- Good spatial separation between bowls for position-based classification
+- Dog body doesn't fully occlude bowls from this angle
+
+**Requirements:**
 - Camera has a clear overhead or angled view of the bowl area
 - Bowls are consistently placed in the same location
-- Bowls have distinct, solid colors (blue, red) — patterned bowls are harder
+- Both bowls visible and spatially separated in the frame
 - Lighting is consistent (avoid direct sunlight on bowls which washes out color)
+
+**For color mode:** Bowls should be bright, solid colors (blue + red). Stainless steel won't work.
+
+**For position mode:** Bowls can be any color. Just need to stay in the same spot. Configure zones once per camera. Be aware of false positives from circular objects in frame (washer/dryer doors, clocks) — the `min_y_ratio` and `max_bbox_area_ratio` filters handle this.
 
 Consider dedicating a Pi camera specifically for the feeding area if the main camera doesn't have a good angle on the bowls.
 
@@ -297,7 +367,9 @@ Consider dedicating a Pi camera specifically for the feeding area if the main ca
 | Dog near bowl but not eating (just walking past) | Require significant bbox overlap (IoU) or head-down position. Tune thresholds after initial deployment. |
 | Multiple dogs at bowl simultaneously | Track which dog bbox overlaps which bowl. Attribute activity to closest dog. |
 | Bowl partially occluded by dog | COCO bowl detection handles partial occlusion reasonably. Confidence threshold filters weak detections. |
-| Food and water bowls same color | Fall back to `unknown_bowl`. User confirms type in review UI. Consider adding a "bowl_position" config (left=food, right=water). |
+| Food and water bowls same color | Use position mode instead of color mode. Configure zone coordinates per device. |
+| Washer/dryer doors detected as bowls | Filter by Y-position (`min_y_ratio=0.5` ignores top half), bbox area (`max_bbox_area_ratio=0.15` rejects large circles), and zones (position mode). |
+| Bowls moved to different spot | Position mode needs reconfiguration. Color mode is position-independent. Choose mode based on setup stability. |
 | Retraining degrades existing my_dog/other_dog accuracy | Validate with test set before deploying. Keep previous model version as rollback via Models page. |
 
 ---
