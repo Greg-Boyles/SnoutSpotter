@@ -62,6 +62,7 @@ builder.Services.AddSingleton<IPiUpdateService, PiUpdateService>();
 builder.Services.AddSingleton<ILogService, LogService>();
 builder.Services.AddSingleton<ILabelService, LabelService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
+builder.Services.AddSingleton<ITrainingService, TrainingService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

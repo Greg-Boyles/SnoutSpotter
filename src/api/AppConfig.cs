@@ -13,6 +13,8 @@ public class AppConfig
     public string ExportDatasetFunction { get; set; } = "snout-spotter-export-dataset";
     public string InferenceFunction { get; set; } = "snout-spotter-run-inference";
     public string BackfillQueueUrl { get; set; } = "";
+    public string TrainingJobsTable { get; set; } = "snout-spotter-training-jobs";
+    public string TrainerThingGroup { get; set; } = "snoutspotter-trainers";
     public string OktaIssuer { get; set; } = "";
     public string AllowedOrigin { get; set; } = "";
 }
