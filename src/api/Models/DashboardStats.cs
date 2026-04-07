@@ -6,4 +6,5 @@ public record DashboardStats(
     int TotalDetections,
     int MyDogDetections,
     string? LastUploadTime,
-    bool PiOnline);
+    int PiOnlineCount,
+    int PiTotalCount);
