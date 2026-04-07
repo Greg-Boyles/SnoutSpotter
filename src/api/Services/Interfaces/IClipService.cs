@@ -9,4 +9,5 @@ public interface IClipService
     Task<List<DetectionSummary>> GetDetectionsAsync(string? detectionType = null, string? dateFrom = null, string? dateTo = null, int limit = 50);
     Task<int> GetClipCountForDateAsync(string date);
     Task DeleteClipAsync(string clipId);
+    Task<List<string>> GetClipIdsForDateRangeAsync(string? dateFrom, string? dateTo);
 }

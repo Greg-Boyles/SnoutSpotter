@@ -28,6 +28,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.TrainingJobsTable = Environment.GetEnvironmentVariable("TRAINING_JOBS_TABLE") ?? "snout-spotter-training-jobs";
     cfg.TrainerThingGroup = Environment.GetEnvironmentVariable("TRAINER_THING_GROUP") ?? "snoutspotter-trainers";
     cfg.BackfillQueueUrl = Environment.GetEnvironmentVariable("BACKFILL_QUEUE_URL") ?? "";
+    cfg.RerunInferenceQueueUrl = Environment.GetEnvironmentVariable("RERUN_INFERENCE_QUEUE_URL") ?? "";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });

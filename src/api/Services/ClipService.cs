@@ -397,6 +397,66 @@ public class ClipService : IClipService
             new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
     }
 
+    public async Task<List<string>> GetClipIdsForDateRangeAsync(string? dateFrom, string? dateTo)
+    {
+        var clipIds = new List<string>();
+
+        if (dateFrom == null && dateTo == null)
+        {
+            // All clips — query all-by-time GSI, project clip_id only
+            Dictionary<string, AttributeValue>? lastKey = null;
+            do
+            {
+                var response = await _dynamoClient.QueryAsync(new QueryRequest
+                {
+                    TableName = TableName,
+                    IndexName = "all-by-time",
+                    KeyConditionExpression = "pk = :pk",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":pk"] = new() { S = "CLIP" }
+                    },
+                    ProjectionExpression = "clip_id",
+                    ExclusiveStartKey = lastKey
+                });
+                clipIds.AddRange(response.Items.Select(i => i["clip_id"].S));
+                lastKey = response.LastEvaluatedKey;
+            } while (lastKey != null && lastKey.Count > 0);
+        }
+        else
+        {
+            // Date range — enumerate each date, query by-date GSI
+            var from = DateTime.Parse(dateFrom ?? "2020/01/01");
+            var to = DateTime.Parse(dateTo ?? DateTime.UtcNow.ToString("yyyy/MM/dd"));
+
+            for (var date = from; date <= to; date = date.AddDays(1))
+            {
+                var dateStr = date.ToString("yyyy/MM/dd");
+                Dictionary<string, AttributeValue>? lastKey = null;
+                do
+                {
+                    var response = await _dynamoClient.QueryAsync(new QueryRequest
+                    {
+                        TableName = TableName,
+                        IndexName = "by-date",
+                        KeyConditionExpression = "#d = :date",
+                        ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
+                        ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                        {
+                            [":date"] = new() { S = dateStr }
+                        },
+                        ProjectionExpression = "clip_id",
+                        ExclusiveStartKey = lastKey
+                    });
+                    clipIds.AddRange(response.Items.Select(i => i["clip_id"].S));
+                    lastKey = response.LastEvaluatedKey;
+                } while (lastKey != null && lastKey.Count > 0);
+            }
+        }
+
+        return clipIds;
+    }
+
     private ClipSummary MapToClipSummary(Dictionary<string, AttributeValue> item)
     {
         var keyframeKeys = item.GetValueOrDefault("keyframe_keys")?.SS ?? new List<string>();
