@@ -11,24 +11,46 @@ const int ExitCodeUpdate = 42;
 var logger = new ConsoleLogger();
 logger.LogInformation("SnoutSpotter Training Agent starting...");
 
-// Load config
-var configPath = Environment.GetEnvironmentVariable("CONFIG_PATH") ?? "/app/config.yaml";
-if (!File.Exists(configPath))
+// First-run: self-register if no config exists
+const string ConfigPath = "/app/state/config.yaml";
+const string CertsDir = "/app/state/certs";
+
+if (!File.Exists(ConfigPath))
 {
-    logger.LogError("Config file not found: {Path}", configPath);
-    return 1;
+    var agentName = Environment.GetEnvironmentVariable("AGENT_NAME");
+    if (string.IsNullOrWhiteSpace(agentName))
+    {
+        logger.LogError("No config found at {Path} and AGENT_NAME env var is not set. " +
+                        "Set AGENT_NAME to register this machine on first run.", ConfigPath);
+        return 1;
+    }
+
+    var registrationUrl = Environment.GetEnvironmentVariable("TRAINER_REGISTRATION_URL");
+    logger.LogInformation("No config found — registering as '{AgentName}'...", agentName);
+    await RegistrationService.RegisterAsync(agentName, registrationUrl, CertsDir, ConfigPath);
+    logger.LogInformation("Registration complete.");
 }
 
 var deserializer = new DeserializerBuilder()
     .WithNamingConvention(UnderscoredNamingConvention.Instance)
     .Build();
-var config = deserializer.Deserialize<AgentConfig>(File.ReadAllText(configPath));
+var config = deserializer.Deserialize<AgentConfig>(File.ReadAllText(ConfigPath));
 
 var thingName = config.IoT.ThingName;
 logger.LogInformation("Thing name: {ThingName}", thingName);
 
 // S3 client
 var s3 = new AmazonS3Client(Amazon.RegionEndpoint.GetBySystemName(config.S3.Region));
+
+// Discover S3 bucket if not set in config
+if (string.IsNullOrEmpty(config.S3.Bucket))
+{
+    var buckets = await s3.ListBucketsAsync();
+    config.S3.Bucket = buckets.Buckets
+        .FirstOrDefault(b => b.BucketName.StartsWith("snout-spotter-"))?.BucketName
+        ?? throw new InvalidOperationException("Could not find snout-spotter-* S3 bucket");
+    logger.LogInformation("Discovered S3 bucket: {Bucket}", config.S3.Bucket);
+}
 
 // MQTT connection
 await using var mqtt = new MqttManager(
