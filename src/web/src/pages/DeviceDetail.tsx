@@ -7,7 +7,7 @@ import {
   FolderX, Terminal, Check, X, Code, AlertTriangle,
 } from "lucide-react";
 import { api } from "../api";
-import type { SystemHealth, PiDevice } from "../types";
+import type { SystemHealth, PiDevice, PiRelease } from "../types";
 import StatusBadge from "../components/health/StatusBadge";
 import UsageBar from "../components/health/UsageBar";
 import { formatUptime } from "../components/health/formatUptime";
@@ -22,6 +22,8 @@ export default function DeviceDetail() {
   const [removing, setRemoving] = useState(false);
   const [commandState, setCommandState] = useState<Record<string, { status: string; message?: string }>>({});
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
+  const [releases, setReleases] = useState<PiRelease[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string>("");
 
   const DESTRUCTIVE_ACTIONS = new Set(["reboot", "clear-clips", "clear-backups"]);
 
@@ -46,6 +48,11 @@ export default function DeviceDetail() {
         });
       })
       .catch((e: Error) => setError(e.message));
+
+    api.listPiReleases().then((data) => {
+      setReleases(data.releases);
+      if (data.latestVersion) setSelectedVersion(`v${data.latestVersion}`);
+    }).catch(console.error);
 
     const interval = setInterval(refreshHealth, 10_000);
     return () => clearInterval(interval);
@@ -92,7 +99,9 @@ export default function DeviceDetail() {
     setUpdating(true);
     setUpdateMessage(null);
     try {
-      const result = await api.triggerPiUpdate(thingName);
+      // Strip leading 'v' for the API (manifest stores without prefix)
+      const versionParam = selectedVersion ? selectedVersion.replace(/^v/, "") : undefined;
+      const result = await api.triggerPiUpdate(thingName, versionParam);
       setUpdateMessage(`Update to v${result.version} triggered`);
       setTimeout(refreshHealth, 5000);
       setTimeout(refreshHealth, 15000);
@@ -230,20 +239,30 @@ export default function DeviceDetail() {
               </div>
             )}
           </div>
-          {device.updateAvailable && (
-            <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-              <span className="text-sm text-amber-600">v{health.latestVersion} available</span>
+          {releases.length > 0 && (
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 gap-3">
+              <select
+                value={selectedVersion}
+                onChange={(e) => setSelectedVersion(e.target.value)}
+                className="flex-1 text-sm border border-gray-300 rounded-lg px-2.5 py-1.5"
+              >
+                {releases.map((r) => (
+                  <option key={r.version} value={r.version}>
+                    {r.version}{r.isLatest ? " (latest)" : ""}{r.version === `v${device.version}` ? " — current" : ""}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={handleUpdate}
-                disabled={updating || device.updateStatus === "updating"}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50"
+                disabled={updating || device.updateStatus === "updating" || selectedVersion === `v${device.version}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 shrink-0"
               >
                 <RefreshCw className={`w-3 h-3 ${updating ? "animate-spin" : ""}`} />
-                {updating ? "Updating..." : "Update"}
+                {updating ? "Updating..." : "Deploy"}
               </button>
             </div>
           )}
-          {!device.updateAvailable && device.version && (
+          {releases.length === 0 && !device.updateAvailable && device.version && (
             <p className="text-xs text-green-600 mt-3 pt-3 border-t border-gray-100">Up to date</p>
           )}
         </div>

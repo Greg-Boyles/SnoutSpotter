@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, NavLink, useLocation } from "react-router-dom";
-import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X } from "lucide-react";
+import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, HardDriveDownload } from "lucide-react";
 import { useOktaAuth, LoginCallback } from "@okta/okta-react";
 import Dashboard from "./pages/Dashboard";
 import ClipsBrowser from "./pages/ClipsBrowser";
@@ -17,6 +17,7 @@ import Labels from "./pages/Labels";
 import LabelDetail from "./pages/LabelDetail";
 import TrainingExports from "./pages/TrainingExports";
 import Models from "./pages/Models";
+import PiPackages from "./pages/PiPackages";
 import { setAuthGetter } from "./api";
 
 const navItems = [
@@ -27,6 +28,7 @@ const navItems = [
   { to: "/labels", icon: Tag, label: "Labels" },
   { to: "/exports", icon: Package, label: "Exports" },
   { to: "/models", icon: Cpu, label: "Models" },
+  { to: "/pi-packages", icon: HardDriveDownload, label: "Pi Packages" },
   { to: "/health", icon: Activity, label: "System" },
 ];
 
@@ -148,6 +150,7 @@ export default function App() {
                   <Route path="/labels" element={<Labels />} />
                   <Route path="/exports" element={<TrainingExports />} />
                   <Route path="/models" element={<Models />} />
+                  <Route path="/pi-packages" element={<PiPackages />} />
                   <Route path="/health" element={<SystemHealthPage />} />
                   <Route path="/device/:thingName" element={<DeviceDetail />} />
                   <Route path="/device/:thingName/shadow" element={<DeviceShadow />} />

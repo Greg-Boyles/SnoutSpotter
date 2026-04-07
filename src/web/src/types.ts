@@ -117,3 +117,11 @@ export interface SystemHealth {
   latestVersion?: string;
   devices: PiDevice[];
 }
+
+export interface PiRelease {
+  version: string;
+  s3Key: string;
+  sizeBytes: number;
+  lastModified: string;
+  isLatest: boolean;
+}

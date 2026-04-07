@@ -91,8 +91,9 @@ SnoutSpotter/
 │   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions
 │   │   │   │   ├── TrainingExports.tsx# Training dataset export list and download
 │   │   │   │   ├── Models.tsx         # Classifier model version management: upload, list, activate
+│   │   │   │   ├── PiPackages.tsx    # Pi release version list, delete, and management
 │   │   │   │   ├── SystemHealth.tsx   # Landing page: API health + device summary table
-│   │   │   │   ├── DeviceDetail.tsx   # Per-device detail: status, services, camera, system, actions
+│   │   │   │   ├── DeviceDetail.tsx   # Per-device detail: status, version selector, services, camera, system, actions
 │   │   │   │   ├── DeviceConfig.tsx   # Per-device remote config editor (24 settings)
 │   │   │   │   ├── DeviceLogs.tsx     # Per-device log viewer with filters
 │   │   │   │   ├── DeviceShadow.tsx   # Raw IoT device shadow JSON viewer
@@ -311,8 +312,10 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/pi/{thingName}/shadow` — raw IoT device shadow JSON
 - `GET /api/pi/{thingName}/config` — current configurable settings
 - `POST /api/pi/{thingName}/config` — update device config (validated API-side + Pi-side)
-- `POST /api/pi/{thingName}/update` — trigger OTA update for one device
-- `POST /api/pi/update-all` — trigger OTA update for all devices
+- `POST /api/pi/{thingName}/update` — trigger OTA update for one device (optional `version` body param for specific version)
+- `POST /api/pi/update-all` — trigger OTA update for all devices (optional `version` body param)
+- `GET /api/pi/releases` — list all Pi release versions from S3 with size, date, and isLatest flag
+- `DELETE /api/pi/releases/{version}` — delete a release tarball from S3 (cannot delete latest)
 - `POST /api/pi/{thingName}/command` — send command (reboot, restart-*, clear-clips, clear-backups)
 - `GET /api/pi/{thingName}/command/{commandId}` — poll command result
 - `GET /api/pi/{thingName}/commands` — command history
