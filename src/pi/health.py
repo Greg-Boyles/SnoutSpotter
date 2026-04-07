@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STATUS_DIR = Path.home() / ".snoutspotter"
-SERVICES = ["snoutspotter-motion", "snoutspotter-uploader", "snoutspotter-agent"]
+SERVICES = ["snoutspotter-motion", "snoutspotter-uploader", "snoutspotter-agent", "snoutspotter-watchdog"]
 
 # Cached values that don't change at runtime
 _cached_pi_model = None

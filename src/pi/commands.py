@@ -18,6 +18,7 @@ ALLOWED_ACTIONS = {
     "restart-motion",
     "restart-uploader",
     "restart-agent",
+    "restart-watchdog",
     "reboot",
     "clear-clips",
     "clear-backups",
