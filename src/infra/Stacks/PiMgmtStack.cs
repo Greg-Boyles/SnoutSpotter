@@ -3,6 +3,7 @@ using Amazon.CDK.AWS.Apigatewayv2;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -11,8 +12,6 @@ public class PiMgmtStackProps : StackProps
 {
     public required Repository PiMgmtEcrRepo { get; init; }
     public required string ImageTag { get; init; }
-    public required string IoTThingGroupName { get; init; }
-    public required string IoTPolicyName { get; init; }
 }
 
 public class PiMgmtStack : Stack
@@ -20,6 +19,10 @@ public class PiMgmtStack : Stack
     public PiMgmtStack(Construct scope, string id, PiMgmtStackProps props) : base(scope, id, props)
     {
         var ecrRepo = props.PiMgmtEcrRepo;
+
+        // Read from SSM — written by IoTStack, resolved at deploy time (no cross-stack dependency)
+        var iotThingGroupName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/thing-group-name");
+        var iotPolicyName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/policy-name");
 
         // Lambda function for Pi Management API
         var piMgmtFunction = new DockerImageFunction(this, "PiMgmtFunction", new DockerImageFunctionProps
@@ -34,8 +37,8 @@ public class PiMgmtStack : Stack
             Timeout = Duration.Seconds(30),
             Environment = new Dictionary<string, string>
             {
-                ["IOT_THING_GROUP"] = props.IoTThingGroupName,
-                ["IOT_POLICY_NAME"] = props.IoTPolicyName,
+                ["IOT_THING_GROUP"] = iotThingGroupName,
+                ["IOT_POLICY_NAME"] = iotPolicyName,
                 ["AWS_LWA_PORT"] = "8080"
             }
         });

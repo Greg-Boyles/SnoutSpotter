@@ -5,6 +5,7 @@ using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.S3;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -20,7 +21,6 @@ public class ApiStackProps : StackProps
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
     public string InferenceFunctionName { get; init; } = "snout-spotter-run-inference";
-    public string BackfillQueueUrl { get; init; } = "";
     public required string ImageTag { get; init; }
     public string IoTThingGroupName { get; init; } = "snoutspotter-pis";
     public required string OktaIssuer { get; init; }
@@ -32,6 +32,9 @@ public class ApiStack : Stack
     public ApiStack(Construct scope, string id, ApiStackProps props) : base(scope, id, props)
     {
         var ecrRepo = props.ApiEcrRepo;
+
+        // Read from SSM — written by AutoLabelStack, resolved at deploy time (no cross-stack dependency)
+        var backfillQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/auto-label/backfill-queue-url");
 
         // Lambda function running ASP.NET Core API via Lambda Web Adapter
         var apiFunction = new DockerImageFunction(this, "ApiFunction", new DockerImageFunctionProps
@@ -56,7 +59,7 @@ public class ApiStack : Stack
                 ["COMMANDS_TABLE"] = props.CommandsTable.TableName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
                 ["AUTO_LABEL_FUNCTION"] = props.AutoLabelFunctionName,
-                ["BACKFILL_QUEUE_URL"] = props.BackfillQueueUrl,
+                ["BACKFILL_QUEUE_URL"] = backfillQueueUrl,
                 ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
                 ["EXPORT_DATASET_FUNCTION"] = props.ExportDatasetFunctionName,
                 ["INFERENCE_FUNCTION"] = props.InferenceFunctionName
@@ -120,15 +123,12 @@ public class ApiStack : Stack
         }));
 
         // SQS SendMessage for backfill queue
-        if (!string.IsNullOrEmpty(props.BackfillQueueUrl))
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
-            apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
-            {
-                Effect = Effect.ALLOW,
-                Actions = new[] { "sqs:SendMessage" },
-                Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-backfill-boxes" }
-            }));
-        }
+            Effect = Effect.ALLOW,
+            Actions = new[] { "sqs:SendMessage" },
+            Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-backfill-boxes" }
+        }));
 
         // IoT Publish for device commands
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps

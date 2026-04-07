@@ -249,10 +249,12 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 3. **IngestStack** — depends on CoreStack
 4. **InferenceStack** — depends on CoreStack
 5. **ApiStack** — depends on CoreStack, reads CDK context for `oktaIssuer`/`allowedOrigin`
-6. **PiMgmtStack** — depends on CoreStack, IoTStack
+6. **PiMgmtStack** — depends on CoreStack
 7. **WebStack** — standalone (S3 + CloudFront)
 8. **MonitoringStack** — depends on CoreStack
 9. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
+
+**IMPORTANT — No cross-stack dependencies between Lambda stacks.** Each Lambda stack must only depend on CoreStack (for ECR repos, tables, buckets). Never pass outputs from one Lambda stack to another via CDK props — this creates deploy-time coupling where deploying stack A forces CDK to also deploy stack B, which fails if stack B's Docker image wasn't built for the current commit. Instead, use SSM parameters: the source stack writes to `/snoutspotter/{stack}/{param}` and the consuming stack reads via `StringParameter.ValueForStringParameter()`, which resolves at CloudFormation deploy time without a CDK dependency. See IoTStack → PiMgmtStack and AutoLabelStack → ApiStack for examples.
 
 **Key resources by stack:**
 
