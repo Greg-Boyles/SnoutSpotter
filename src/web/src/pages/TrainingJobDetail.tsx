@@ -231,7 +231,7 @@ export default function TrainingJobDetail() {
                 </div>
               )}
             </div>
-            {result.model_s3_key && (
+            {!!result.model_s3_key && (
               <button
                 onClick={handleActivate}
                 disabled={activating}

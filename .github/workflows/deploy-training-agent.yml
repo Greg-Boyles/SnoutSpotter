@@ -1,0 +1,20 @@
+name: Deploy Training Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/training-agent/**"
+      - ".github/workflows/deploy-training-agent.yml"
+      - ".github/workflows/build-training-agent-image.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    name: Build image
+    uses: ./.github/workflows/build-training-agent-image.yml
+    secrets: inherit
