@@ -65,6 +65,14 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": bool,
         "affects": "uploader",
     },
+    "upload.min_free_disk_mb": {
+        "type": int, "min": 100, "max": 10000,
+        "affects": "uploader",
+    },
+    "upload.ledger_retention_days": {
+        "type": int, "min": 1, "max": 90,
+        "affects": "uploader",
+    },
     "health.interval_seconds": {
         "type": int, "min": 60, "max": 3600,
         "affects": "agent",
