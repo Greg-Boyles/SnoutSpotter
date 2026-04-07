@@ -1,7 +1,9 @@
 """OTA update logic — download, extract, install deps, restart services."""
 
+import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tarfile
@@ -176,6 +178,36 @@ def install_custom_debs(old_version: str | None, bucket: str, region: str, sessi
                 local_path.unlink()
 
 
+def verify_checksum(filepath: Path, expected_sha256: str) -> bool:
+    """Verify SHA256 checksum of a downloaded file."""
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    actual = sha256.hexdigest()
+    if actual != expected_sha256:
+        logger.error(f"Checksum mismatch: expected {expected_sha256}, got {actual}")
+        return False
+    logger.info(f"Checksum verified: {actual}")
+    return True
+
+
+def safe_extract(tar: tarfile.TarFile, dest: Path) -> list[tarfile.TarInfo]:
+    """Extract tar members, skipping config.yaml and rejecting path traversal."""
+    dest = dest.resolve()
+    safe_members = []
+    for member in tar.getmembers():
+        if member.name in ("./config.yaml", "config.yaml"):
+            continue
+        member_path = (dest / member.name).resolve()
+        if not str(member_path).startswith(str(dest) + os.sep) and member_path != dest:
+            logger.warning(f"Skipping tar member with path traversal: {member.name}")
+            continue
+        safe_members.append(member)
+    tar.extractall(path=dest, members=safe_members)
+    return safe_members
+
+
 def restart_services():
     for svc in SERVICES:
         try:
@@ -198,12 +230,23 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
         s3 = (session or boto3).client("s3", region_name=region)
         s3.download_file(bucket, s3_key, str(local_path))
 
+        # Verify checksum if available (stored as S3 object metadata)
+        try:
+            head = s3.head_object(Bucket=bucket, Key=s3_key)
+            expected_sha256 = head.get("Metadata", {}).get("sha256")
+            if expected_sha256:
+                if not verify_checksum(local_path, expected_sha256):
+                    raise RuntimeError(f"Checksum verification failed for {s3_key}")
+            else:
+                logger.warning("No sha256 metadata on release — skipping checksum verification")
+        except s3.exceptions.ClientError as e:
+            logger.warning(f"Could not fetch object metadata for checksum: {e}")
+
         backup_current(old_version)
 
         logger.info(f"Extracting to {INSTALL_DIR}")
         with tarfile.open(local_path, "r:gz") as tar:
-            members = [m for m in tar.getmembers() if m.name not in ("./config.yaml", "config.yaml")]
-            tar.extractall(path=INSTALL_DIR, members=members)
+            safe_extract(tar, INSTALL_DIR)
 
         install_system_deps(old_version)
         install_custom_debs(old_version, bucket, region, session)
