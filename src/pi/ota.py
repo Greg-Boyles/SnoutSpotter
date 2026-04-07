@@ -208,6 +208,79 @@ def safe_extract(tar: tarfile.TarFile, dest: Path) -> list[tarfile.TarInfo]:
     return safe_members
 
 
+# Maps service short name to its Python script and description.
+# Used to generate systemd service files for new services during OTA.
+SERVICE_MANIFEST = {
+    "motion":   {"script": "motion_detector.py", "desc": "Motion Detection"},
+    "uploader": {"script": "uploader.py",        "desc": "Upload"},
+    "agent":    {"script": "agent.py",           "desc": "Health & OTA Agent"},
+    "watchdog": {"script": "watchdog.py",        "desc": "Service Watchdog"},
+}
+
+SYSTEMD_UNIT_TEMPLATE = """\
+[Unit]
+Description=SnoutSpotter {desc} Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={work_dir}
+ExecStart=/usr/bin/python3 {work_dir}/{script}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def sync_service_files():
+    """Create and enable systemd service files for any services missing from /etc/systemd/system.
+
+    This allows OTA to deliver new services (e.g. watchdog) without requiring
+    a full re-run of setup-pi.sh.
+    """
+    user = os.environ.get("USER", "pi")
+    work_dir = str(INSTALL_DIR)
+    created = []
+
+    for short_name, info in SERVICE_MANIFEST.items():
+        svc_name = f"snoutspotter-{short_name}"
+        unit_path = Path(f"/etc/systemd/system/{svc_name}.service")
+
+        if unit_path.exists():
+            continue
+
+        # Only create if the script actually exists in the package
+        script_path = INSTALL_DIR / info["script"]
+        if not script_path.exists():
+            continue
+
+        unit_content = SYSTEMD_UNIT_TEMPLATE.format(
+            desc=info["desc"],
+            user=user,
+            work_dir=work_dir,
+            script=info["script"],
+        )
+
+        tmp_path = Path(f"/tmp/{svc_name}.service")
+        tmp_path.write_text(unit_content)
+        subprocess.run(["sudo", "cp", str(tmp_path), str(unit_path)], timeout=5, check=True)
+        tmp_path.unlink(missing_ok=True)
+
+        subprocess.run(["sudo", "systemctl", "enable", svc_name], timeout=10, check=True)
+        created.append(svc_name)
+        logger.info(f"Created and enabled new service: {svc_name}")
+
+    if created:
+        subprocess.run(["sudo", "systemctl", "daemon-reload"], timeout=10, check=True)
+        logger.info(f"Synced {len(created)} new service file(s): {created}")
+
+
 def restart_services():
     for svc in SERVICES:
         try:
@@ -259,6 +332,7 @@ def apply_update(version: str, bucket: str, region: str, connection, thing_name:
         )
 
         save_version(version)
+        sync_service_files()
         restart_services()
 
         logger.info("Waiting 30 seconds for services to stabilize...")
