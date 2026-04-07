@@ -452,8 +452,8 @@ Triggered on changes to `src/training-agent/**` only (not `src/ml/`):
 
 Triggered on changes to `src/ml/**`:
 1. Package training scripts into a versioned tarball
-2. Upload to S3: `releases/ml-scripts/v{version}.tar.gz`
-3. Write version manifest: `releases/ml-scripts/latest.json`
+2. Upload to S3: `releases/ml-training/v{version}.tar.gz`
+3. Write version manifest: `releases/ml-training/latest.json`
 
 ```yaml
 name: Package ML Scripts
@@ -481,7 +481,7 @@ jobs:
       - name: Get next version
         id: version
         run: |
-          CURRENT=$(aws s3 cp s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-scripts/latest.json - 2>/dev/null | jq -r '.version // "0"')
+          CURRENT=$(aws s3 cp s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-training/latest.json - 2>/dev/null | jq -r '.version // "0"')
           NEXT=$((CURRENT + 1))
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
 
@@ -495,9 +495,9 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
           aws s3 cp ml-scripts-v${VERSION}.tar.gz \
-            s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-scripts/v${VERSION}.tar.gz
+            s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-training/v${VERSION}.tar.gz
           echo "{\"version\":\"${VERSION}\",\"published_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" | \
-            aws s3 cp - s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-scripts/latest.json
+            aws s3 cp - s3://${{ secrets.DATA_BUCKET_NAME }}/releases/ml-training/latest.json
 ```
 
 **S3 layout:**
@@ -561,7 +561,7 @@ agent.Run(); // blocking main loop
 public class JobRunner
 {
     private const string MlScriptsDir = "/app/ml";
-    private const string MlScriptsManifestKey = "releases/ml-scripts/latest.json";
+    private const string MlScriptsManifestKey = "releases/ml-training/latest.json";
 
     public async Task RunJobAsync(TrainingJobConfig job, CancellationToken ct)
     {
@@ -604,7 +604,7 @@ public class JobRunner
 
     /// <summary>
     /// Downloads training scripts from S3 if a newer version is available.
-    /// Checks releases/ml-scripts/latest.json for current version, compares
+    /// Checks releases/ml-training/latest.json for current version, compares
     /// against a local version file in /app/ml/version.json. Skips download
     /// if already up to date (fast path for back-to-back jobs).
     /// </summary>
@@ -629,7 +629,7 @@ public class JobRunner
 
         // 3. Download and extract
         _logger.LogInformation($"Downloading ML scripts v{latest.Version}");
-        var tarKey = $"releases/ml-scripts/v{latest.Version}.tar.gz";
+        var tarKey = $"releases/ml-training/v{latest.Version}.tar.gz";
         // Download tar.gz, extract to /app/ml/
         await DownloadAndExtractAsync(tarKey, MlScriptsDir, ct);
 
