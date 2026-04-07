@@ -59,26 +59,153 @@ Updates are **shadow-triggered** — the dashboard writes a desired version to t
 
 ### 1.1 IoT Thing Registration
 
-Extend the PiMgmt API to support a `training-agent` device type.
+Add a **separate registration endpoint** for training agents. Keep the existing Pi device
+endpoint (`POST /api/devices/register`) unchanged. Refactor shared provisioning logic into
+a reusable service.
 
-**File:** `src/lambdas/SnoutSpotter.Lambda.PiMgmt/Controllers/DevicesController.cs`
+#### Refactor: Extract shared provisioning logic
 
-- `POST /api/devices/register` — accept `{"name": "desktop-gpu", "type": "training-agent"}`
-- Thing name: `snoutspotter-trainer-{name}` (e.g. `snoutspotter-trainer-desktop-gpu`)
-- Same registration flow: create IoT Thing, generate X.509 certs, attach policy
-- Return certs, IoT endpoint, and credential provider endpoint
+**File:** `src/lambdas/SnoutSpotter.Lambda.PiMgmt/Services/DeviceProvisioningService.cs`
 
-### 1.2 Training Agent IoT Policy
+The current `RegisterAsync` method hardcodes the Pi thing group and policy. Refactor into
+a lower-level method that accepts group and policy as parameters:
+
+```csharp
+// Existing public method — unchanged, keeps Pi behavior
+public async Task<DeviceRegistrationResult> RegisterAsync(string thingName)
+    => await ProvisionThingAsync(thingName, _thingGroupName, _policyName);
+
+// New public method — training agent with different group + policy
+public async Task<DeviceRegistrationResult> RegisterTrainerAsync(string thingName)
+    => await ProvisionThingAsync(thingName, _trainerThingGroupName, _trainerPolicyName);
+
+// Shared private method — all the IoT provisioning logic lives here
+private async Task<DeviceRegistrationResult> ProvisionThingAsync(
+    string thingName, string thingGroupName, string policyName)
+{
+    // 1. Create IoT Thing
+    // 2. Create keys and certificate
+    // 3. Attach policy to certificate
+    // 4. Attach certificate to thing
+    // 5. Add thing to group
+    // 6. Get IoT endpoints
+    // (same logic as today, parameterised by group/policy)
+}
+```
+
+Similarly, `DeregisterAsync` and `ListDevicesAsync` should accept group/policy parameters:
+
+```csharp
+public async Task DeregisterTrainerAsync(string thingName)
+    => await DeprovisionThingAsync(thingName, _trainerThingGroupName, _trainerPolicyName);
+
+public async Task<List<string>> ListTrainersAsync()
+    => await ListThingsInGroupAsync(_trainerThingGroupName);
+```
+
+Constructor reads both sets of config:
+```csharp
+public DeviceProvisioningService(IAmazonIoT iot, IConfiguration configuration)
+{
+    _iot = iot;
+
+    // Pi devices (existing)
+    _thingGroupName = configuration["IOT_THING_GROUP"]!;
+    _policyName = configuration["IOT_POLICY_NAME"]!;
+
+    // Training agents (new)
+    _trainerThingGroupName = configuration["IOT_TRAINER_THING_GROUP"]
+        ?? "snoutspotter-trainers";
+    _trainerPolicyName = configuration["IOT_TRAINER_POLICY_NAME"]
+        ?? "snoutspotter-trainer-policy";
+
+    _region = configuration["AWS_REGION"] ?? "eu-west-1";
+}
+```
+
+#### New controller: TrainersController
+
+**File:** `src/lambdas/SnoutSpotter.Lambda.PiMgmt/Controllers/TrainersController.cs` (new)
+
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class TrainersController : ControllerBase
+{
+    private readonly DeviceProvisioningService _provisioningService;
+
+    [HttpGet]
+    public async Task<ActionResult> ListTrainers()
+    {
+        var trainers = await _provisioningService.ListTrainersAsync();
+        return Ok(new { trainers });
+    }
+
+    [HttpPost("register")]
+    public async Task<ActionResult> RegisterTrainer([FromBody] RegisterTrainerRequest request)
+    {
+        // Validate name
+        var thingName = $"snoutspotter-trainer-{request.Name}";
+        // Same sanitisation as Pi registration
+
+        var result = await _provisioningService.RegisterTrainerAsync(thingName);
+        return Ok(result);
+    }
+
+    [HttpDelete("{thingName}")]
+    public async Task<ActionResult> DeregisterTrainer(string thingName)
+    {
+        await _provisioningService.DeregisterTrainerAsync(thingName);
+        return Ok(new { message = $"Trainer '{thingName}' deregistered" });
+    }
+}
+
+public record RegisterTrainerRequest(string Name);
+```
+
+Endpoints:
+```
+GET    /api/trainers              — list registered training agents
+POST   /api/trainers/register     — register new training agent
+DELETE /api/trainers/{thingName}  — deregister training agent
+```
+
+The existing Pi endpoints remain unchanged:
+```
+GET    /api/devices               — list Pi devices (unchanged)
+POST   /api/devices/register      — register Pi device (unchanged)
+DELETE /api/devices/{thingName}   — deregister Pi device (unchanged)
+```
+
+### 1.2 IoT Resources for Training Agents
 
 **File:** `src/infra/Stacks/IoTStack.cs`
 
-Add policy permissions for training agent things:
+Add separate resources for training agents (parallel to Pi resources):
+
+**Thing Group:** `snoutspotter-trainers`
+- Keeps training agents separate from Pi devices in IoT Console
+- `ListThingsInThingGroup` queries return only the relevant device type
+
+**IoT Policy:** `snoutspotter-trainer-policy`
+- Scoped permissions for training agents only:
 ```
 - iot:Connect (client ID: snoutspotter-trainer-*)
-- iot:Subscribe/Receive (shadow topics + snoutspotter/trainer/*/progress)
-- iot:Publish (shadow update + progress topics)
-- s3:GetObject (export datasets)
-- s3:PutObject (trained models)
+- iot:Subscribe/Receive (shadow topics for snoutspotter-trainer-* + snoutspotter/trainer/*/progress)
+- iot:Publish (shadow update + progress topics for snoutspotter-trainer-*)
+```
+
+**Credential Provider Role:** reuse existing `snoutspotter-pi-role-alias` or create a
+dedicated `snoutspotter-trainer-role-alias` with:
+```
+- s3:GetObject on training-exports/*
+- s3:PutObject on models/*
+```
+
+**Environment variables** added to PiMgmt Lambda:
+```
+IOT_TRAINER_THING_GROUP=snoutspotter-trainers
+IOT_TRAINER_POLICY_NAME=snoutspotter-trainer-policy
 ```
 
 ### 1.3 Agent Shadow Reported State
@@ -584,10 +711,10 @@ read -rp "Pi Management API URL: " PI_MGMT_URL
 read -rp "AWS Region [eu-west-1]: " AWS_REGION
 AWS_REGION="${AWS_REGION:-eu-west-1}"
 
-# 3. Register agent
-RESPONSE=$(curl -s -X POST "$PI_MGMT_URL/api/devices/register" \
+# 3. Register agent (uses separate /api/trainers endpoint)
+RESPONSE=$(curl -s -X POST "$PI_MGMT_URL/api/trainers/register" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"$AGENT_NAME\", \"type\": \"training-agent\"}")
+    -d "{\"name\": \"$AGENT_NAME\"}")
 
 # 4. Extract certs, IoT endpoint, credential provider endpoint
 # (same pattern as Pi setup-pi.sh)
@@ -756,8 +883,8 @@ Before activating, show a comparison table:
 | Step | Phase | Description | Effort | Dependencies |
 |------|-------|-------------|--------|--------------|
 | 1 | 2.1 | Create training-jobs DynamoDB table + ECR repo | 1h | None |
-| 2 | 1.1 | Extend PiMgmt registration for training-agent type | 2h | None |
-| 3 | 1.2 | Add IoT policy for training agent things | 1h | Step 2 |
+| 2 | 1.1 | Refactor DeviceProvisioningService + add TrainersController | 3h | None |
+| 3 | 1.2 | Add IoT thing group + policy + env vars for training agents | 1h | Step 2 |
 | 4 | 3.1 | Create TrainingController API endpoints | 3h | Step 1 |
 | 5 | 4.1 | Build Docker image (multi-stage .NET + Python/CUDA) | 3h | None |
 | 6 | 5.1-5.5 | Build .NET training agent (MQTT, job runner, progress parser, GPU info) | 8h | Steps 2, 3 |
@@ -772,7 +899,7 @@ Before activating, show a comparison table:
 | 15 | 9.1 | One-click model activation from job detail | 1h | Step 12 |
 | 16 | — | End-to-end testing | 3h | All |
 
-**Total estimated effort: ~35 hours across 16 steps**
+**Total estimated effort: ~36 hours across 16 steps**
 
 ---
 
