@@ -1,0 +1,52 @@
+name: Package ML training scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/ml/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: "eu-west-1"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Compute version
+        id: version
+        run: |
+          BUCKET=${{ secrets.DATA_BUCKET_NAME }}
+          CURRENT=$(aws s3 cp s3://${BUCKET}/releases/ml-training/latest.json - 2>/dev/null | jq -r '.version // "0"' || echo "0")
+          NEXT=$((CURRENT + 1))
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "ML training scripts version: $NEXT"
+
+      - name: Package scripts
+        run: |
+          tar -czf ml-training-v${{ steps.version.outputs.version }}.tar.gz \
+            -C src/ml \
+            train_detector.py verify_onnx.py
+
+      - name: Upload to S3
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          BUCKET=${{ secrets.DATA_BUCKET_NAME }}
+          aws s3 cp ml-training-v${VERSION}.tar.gz \
+            s3://${BUCKET}/releases/ml-training/v${VERSION}.tar.gz
+          echo "{\"version\":\"${VERSION}\",\"published_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" | \
+            aws s3 cp - s3://${BUCKET}/releases/ml-training/latest.json
+          echo "Published ml-training v${VERSION}"
