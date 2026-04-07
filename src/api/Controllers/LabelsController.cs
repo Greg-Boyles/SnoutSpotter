@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Services.Interfaces;
+using SnoutSpotter.Contracts;
 
 namespace SnoutSpotter.Api.Controllers;
 
@@ -352,7 +353,7 @@ public class LabelsController : ControllerBase
             var entries = batch.Select((clipId, i) => new Amazon.SQS.Model.SendMessageBatchRequestEntry
             {
                 Id = i.ToString(),
-                MessageBody = System.Text.Json.JsonSerializer.Serialize(new { clipId })
+                MessageBody = System.Text.Json.JsonSerializer.Serialize(new InferenceMessage(clipId))
             }).ToList();
 
             await sqsClient.SendMessageBatchAsync(new Amazon.SQS.Model.SendMessageBatchRequest

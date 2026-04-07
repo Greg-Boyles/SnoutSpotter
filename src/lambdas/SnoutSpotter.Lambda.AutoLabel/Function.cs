@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using SnoutSpotter.Contracts;
 using Amazon.Lambda.Core;
 using Amazon.Lambda.Serialization.SystemTextJson;
 using Amazon.S3;
@@ -46,15 +47,16 @@ public class Function
     {
         await EnsureModelLoaded(context);
 
-        // SQS event: { "Records": [ { "body": "<json array of keyframe keys>" }, ... ] }
+        // SQS event: { "Records": [ { "body": "{\"KeyframeKeys\":[...]}" }, ... ] }
         if (request.TryGetProperty("Records", out var records))
         {
             var allKeys = new List<string>();
             foreach (var record in records.EnumerateArray())
             {
-                var body = record.GetProperty("body").GetString() ?? "[]";
-                var keys = System.Text.Json.JsonSerializer.Deserialize<List<string>>(body) ?? [];
-                allKeys.AddRange(keys);
+                var body = record.GetProperty("body").GetString() ?? "{}";
+                var msg = JsonSerializer.Deserialize<BackfillMessage>(body);
+                if (msg?.KeyframeKeys != null)
+                    allKeys.AddRange(msg.KeyframeKeys);
             }
             context.Logger.LogInformation($"SQS trigger: {allKeys.Count} keys to reprocess");
             return await ReprocessHandler(allKeys, context);
