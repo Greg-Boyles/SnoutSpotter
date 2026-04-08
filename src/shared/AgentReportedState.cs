@@ -33,4 +33,12 @@ public class AgentReportedState
     [JsonPropertyName("deferReason")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? DeferReason { get; init; }
+
+    [JsonPropertyName("currentJobId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CurrentJobId { get; init; }
+
+    [JsonPropertyName("currentJobProgress")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public TrainingProgress? CurrentJobProgress { get; init; }
 }
