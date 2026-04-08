@@ -3,7 +3,7 @@ using Amazon.IoT.Model;
 
 namespace SnoutSpotter.Lambda.PiMgmt.Services;
 
-public class DeviceProvisioningService
+public class DeviceProvisioningService : IDeviceProvisioningService
 {
     private readonly IAmazonIoT _iot;
     private readonly string _piThingGroupName;
@@ -12,6 +12,7 @@ public class DeviceProvisioningService
     private readonly string _trainerPolicyName;
 
     private readonly string? _dataBucket;
+    private readonly string? _trainingJobQueueUrl;
 
     public DeviceProvisioningService(IAmazonIoT iot, IConfiguration configuration)
     {
@@ -23,6 +24,7 @@ public class DeviceProvisioningService
         _trainerThingGroupName = configuration["IOT_TRAINER_THING_GROUP"] ?? "snoutspotter-trainers";
         _trainerPolicyName = configuration["IOT_TRAINER_POLICY_NAME"] ?? "snoutspotter-trainer-policy";
         _dataBucket = configuration["DATA_BUCKET"];
+        _trainingJobQueueUrl = configuration["TRAINING_JOB_QUEUE_URL"];
     }
 
     // ── Pi devices ──
@@ -105,7 +107,8 @@ public class DeviceProvisioningService
                     IoTEndpoint = dataEndpointTask.Result.EndpointAddress,
                     CredentialProviderEndpoint = credEndpointTask.Result.EndpointAddress,
                     RootCaUrl = "https://www.amazontrust.com/repository/AmazonRootCA1.pem",
-                    S3Bucket = _dataBucket
+                    S3Bucket = _dataBucket,
+                    TrainingJobQueueUrl = _trainingJobQueueUrl
                 };
             }
             catch

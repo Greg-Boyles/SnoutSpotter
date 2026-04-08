@@ -10,4 +10,5 @@ public class DeviceRegistrationResult
     public required string CredentialProviderEndpoint { get; init; }
     public required string RootCaUrl { get; init; }
     public string? S3Bucket { get; init; }
+    public string? TrainingJobQueueUrl { get; init; }
 }
