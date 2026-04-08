@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Text.Json;
 using Amazon.S3;
 using Amazon.S3.Transfer;
+using Contracts = SnoutSpotter.Contracts;
 using SnoutSpotter.Shared.Training;
 
 namespace SnoutSpotter.TrainingAgent;
@@ -30,6 +31,28 @@ public class JobRunner
         _logger = logger;
     }
 
+    /// <summary>Run from SQS message (new queue-based dispatch).</summary>
+    public Task RunAsync(Contracts.TrainingJobMessage msg, CancellationToken ct)
+    {
+        var job = new TrainingJobDesired
+        {
+            JobId = msg.JobId,
+            ExportS3Key = msg.ExportS3Key,
+            Config = new TrainingJobParams
+            {
+                Epochs = msg.Config.Epochs,
+                BatchSize = msg.Config.BatchSize,
+                ImageSize = msg.Config.ImageSize,
+                LearningRate = msg.Config.LearningRate,
+                Workers = msg.Config.Workers,
+                ModelBase = msg.Config.ModelBase,
+                ResumeFrom = msg.Config.ResumeFrom
+            }
+        };
+        return RunAsync(job, ct);
+    }
+
+    /// <summary>Run from shadow desired state (legacy).</summary>
     public async Task RunAsync(TrainingJobDesired job, CancellationToken ct)
     {
         var datasetDir = Path.Combine(DataDir, job.JobId);

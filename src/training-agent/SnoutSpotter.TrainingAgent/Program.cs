@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Amazon.S3;
+using Amazon.SQS;
 using SnoutSpotter.Shared.Training;
 using SnoutSpotter.TrainingAgent;
 using SnoutSpotter.TrainingAgent.Models;
@@ -41,8 +44,11 @@ var config = deserializer.Deserialize<AgentConfig>(File.ReadAllText(ConfigPath))
 var thingName = config.IoT.ThingName;
 logger.LogInformation("Thing name: {ThingName}", thingName);
 
-// S3 client
-var s3 = new AmazonS3Client(Amazon.RegionEndpoint.GetBySystemName(config.S3.Region));
+// AWS clients
+var region = Amazon.RegionEndpoint.GetBySystemName(config.S3.Region);
+var s3 = new AmazonS3Client(region);
+var sqs = new AmazonSQSClient(region);
+var dynamoDb = new AmazonDynamoDBClient(region);
 
 // Discover S3 bucket if not set in config
 if (string.IsNullOrEmpty(config.S3.Bucket))
@@ -54,7 +60,13 @@ if (string.IsNullOrEmpty(config.S3.Bucket))
     logger.LogInformation("Discovered S3 bucket: {Bucket}", config.S3.Bucket);
 }
 
-// MQTT connection
+var queueUrl = config.Training?.JobQueueUrl
+    ?? Environment.GetEnvironmentVariable("TRAINING_JOB_QUEUE_URL")
+    ?? throw new InvalidOperationException("Training job queue URL not configured");
+
+var trainingJobsTable = config.Training?.JobsTable ?? "snout-spotter-training-jobs";
+
+// MQTT connection (for progress reporting + shadow + cancel)
 await using var mqtt = new MqttManager(
     config.IoT.Endpoint,
     config.IoT.CertPath,
@@ -67,15 +79,16 @@ await mqtt.ConnectAsync();
 
 // State
 var jobRunner = new JobRunner(s3, config.S3.Bucket, mqtt, thingName, logger);
-TrainingJobDesired? pendingJob = null;
+var sqsConsumer = new SqsJobConsumer(sqs, queueUrl, logger);
 string? pendingCancel = null;
 string? pendingUpdate = null;
 var forceUpdate = false;
 var cts = new CancellationTokenSource();
 var jobCts = new CancellationTokenSource();
 var isTraining = false;
+string? currentJobId = null;
 
-// Shadow delta handler
+// Shadow delta handler — only for cancel + update commands (NOT job dispatch)
 async Task OnShadowDelta(string topic, string payload)
 {
     try
@@ -83,12 +96,6 @@ async Task OnShadowDelta(string topic, string payload)
         var delta = JsonSerializer.Deserialize<ShadowDeltaMessage<AgentDesiredState>>(payload);
         if (delta?.State == null) return;
         var state = delta.State;
-
-        if (state.TrainingJob is { } job)
-        {
-            pendingJob = job;
-            logger.LogInformation("Training job received: {JobId}", job.JobId);
-        }
 
         if (state.CancelJob is { } cancelJobId)
         {
@@ -109,54 +116,37 @@ async Task OnShadowDelta(string topic, string payload)
     }
 }
 
-// Subscribe to shadow delta
 var deltaTopic = $"$aws/things/{thingName}/shadow/update/delta";
 await mqtt.SubscribeAsync(deltaTopic, OnShadowDelta);
-
-// Request current shadow to catch pending deltas from while offline
-var getAcceptedTopic = $"$aws/things/{thingName}/shadow/get/accepted";
-await mqtt.SubscribeAsync(getAcceptedTopic, async (_, payload) =>
-{
-    try
-    {
-        var doc = JsonDocument.Parse(payload);
-        if (doc.RootElement.TryGetProperty("state", out var state) &&
-            state.TryGetProperty("delta", out var delta))
-        {
-            await OnShadowDelta("", JsonSerializer.Serialize(new { state = delta }));
-        }
-    }
-    catch (Exception ex)
-    {
-        logger.LogError("Error processing shadow get: {Error}", ex.Message);
-    }
-});
 
 await mqtt.PublishAsync($"$aws/things/{thingName}/shadow/get", "");
 logger.LogInformation("Requested current shadow for pending deltas");
 
-// Report initial shadow
-async Task ReportShadow(string status = "idle", string? updateStatus = null, string? deferredVersion = null, string? deferReason = null)
+// Report shadow
+async Task ReportShadow(string status = "idle", string? jobId = null,
+    TrainingProgress? jobProgress = null,
+    string? updateStatus = null, string? deferredVersion = null, string? deferReason = null)
 {
     var reported = new AgentReportedState
     {
-        AgentVersion    = "1.0.0",
-        Hostname        = Dns.GetHostName(),
-        LastHeartbeat   = DateTime.UtcNow.ToString("O"),
-        Status          = status,
-        UpdateStatus    = updateStatus ?? "idle",
-        Gpu             = GpuInfo.GetStatus(),
-        DeferredVersion = deferredVersion,
-        DeferReason     = deferReason
+        AgentVersion        = "1.0.0",
+        Hostname            = Dns.GetHostName(),
+        LastHeartbeat       = DateTime.UtcNow.ToString("O"),
+        Status              = status,
+        UpdateStatus        = updateStatus ?? "idle",
+        Gpu                 = GpuInfo.GetStatus(),
+        CurrentJobId        = jobId,
+        CurrentJobProgress  = jobProgress,
+        DeferredVersion     = deferredVersion,
+        DeferReason         = deferReason
     };
     var payload = JsonSerializer.Serialize(ShadowReportedUpdate<AgentReportedState>.From(reported));
     await mqtt.PublishAsync($"$aws/things/{thingName}/shadow/update", payload);
 }
 
 await ReportShadow();
-logger.LogInformation("Agent started. Waiting for training jobs...");
+logger.LogInformation("Agent started. Polling SQS for training jobs...");
 
-// Main loop
 var lastHeartbeat = DateTime.UtcNow;
 
 try
@@ -166,11 +156,11 @@ try
         // Heartbeat every 5 minutes
         if ((DateTime.UtcNow - lastHeartbeat).TotalMinutes >= 5)
         {
-            await ReportShadow(isTraining ? "training" : "idle");
+            await ReportShadow(isTraining ? "training" : "idle", currentJobId);
             lastHeartbeat = DateTime.UtcNow;
         }
 
-        // Handle cancel
+        // Handle cancel (from shadow)
         if (pendingCancel != null)
         {
             jobRunner.Cancel();
@@ -178,7 +168,7 @@ try
             pendingCancel = null;
         }
 
-        // Handle update
+        // Handle update (from shadow)
         if (pendingUpdate != null)
         {
             if (!isTraining || forceUpdate)
@@ -198,48 +188,86 @@ try
             else
             {
                 logger.LogInformation("Update deferred — training in progress");
-                await ReportShadow("training", "deferred", pendingUpdate,
-                    $"Training job in progress");
-                // Don't clear pendingUpdate — will apply after job finishes
+                await ReportShadow("training", currentJobId, updateStatus: "deferred",
+                    deferredVersion: pendingUpdate, deferReason: "Training job in progress");
             }
         }
 
-        // Handle new job
-        if (pendingJob != null && !isTraining)
+        // Poll SQS for a job (if not already training)
+        if (!isTraining)
         {
-            var job = pendingJob;
-            pendingJob = null;
-            isTraining = true;
-            jobCts = new CancellationTokenSource();
-
-            await ReportShadow("training");
-
-            try
+            var result = await sqsConsumer.PollAsync(cts.Token);
+            if (result is var (job, receiptHandle))
             {
-                await jobRunner.RunAsync(job, jobCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                logger.LogInformation("Training job cancelled");
-            }
-            catch (Exception ex)
-            {
-                logger.LogError("Training job failed: {Error}", ex.Message);
-            }
+                isTraining = true;
+                currentJobId = job.JobId;
+                jobCts = new CancellationTokenSource();
 
-            isTraining = false;
-            await ReportShadow("idle");
+                // Self-assign in DynamoDB
+                try
+                {
+                    await dynamoDb.UpdateItemAsync(new UpdateItemRequest
+                    {
+                        TableName = trainingJobsTable,
+                        Key = new Dictionary<string, AttributeValue>
+                        {
+                            ["job_id"] = new() { S = job.JobId }
+                        },
+                        UpdateExpression = "SET agent_thing_name = :agent",
+                        ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                        {
+                            [":agent"] = new() { S = thingName }
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning("Failed to self-assign job: {Error}", ex.Message);
+                }
 
-            // Apply deferred update now that job is done
-            if (pendingUpdate != null)
-            {
-                logger.LogInformation("Applying deferred update to v{Version}", pendingUpdate);
-                await ReportShadow(updateStatus: "updating");
-                Environment.Exit(ExitCodeUpdate);
+                await ReportShadow("training", job.JobId);
+
+                // Start visibility extender (extends every 10 min during training)
+                var visibilityCts = sqsConsumer.StartVisibilityExtender(receiptHandle);
+
+                try
+                {
+                    await jobRunner.RunAsync(job, jobCts.Token);
+                    // Success — delete message from queue
+                    await sqsConsumer.DeleteAsync(receiptHandle);
+                    logger.LogInformation("Job {JobId} completed, SQS message deleted", job.JobId);
+                }
+                catch (OperationCanceledException)
+                {
+                    logger.LogInformation("Training job cancelled — message returns to queue");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError("Training job failed: {Error} — message returns to queue", ex.Message);
+                }
+                finally
+                {
+                    visibilityCts.Cancel();
+                    visibilityCts.Dispose();
+                }
+
+                isTraining = false;
+                currentJobId = null;
+                await ReportShadow("idle");
+
+                // Apply deferred update
+                if (pendingUpdate != null)
+                {
+                    logger.LogInformation("Applying deferred update to v{Version}", pendingUpdate);
+                    await ReportShadow(updateStatus: "updating");
+                    Environment.Exit(ExitCodeUpdate);
+                }
             }
         }
-
-        await Task.Delay(2000, cts.Token);
+        else
+        {
+            await Task.Delay(2000, cts.Token);
+        }
     }
 }
 catch (OperationCanceledException) { }
