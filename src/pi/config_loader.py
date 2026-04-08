@@ -68,6 +68,13 @@ def load_config() -> dict:
             overrides = yaml.safe_load(f) or {}
         deep_merge(config, overrides)
 
+    # Auto-convert legacy list resolutions to strings (e.g. [1920, 1080] → "1920x1080")
+    for section, key in [("camera", "preview_resolution"), ("camera", "record_resolution"), ("streaming", "resolution")]:
+        val = config.get(section, {}).get(key)
+        if isinstance(val, list) and len(val) == 2:
+            config[section][key] = f"{val[0]}x{val[1]}"
+            logger.info(f"Auto-converted {section}.{key} from list to string: {config[section][key]}")
+
     errors = validate_config(config)
     if errors:
         for err in errors:
