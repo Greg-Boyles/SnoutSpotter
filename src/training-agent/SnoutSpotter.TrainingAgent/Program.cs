@@ -41,14 +41,21 @@ var deserializer = new DeserializerBuilder()
 
 var config = deserializer.Deserialize<AgentConfig>(File.ReadAllText(ConfigPath));
 
-var thingName = config.IoT.ThingName;
+var thingName = config.Iot.ThingName;
 logger.LogInformation("Thing name: {ThingName}", thingName);
 
-// AWS clients
+// AWS clients — use IoT Credentials Provider (same pattern as Pi)
 var region = Amazon.RegionEndpoint.GetBySystemName(config.S3.Region);
-var s3 = new AmazonS3Client(region);
-var sqs = new AmazonSQSClient(region);
-var dynamoDb = new AmazonDynamoDBClient(region);
+var iotCreds = new IoTCredentialsProvider(
+    config.CredentialsProvider.Endpoint,
+    config.CredentialsProvider.RoleAlias,
+    config.Iot.ThingName,
+    config.Iot.CertPath,
+    config.Iot.KeyPath,
+    logger);
+var s3 = new AmazonS3Client(iotCreds, region);
+var sqs = new AmazonSQSClient(iotCreds, region);
+var dynamoDb = new AmazonDynamoDBClient(iotCreds, region);
 
 // Discover S3 bucket if not set in config
 if (string.IsNullOrEmpty(config.S3.Bucket))
@@ -68,10 +75,10 @@ var trainingJobsTable = config.Training?.JobsTable ?? "snout-spotter-training-jo
 
 // MQTT connection (for progress reporting + shadow + cancel)
 await using var mqtt = new MqttManager(
-    config.IoT.Endpoint,
-    config.IoT.CertPath,
-    config.IoT.KeyPath,
-    config.IoT.RootCaPath,
+    config.Iot.Endpoint,
+    config.Iot.CertPath,
+    config.Iot.KeyPath,
+    config.Iot.RootCaPath,
     thingName,
     logger);
 

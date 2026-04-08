@@ -21,6 +21,7 @@ public class IoTStack : Stack
     public string RoleAliasName { get; }
     public string TrainerThingGroupName { get; }
     public string TrainerPolicyName { get; }
+    public string TrainerRoleAliasName { get; }
 
     public IoTStack(Construct scope, string id, IoTStackProps props) : base(scope, id, props)
     {
@@ -30,6 +31,7 @@ public class IoTStack : Stack
         RoleAliasName = "snoutspotter-pi-role-alias";
         TrainerThingGroupName = "snoutspotter-trainers";
         TrainerPolicyName = "snoutspotter-trainer-policy";
+        TrainerRoleAliasName = "snoutspotter-trainer-role-alias";
 
         // Thing Group for all SnoutSpotter Pi devices
         // Individual things will be registered dynamically via Pi Management API
@@ -184,6 +186,13 @@ public class IoTStack : Stack
             Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-training-jobs" }
         }));
 
+        var trainerRoleAlias = new IoT.CfnRoleAlias(this, "TrainerRoleAlias", new IoT.CfnRoleAliasProps
+        {
+            RoleAlias = TrainerRoleAliasName,
+            RoleArn = trainerCredentialsRole.RoleArn,
+            CredentialDurationSeconds = 3600
+        });
+
         var trainerPolicy = new IoT.CfnPolicy(this, "TrainerPolicy", new IoT.CfnPolicyProps
         {
             PolicyName = TrainerPolicyName,
@@ -223,7 +232,7 @@ public class IoTStack : Stack
                     {
                         ["Effect"] = "Allow",
                         ["Action"] = "iot:AssumeRoleWithCertificate",
-                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:rolealias/{RoleAliasName}"
+                        ["Resource"] = $"arn:aws:iot:{Region}:{Account}:rolealias/{TrainerRoleAliasName}"
                     }
                 }
             }
@@ -258,6 +267,12 @@ public class IoTStack : Stack
         {
             ParameterName = "/snoutspotter/iot/trainer-policy-name",
             StringValue = TrainerPolicyName
+        });
+
+        _ = new StringParameter(this, "TrainerRoleAliasNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/iot/trainer-role-alias-name",
+            StringValue = TrainerRoleAliasName
         });
 
         // Outputs

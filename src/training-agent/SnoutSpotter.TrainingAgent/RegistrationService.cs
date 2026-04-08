@@ -110,5 +110,6 @@ public static class RegistrationService
     private class GeneratedCredentialsProviderConfig
     {
         public string Endpoint { get; set; } = "";
+        public string RoleAlias { get; set; } = "snoutspotter-trainer-role-alias";
     }
 }

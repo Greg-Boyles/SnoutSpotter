@@ -1,7 +1,6 @@
 services:
   trainer:
     image: ${ECR_REGISTRY:-local}/snout-spotter-training-agent:${IMAGE_TAG:-latest}
-    runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - AGENT_NAME=${AGENT_NAME:-}
