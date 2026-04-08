@@ -94,8 +94,8 @@ def get_camera_status(config: dict) -> dict:
                 pass
 
         rec_res = config.get("camera", {}).get("record_resolution")
-        if rec_res and len(rec_res) == 2:
-            result["recordResolution"] = f"{rec_res[0]}x{rec_res[1]}"
+        if rec_res:
+            result["recordResolution"] = rec_res if isinstance(rec_res, str) else f"{rec_res[0]}x{rec_res[1]}"
 
         return result
     except Exception:

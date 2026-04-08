@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using SnoutSpotter.Contracts;
 using Amazon.Lambda.Core;
 using Amazon.Lambda.Serialization.SystemTextJson;
 using Amazon.S3;
@@ -137,6 +138,16 @@ public class Function
 
     private static (string clipId, bool isEventBridge) ParseInput(JsonElement input)
     {
+        // SQS event: { "Records": [{ "body": "{\"ClipId\":\"...\"}" }] }
+        if (input.TryGetProperty("Records", out var records) && records.GetArrayLength() > 0)
+        {
+            var body = records[0].GetProperty("body").GetString()!;
+            var msg = JsonSerializer.Deserialize<InferenceMessage>(body)
+                ?? throw new ArgumentException("Failed to deserialize SQS message body");
+            return (msg.ClipId, false);
+        }
+
+        // EventBridge event
         if (input.TryGetProperty("detail", out var detail) &&
             detail.TryGetProperty("object", out var obj) &&
             obj.TryGetProperty("key", out var key))
@@ -144,13 +155,14 @@ public class Function
             return (ExtractClipId(key.GetString()!), true);
         }
 
+        // Direct invocation
         if (input.TryGetProperty("ClipId", out var clipIdProp) ||
             input.TryGetProperty("clipId", out clipIdProp))
         {
             return (clipIdProp.GetString()!, false);
         }
 
-        throw new ArgumentException("Unrecognised input: expected EventBridge event or { ClipId: \"...\" }");
+        throw new ArgumentException("Unrecognised input: expected SQS event, EventBridge event, or { ClipId: \"...\" }");
     }
 
     private async Task<Dictionary<string, AttributeValue>?> GetClipRecord(

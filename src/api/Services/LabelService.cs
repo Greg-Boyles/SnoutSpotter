@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SnoutSpotter.Contracts;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda;
@@ -486,7 +487,7 @@ public class LabelService : ILabelService
             await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
             {
                 QueueUrl = _config.BackfillQueueUrl,
-                MessageBody = JsonSerializer.Serialize(batch)
+                MessageBody = JsonSerializer.Serialize(new BackfillMessage(batch))
             });
 
             batches++;

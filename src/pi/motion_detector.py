@@ -101,8 +101,9 @@ class MotionDetector:
         self.picam2 = Picamera2()
 
         # Configure for preview (low-res for motion detection)
-        preview_w, preview_h = self.camera_cfg["preview_resolution"]
-        record_w, record_h = self.camera_cfg["record_resolution"]
+        # Resolutions stored as "WxH" strings
+        preview_w, preview_h = (int(x) for x in self.camera_cfg["preview_resolution"].split("x"))
+        record_w, record_h = (int(x) for x in self.camera_cfg["record_resolution"].split("x"))
 
         config = self.picam2.create_video_configuration(
             main={"size": (record_w, record_h)},

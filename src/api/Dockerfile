@@ -1,9 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY SnoutSpotter.Api.csproj .
-RUN dotnet restore
-COPY . .
-RUN dotnet publish -c Release -o /app/publish
+COPY shared/SnoutSpotter.Contracts/SnoutSpotter.Contracts.csproj shared/SnoutSpotter.Contracts/
+COPY api/SnoutSpotter.Api.csproj api/
+RUN dotnet restore api/SnoutSpotter.Api.csproj
+COPY shared/ shared/
+COPY api/ api/
+RUN dotnet publish api/SnoutSpotter.Api.csproj -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 # Lambda Web Adapter — proxies Lambda events to the ASP.NET app on port 8080

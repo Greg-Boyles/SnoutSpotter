@@ -1,9 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY SnoutSpotter.Lambda.RunInference.csproj .
-RUN dotnet restore
-COPY . .
-RUN dotnet publish -c Release -o /app/publish
+COPY shared/SnoutSpotter.Contracts/SnoutSpotter.Contracts.csproj shared/SnoutSpotter.Contracts/
+COPY lambdas/SnoutSpotter.Lambda.RunInference/SnoutSpotter.Lambda.RunInference.csproj lambdas/SnoutSpotter.Lambda.RunInference/
+RUN dotnet restore lambdas/SnoutSpotter.Lambda.RunInference/SnoutSpotter.Lambda.RunInference.csproj
+COPY shared/ shared/
+COPY lambdas/SnoutSpotter.Lambda.RunInference/ lambdas/SnoutSpotter.Lambda.RunInference/
+RUN dotnet publish lambdas/SnoutSpotter.Lambda.RunInference/SnoutSpotter.Lambda.RunInference.csproj -c Release -o /app/publish
 
 FROM public.ecr.aws/lambda/dotnet:8 AS runtime
 WORKDIR /var/task

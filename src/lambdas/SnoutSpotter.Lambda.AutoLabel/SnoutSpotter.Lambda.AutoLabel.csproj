@@ -17,4 +17,8 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\SnoutSpotter.Contracts\SnoutSpotter.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Services.Interfaces;
+using SnoutSpotter.Contracts;
 
 namespace SnoutSpotter.Api.Controllers;
 
@@ -13,9 +14,11 @@ namespace SnoutSpotter.Api.Controllers;
 public class LabelsController : ControllerBase
 {
     private readonly ILabelService _labelService;
+    private readonly IClipService _clipService;
     private readonly IExportService _exportService;
     private readonly IS3PresignService _presignService;
     private readonly IAmazonS3 _s3;
+    private readonly AppConfig _config;
     private readonly string _bucketName;
 
     private const string ClassifierPrefix = "models/dog-classifier/versions/";
@@ -24,6 +27,7 @@ public class LabelsController : ControllerBase
 
     public LabelsController(
         ILabelService labelService,
+        IClipService clipService,
         IExportService exportService,
         IS3PresignService presignService,
         IAmazonS3 s3,
@@ -31,8 +35,10 @@ public class LabelsController : ControllerBase
     {
         _exportService = exportService;
         _labelService = labelService;
+        _clipService = clipService;
         _presignService = presignService;
         _s3 = s3;
+        _config = config.Value;
         _bucketName = config.Value.BucketName;
     }
 
@@ -327,7 +333,42 @@ public class LabelsController : ControllerBase
 
         return Ok(new { message = $"Activated version '{version}'", version });
     }
+
+    [HttpPost("rerun-inference")]
+    public async Task<ActionResult> RerunInference([FromBody] RerunInferenceRequest? request = null)
+    {
+        var clipIds = await _clipService.GetClipIdsForDateRangeAsync(request?.DateFrom, request?.DateTo);
+        if (clipIds.Count == 0)
+            return Ok(new { total = 0, queued = 0 });
+
+        if (string.IsNullOrEmpty(_config.RerunInferenceQueueUrl))
+            return StatusCode(503, new { error = "Rerun inference queue not configured" });
+
+        using var sqsClient = new Amazon.SQS.AmazonSQSClient();
+        var queued = 0;
+
+        // Send in batches of 10 (SQS batch limit)
+        foreach (var batch in clipIds.Chunk(10))
+        {
+            var entries = batch.Select((clipId, i) => new Amazon.SQS.Model.SendMessageBatchRequestEntry
+            {
+                Id = i.ToString(),
+                MessageBody = System.Text.Json.JsonSerializer.Serialize(new InferenceMessage(clipId))
+            }).ToList();
+
+            await sqsClient.SendMessageBatchAsync(new Amazon.SQS.Model.SendMessageBatchRequest
+            {
+                QueueUrl = _config.RerunInferenceQueueUrl,
+                Entries = entries
+            });
+            queued += entries.Count;
+        }
+
+        return Ok(new { total = clipIds.Count, queued });
+    }
 }
+
+public record RerunInferenceRequest(string? DateFrom = null, string? DateTo = null);
 
 public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
 public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);

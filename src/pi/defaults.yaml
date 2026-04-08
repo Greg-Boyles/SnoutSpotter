@@ -7,8 +7,8 @@ motion:
   min_area: 500
 
 camera:
-  preview_resolution: [640, 480]
-  record_resolution: [1920, 1080]
+  preview_resolution: "640x480"
+  record_resolution: "1920x1080"
   detection_fps: 5
   record_fps: 30
   encoding_bitrate: 5000000
@@ -45,7 +45,7 @@ log_shipping:
 
 streaming:
   timeout_seconds: 600
-  resolution: [640, 480]
+  resolution: "640x480"
   framerate: 15
   bitrate: 800
   kvs_region: eu-west-1

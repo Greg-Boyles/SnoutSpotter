@@ -33,6 +33,6 @@ jobs:
         run: |
           IMAGE_TAG=${{ github.sha }}
           REGISTRY=${{ steps.ecr-login.outputs.registry }}
-          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $REGISTRY/$ECR_REPOSITORY:latest src/lambdas/SnoutSpotter.Lambda.AutoLabel
+          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $REGISTRY/$ECR_REPOSITORY:latest -f src/lambdas/SnoutSpotter.Lambda.AutoLabel/Dockerfile src
           docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $REGISTRY/$ECR_REPOSITORY:latest

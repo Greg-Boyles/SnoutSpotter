@@ -57,11 +57,15 @@ SnoutSpotter/
 │   │       ├── MonitoringStack.cs     # CloudWatch alarms
 │   │       └── CiCdStack.cs           # OIDC role for GitHub Actions
 │   │
+│   ├── shared/
+│   │   └── SnoutSpotter.Contracts/        # Shared message types for SQS queues
+│   │       └── Messages.cs               # InferenceMessage, BackfillMessage
+│   │
 │   ├── lambdas/
 │   │   ├── SnoutSpotter.Lambda.IngestClip/    # Triggered by S3 raw-clips upload
 │   │   │   ├── Function.cs                    # Extracts keyframes via FFmpeg, writes DynamoDB
 │   │   │   └── Dockerfile
-│   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload
+│   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload OR SQS rerun queue
 │   │   │   ├── Function.cs                    # Custom YOLOv8 inference (my_dog/other_dog detection + bounding boxes)
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.AutoLabel/     # YOLOv8 dog detection on keyframes
@@ -292,7 +296,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
-| InferenceStack | Docker Lambda triggered by S3 `keyframes/` events |
+| InferenceStack | Docker Lambda triggered by S3 `keyframes/` events + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3) |
 | WebStack | S3 static site bucket, CloudFront distribution |
 | AutoLabelStack | Docker Lambda triggered by auto-label API call |
 | ExportDatasetStack | Docker Lambda for training dataset packaging |
@@ -334,6 +338,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/ml/models` — list classifier model versions (from S3 `models/dog-classifier/versions/`) with active status
 - `POST /api/ml/models/upload-url?version=v2.0` — presigned PUT URL for uploading a new `.onnx` classifier version
 - `POST /api/ml/models/activate?version=v2.0` — activate a version (copies to `models/dog-classifier/best.onnx`, writes `active.json`)
+- `POST /api/ml/rerun-inference` — bulk re-run inference on clips (optional `dateFrom`/`dateTo`), queues to SQS
 
 **Training Agents & Jobs:**
 - `GET /api/training/agents` — list registered training agents with online status (from IoT shadow)
@@ -717,3 +722,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 30. **Motion detector discards invalid clips** — After FFmpeg remux, `ffprobe` validates the output MP4. If remux or validation fails, both raw H.264 and partial MP4 are deleted. No more unplayable files getting uploaded.
 
 31. **Watchdog reboots only when ALL monitored services fail** — `snoutspotter-watchdog` tracks per-service failure counts independently. Individual services are restarted with 60s cooldown. A device-wide reboot only triggers when all three core services (motion, uploader, agent) fail 5+ consecutive times.
+
+32. **SQS message types live in SnoutSpotter.Contracts** — All SQS queue messages use concrete record types from `src/shared/SnoutSpotter.Contracts/Messages.cs`: `InferenceMessage(ClipId)` for the rerun-inference queue, `BackfillMessage(KeyframeKeys)` for the backfill-boxes queue. Both producers (API) and consumers (Lambdas) reference this shared project. Never use anonymous types or raw JSON for SQS messages.
+
+33. **RunInference Lambda has three input modes** — Handles SQS Records (from rerun queue), EventBridge events (from S3 keyframe upload), and direct invocation (`{ ClipId }`). SQS is checked first in `ParseInput`. All three paths converge on the same clip processing logic.
