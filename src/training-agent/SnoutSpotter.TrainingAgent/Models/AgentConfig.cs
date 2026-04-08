@@ -3,7 +3,7 @@ namespace SnoutSpotter.TrainingAgent.Models;
 public class AgentConfig
 {
     public string AgentName { get; set; } = "";
-    public IoTConfig IoT { get; set; } = new();
+    public IoTConfig Iot { get; set; } = new();
     public S3Config S3 { get; set; } = new();
     public CredentialsProviderConfig CredentialsProvider { get; set; } = new();
     public TrainingConfig? Training { get; set; }
