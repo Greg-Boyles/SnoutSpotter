@@ -16,6 +16,7 @@ public class AppConfig
     public string RerunInferenceQueueUrl { get; set; } = "";
     public string TrainingJobsTable { get; set; } = "snout-spotter-training-jobs";
     public string TrainerThingGroup { get; set; } = "snoutspotter-trainers";
+    public string TrainingJobQueueUrl { get; set; } = "";
     public string OktaIssuer { get; set; } = "";
     public string AllowedOrigin { get; set; } = "";
 }

@@ -96,6 +96,7 @@ public class TrainingService : ITrainingService
             ResumeFrom   = request.ResumeFrom
         };
 
+        // 1. Write job to DynamoDB
         var item = new Dictionary<string, AttributeValue>
         {
             ["job_id"]       = new() { S = jobId },
@@ -109,37 +110,28 @@ public class TrainingService : ITrainingService
 
         await _dynamoDb.PutItemAsync(_config.TrainingJobsTable, item);
 
-        // Find an idle agent and dispatch the job via shadow
-        var agents = await ListAgentsAsync();
-        var idleAgent = agents.FirstOrDefault(a => a.Online);
+        // 2. Queue to SQS — agents poll and self-assign
+        if (string.IsNullOrEmpty(_config.TrainingJobQueueUrl))
+            throw new InvalidOperationException("Training job queue not configured");
 
-        if (idleAgent != null)
+        using var sqsClient = new Amazon.SQS.AmazonSQSClient();
+        var message = new Contracts.TrainingJobMessage(
+            JobId: jobId,
+            ExportS3Key: request.ExportS3Key,
+            Config: new Contracts.TrainingJobParamsMessage(
+                Epochs: request.Epochs,
+                BatchSize: request.BatchSize,
+                ImageSize: request.ImageSize,
+                LearningRate: request.LearningRate,
+                Workers: request.Workers,
+                ModelBase: request.ModelBase,
+                ResumeFrom: request.ResumeFrom));
+
+        await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
         {
-            var shadowPayload = JsonSerializer.Serialize(
-                ShadowDesiredUpdate<AgentDesiredState>.From(
-                    new AgentDesiredState
-                    {
-                        TrainingJob = new TrainingJobDesired
-                        {
-                            JobId       = jobId,
-                            ExportS3Key = request.ExportS3Key,
-                            Config      = jobParams
-                        }
-                    }));
-
-            await UpdateShadowAsync(idleAgent.ThingName, shadowPayload);
-
-            await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
-            {
-                TableName = _config.TrainingJobsTable,
-                Key = new Dictionary<string, AttributeValue> { ["job_id"] = new() { S = jobId } },
-                UpdateExpression = "SET agent_thing_name = :agent",
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":agent"] = new() { S = idleAgent.ThingName }
-                }
-            });
-        }
+            QueueUrl = _config.TrainingJobQueueUrl,
+            MessageBody = JsonSerializer.Serialize(message)
+        });
 
         return jobId;
     }
