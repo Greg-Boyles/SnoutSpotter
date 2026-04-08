@@ -7,9 +7,9 @@ namespace SnoutSpotter.Lambda.PiMgmt.Controllers;
 [Route("api/[controller]")]
 public class DevicesController : ControllerBase
 {
-    private readonly DeviceProvisioningService _provisioningService;
+    private readonly IDeviceProvisioningService _provisioningService;
 
-    public DevicesController(DeviceProvisioningService provisioningService)
+    public DevicesController(IDeviceProvisioningService provisioningService)
     {
         _provisioningService = provisioningService;
     }

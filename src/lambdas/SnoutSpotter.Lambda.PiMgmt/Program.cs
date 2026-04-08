@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IAmazonIoT, AmazonIoTClient>();
 
 // Application services
-builder.Services.AddSingleton<DeviceProvisioningService>();
+builder.Services.AddSingleton<IDeviceProvisioningService, DeviceProvisioningService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -26,11 +26,8 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseCors();
 app.MapControllers();

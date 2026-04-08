@@ -48,7 +48,7 @@ public static class RegistrationService
         var rootCa = await http.GetStringAsync(result.RootCaUrl);
         await File.WriteAllTextAsync(caPath, rootCa);
 
-        // 4. Write config.yaml (bucket left empty — discovered at runtime via ListBuckets)
+        // 4. Write config.yaml 
         var config = new GeneratedConfig
         {
             AgentName = result.ThingName,
@@ -60,10 +60,18 @@ public static class RegistrationService
                 KeyPath    = keyPath,
                 RootCaPath = caPath
             },
-            S3 = new GeneratedS3Config { Region = "eu-west-1", Bucket = result.S3Bucket ?? "" },
+            S3 = new GeneratedS3Config
+            {
+                Region = "eu-west-1",
+                Bucket = result.S3Bucket ?? ""
+            },
             CredentialsProvider = new GeneratedCredentialsProviderConfig
             {
                 Endpoint = result.CredentialProviderEndpoint
+            },
+            Training = new GeneratedTrainingConfig
+            {
+                JobQueueUrl = result.TrainingJobQueueUrl ?? ""
             }
         };
 
@@ -76,14 +84,15 @@ public static class RegistrationService
     }
 
     private record RegistrationResult(
-        [property: JsonPropertyName("thingName")]                  string ThingName,
+        [property: JsonPropertyName("thingName")] string ThingName,
         [property: JsonPropertyName("certificatePem")]             string CertificatePem,
         [property: JsonPropertyName("privateKey")]                 string PrivateKey,
         [property: JsonPropertyName("certificateArn")]             string CertificateArn,
         [property: JsonPropertyName("ioTEndpoint")]                string IoTEndpoint,
         [property: JsonPropertyName("credentialProviderEndpoint")] string CredentialProviderEndpoint,
         [property: JsonPropertyName("rootCaUrl")]                  string RootCaUrl,
-        [property: JsonPropertyName("s3Bucket")]                   string? S3Bucket);
+        [property: JsonPropertyName("s3Bucket")]                   string? S3Bucket,
+        [property: JsonPropertyName("trainingJobQueueUrl")]        string? TrainingJobQueueUrl);
 
     // Local classes mirroring AgentConfig for YAML serialisation
     private class GeneratedConfig
@@ -92,6 +101,7 @@ public static class RegistrationService
         public GeneratedIoTConfig Iot { get; set; } = new();
         public GeneratedS3Config S3 { get; set; } = new();
         public GeneratedCredentialsProviderConfig CredentialsProvider { get; set; } = new();
+        public GeneratedTrainingConfig Training { get; set; } = new();
     }
 
     private class GeneratedIoTConfig
@@ -113,5 +123,10 @@ public static class RegistrationService
     {
         public string Endpoint { get; set; } = "";
         public string RoleAlias { get; set; } = "snoutspotter-trainer-role-alias";
+    }
+
+    private class GeneratedTrainingConfig
+    {
+        public string JobQueueUrl { get; set; } = "";
     }
 }
