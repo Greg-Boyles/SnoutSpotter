@@ -1,14 +1,7 @@
 using System.Diagnostics;
+using SnoutSpotter.Shared.Training;
 
 namespace SnoutSpotter.TrainingAgent;
-
-public record GpuStatus(
-    string Name,
-    int VramMb,
-    int TemperatureC,
-    int UtilizationPercent,
-    string CudaVersion,
-    string DriverVersion);
 
 public static class GpuInfo
 {
@@ -37,13 +30,15 @@ public static class GpuInfo
             // Get CUDA version separately
             var cudaVersion = GetCudaVersion();
 
-            return new GpuStatus(
-                Name: parts[0],
-                VramMb: int.TryParse(parts[1], out var vram) ? vram : 0,
-                TemperatureC: int.TryParse(parts[2], out var temp) ? temp : 0,
-                UtilizationPercent: int.TryParse(parts[3], out var util) ? util : 0,
-                CudaVersion: cudaVersion,
-                DriverVersion: parts[4]);
+            return new GpuStatus
+            {
+                Name               = parts[0],
+                VramMb             = int.TryParse(parts[1], out var vram) ? vram : 0,
+                TemperatureC       = int.TryParse(parts[2], out var temp) ? temp : 0,
+                UtilizationPercent = int.TryParse(parts[3], out var util) ? util : 0,
+                CudaVersion        = cudaVersion,
+                DriverVersion      = parts[4]
+            };
         }
         catch
         {

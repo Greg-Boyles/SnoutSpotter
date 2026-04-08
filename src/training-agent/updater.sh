@@ -6,6 +6,15 @@ set -euo pipefail
 #   0  = clean shutdown
 #   42 = update requested (pull new image and restart)
 #   *  = crash (restart after cooldown)
+#
+# Create a .env file in this directory before running:
+#
+#   ECR_REGISTRY=123456789012.dkr.ecr.eu-west-1.amazonaws.com   # required: ECR registry
+#   AGENT_NAME=gregs-pc                                          # required on first run only
+#   TRAINER_REGISTRATION_URL=https://...                         # optional: defaults to PiMgmt API
+#
+# On first run the agent self-registers, saves certs and config to the trainer-state
+# Docker volume, and starts. On subsequent runs AGENT_NAME is not needed.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"

@@ -3,6 +3,7 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda.Core;
 using Amazon.Lambda.Serialization.SystemTextJson;
+using SnoutSpotter.Shared.Training;
 
 [assembly: LambdaSerializer(typeof(DefaultLambdaJsonSerializer))]
 
@@ -27,56 +28,51 @@ public class Function
 
     public async Task FunctionHandler(JsonElement input, ILambdaContext context)
     {
-        var jobId = input.GetProperty("job_id").GetString()!;
-        var status = input.GetProperty("status").GetString()!;
+        var message = JsonSerializer.Deserialize<TrainingProgressMessage>(input.GetRawText())
+            ?? throw new InvalidOperationException("Failed to deserialise TrainingProgressMessage");
+
         var now = DateTime.UtcNow.ToString("O");
 
         var updateExpr = "SET #s = :status, updated_at = :now";
         var exprValues = new Dictionary<string, AttributeValue>
         {
-            [":status"] = new() { S = status },
-            [":now"] = new() { S = now }
+            [":status"] = new() { S = message.Status },
+            [":now"]    = new() { S = now }
         };
         var exprNames = new Dictionary<string, string> { ["#s"] = "status" };
 
-        // Write progress if present
-        if (input.TryGetProperty("progress", out var progress))
+        if (message.Progress != null)
         {
             updateExpr += ", progress = :progress";
-            exprValues[":progress"] = new() { S = progress.GetRawText() };
+            exprValues[":progress"] = new() { S = JsonSerializer.Serialize(message.Progress) };
         }
 
-        // Write result if present (terminal status)
-        if (input.TryGetProperty("result", out var result))
+        if (message.Result != null)
         {
             updateExpr += ", #r = :result";
-            exprValues[":result"] = new() { S = result.GetRawText() };
+            exprValues[":result"] = new() { S = JsonSerializer.Serialize(message.Result) };
             exprNames["#r"] = "result";
         }
 
-        // Write checkpoint if present
-        if (input.TryGetProperty("checkpoint_s3_key", out var checkpoint))
+        if (message.CheckpointS3Key != null)
         {
             updateExpr += ", checkpoint_s3_key = :checkpoint";
-            exprValues[":checkpoint"] = new() { S = checkpoint.GetString()! };
+            exprValues[":checkpoint"] = new() { S = message.CheckpointS3Key };
         }
 
-        // Write error if present
-        if (input.TryGetProperty("error", out var error))
+        if (message.Error != null)
         {
             updateExpr += ", #e = :error";
-            exprValues[":error"] = new() { S = error.GetString()! };
+            exprValues[":error"] = new() { S = message.Error };
             exprNames["#e"] = "error";
         }
 
-        // Set started_at on first non-pending status
-        if (status is "downloading" or "training")
+        if (message.Status is "downloading" or "training")
         {
             updateExpr += ", started_at = if_not_exists(started_at, :now)";
         }
 
-        // Set completed_at on terminal statuses
-        if (status is "complete" or "failed" or "cancelled" or "interrupted")
+        if (message.Status is "complete" or "failed" or "cancelled" or "interrupted")
         {
             updateExpr += ", completed_at = :now";
         }
@@ -86,7 +82,7 @@ public class Function
             TableName = _tableName,
             Key = new Dictionary<string, AttributeValue>
             {
-                ["job_id"] = new() { S = jobId }
+                ["job_id"] = new() { S = message.JobId }
             },
             UpdateExpression = updateExpr,
             ExpressionAttributeValues = exprValues,
@@ -94,6 +90,6 @@ public class Function
             ConditionExpression = "attribute_exists(job_id)"
         });
 
-        context.Logger.LogInformation($"Updated job {jobId}: status={status}");
+        context.Logger.LogInformation($"Updated job {message.JobId}: status={message.Status}");
     }
 }

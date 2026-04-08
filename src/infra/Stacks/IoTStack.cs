@@ -164,6 +164,26 @@ public class IoTStack : Stack
         props.DataBucket.GrantRead(trainerCredentialsRole, "releases/ml-training/*");
         props.DataBucket.GrantPut(trainerCredentialsRole, "models/*");
 
+        // SQS permissions for polling the training job queue
+        trainerCredentialsRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Actions = new[]
+            {
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueAttributes"
+            },
+            Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-training-jobs-queue" }
+        }));
+
+        // DynamoDB permissions for self-assigning jobs
+        trainerCredentialsRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Actions = new[] { "dynamodb:UpdateItem" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-training-jobs" }
+        }));
+
         var trainerPolicy = new IoT.CfnPolicy(this, "TrainerPolicy", new IoT.CfnPolicyProps
         {
             PolicyName = TrainerPolicyName,

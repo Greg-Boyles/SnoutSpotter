@@ -7,6 +7,7 @@ using Amazon.IoT;
 using Amazon.IoT.Model;
 using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Services.Interfaces;
+using SnoutSpotter.Shared.Training;
 
 namespace SnoutSpotter.Api.Services;
 
@@ -38,21 +39,21 @@ public class TrainingService : ITrainingService
             try
             {
                 var shadow = await GetShadowReportedAsync(thingName);
-                var online = shadow?.TryGetProperty("lastHeartbeat", out var hb) == true &&
-                    DateTime.TryParse(hb.GetString(), out var lastHb) &&
+                var online = shadow?.LastHeartbeat != null &&
+                    DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
                     (DateTime.UtcNow - lastHb).TotalMinutes < 5;
 
                 agents.Add(new TrainerAgentSummary(
                     ThingName: thingName,
                     Online: online,
-                    Version: shadow?.TryGetProperty("agentVersion", out var v) == true ? v.GetString() : null,
-                    Hostname: shadow?.TryGetProperty("hostname", out var h) == true ? h.GetString() : null,
-                    LastHeartbeat: shadow?.TryGetProperty("lastHeartbeat", out var lb) == true ? lb.GetString() : null
-                ));
+                    Version: shadow?.AgentVersion,
+                    Hostname: shadow?.Hostname,
+                    LastHeartbeat: shadow?.LastHeartbeat,
+                    CurrentJobId: shadow?.CurrentJobId));
             }
             catch
             {
-                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null));
+                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null));
             }
         }
 
@@ -64,30 +65,20 @@ public class TrainingService : ITrainingService
         var shadow = await GetShadowReportedAsync(thingName);
         if (shadow == null) return null;
 
-        var online = shadow.Value.TryGetProperty("lastHeartbeat", out var hb) &&
-            DateTime.TryParse(hb.GetString(), out var lastHb) &&
+        var online = shadow.LastHeartbeat != null &&
+            DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
             (DateTime.UtcNow - lastHb).TotalMinutes < 5;
 
-        return new
-        {
-            thingName,
-            online,
-            reported = shadow
-        };
+        return new { thingName, online, reported = shadow };
     }
 
     public async Task TriggerAgentUpdateAsync(string thingName, string version)
     {
-        var payload = JsonSerializer.Serialize(new
-        {
-            state = new { desired = new { agentVersion = version } }
-        });
+        var payload = JsonSerializer.Serialize(
+            ShadowDesiredUpdate<AgentDesiredState>.From(
+                new AgentDesiredState { AgentVersion = version }));
 
-        await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
-        {
-            ThingName = thingName,
-            Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
-        });
+        await UpdateShadowAsync(thingName, payload);
     }
 
     public async Task<string> SubmitJobAsync(TrainingJobRequest request)
@@ -95,78 +86,53 @@ public class TrainingService : ITrainingService
         var jobId = $"tj-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString()[..4]}";
         var now = DateTime.UtcNow.ToString("O");
 
-        var config = JsonSerializer.Serialize(new
+        var jobParams = new TrainingJobParams
         {
-            epochs = request.Epochs,
-            batch_size = request.BatchSize,
-            image_size = request.ImageSize,
-            learning_rate = request.LearningRate,
-            workers = request.Workers,
-            model_base = request.ModelBase,
-            resume_from = request.ResumeFrom,
-            notes = request.Notes
-        });
+            Epochs       = request.Epochs,
+            BatchSize    = request.BatchSize,
+            ImageSize    = request.ImageSize,
+            LearningRate = request.LearningRate,
+            Workers      = request.Workers,
+            ModelBase    = request.ModelBase,
+            ResumeFrom   = request.ResumeFrom
+        };
 
+        // 1. Write job to DynamoDB
         var item = new Dictionary<string, AttributeValue>
         {
-            ["job_id"] = new() { S = jobId },
-            ["status"] = new() { S = "pending" },
-            ["export_id"] = new() { S = request.ExportId },
-            ["export_s3_key"] = new() { S = request.ExportS3Key },
-            ["config"] = new() { S = config },
-            ["created_at"] = new() { S = now }
+            ["job_id"]       = new() { S = jobId },
+            ["status"]       = new() { S = "pending" },
+            ["export_id"]    = new() { S = request.ExportId },
+            ["export_s3_key"]= new() { S = request.ExportS3Key },
+            ["config"]       = new() { S = JsonSerializer.Serialize(jobParams) },
+            ["created_at"]   = new() { S = now },
+            ["notes"]        = new() { S = request.Notes ?? "" }
         };
 
         await _dynamoDb.PutItemAsync(_config.TrainingJobsTable, item);
 
-        // Find an idle agent and write the job to its shadow
-        var agents = await ListAgentsAsync();
-        var idleAgent = agents.FirstOrDefault(a => a.Online);
+        // 2. Queue to SQS — agents poll and self-assign
+        if (string.IsNullOrEmpty(_config.TrainingJobQueueUrl))
+            throw new InvalidOperationException("Training job queue not configured");
 
-        if (idleAgent != null)
+        using var sqsClient = new Amazon.SQS.AmazonSQSClient();
+        var message = new Contracts.TrainingJobMessage(
+            JobId: jobId,
+            ExportS3Key: request.ExportS3Key,
+            Config: new Contracts.TrainingJobParamsMessage(
+                Epochs: request.Epochs,
+                BatchSize: request.BatchSize,
+                ImageSize: request.ImageSize,
+                LearningRate: request.LearningRate,
+                Workers: request.Workers,
+                ModelBase: request.ModelBase,
+                ResumeFrom: request.ResumeFrom));
+
+        await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
         {
-            var shadowPayload = JsonSerializer.Serialize(new
-            {
-                state = new
-                {
-                    desired = new
-                    {
-                        trainingJob = new
-                        {
-                            jobId,
-                            exportS3Key = request.ExportS3Key,
-                            config = new
-                            {
-                                epochs = request.Epochs,
-                                batch_size = request.BatchSize,
-                                image_size = request.ImageSize,
-                                learning_rate = request.LearningRate,
-                                workers = request.Workers,
-                                model_base = request.ModelBase,
-                                resume_from = request.ResumeFrom
-                            }
-                        }
-                    }
-                }
-            });
-
-            await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
-            {
-                ThingName = idleAgent.ThingName,
-                Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(shadowPayload))
-            });
-
-            await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
-            {
-                TableName = _config.TrainingJobsTable,
-                Key = new Dictionary<string, AttributeValue> { ["job_id"] = new() { S = jobId } },
-                UpdateExpression = "SET agent_thing_name = :agent",
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":agent"] = new() { S = idleAgent.ThingName }
-                }
-            });
-        }
+            QueueUrl = _config.TrainingJobQueueUrl,
+            MessageBody = JsonSerializer.Serialize(message)
+        });
 
         return jobId;
     }
@@ -202,17 +168,25 @@ public class TrainingService : ITrainingService
             items = response.Items;
         }
 
-        return items.Select(item => new TrainingJobSummary(
-            JobId: item.GetValueOrDefault("job_id")?.S ?? "",
-            Status: item.GetValueOrDefault("status")?.S ?? "",
-            AgentThingName: item.GetValueOrDefault("agent_thing_name")?.S,
-            ExportId: item.GetValueOrDefault("export_id")?.S,
-            Epochs: int.TryParse(
-                JsonDocument.Parse(item.GetValueOrDefault("config")?.S ?? "{}").RootElement
-                    .TryGetProperty("epochs", out var ep) ? ep.GetRawText() : "", out var epochs) ? epochs : null,
-            CreatedAt: item.GetValueOrDefault("created_at")?.S,
-            CompletedAt: item.GetValueOrDefault("completed_at")?.S
-        ))
+        return items.Select(item =>
+        {
+            int? epochs = null;
+            var configJson = item.GetValueOrDefault("config")?.S;
+            if (configJson != null)
+            {
+                var cfg = JsonSerializer.Deserialize<TrainingJobParams>(configJson);
+                epochs = cfg?.Epochs;
+            }
+
+            return new TrainingJobSummary(
+                JobId: item.GetValueOrDefault("job_id")?.S ?? "",
+                Status: item.GetValueOrDefault("status")?.S ?? "",
+                AgentThingName: item.GetValueOrDefault("agent_thing_name")?.S,
+                ExportId: item.GetValueOrDefault("export_id")?.S,
+                Epochs: epochs,
+                CreatedAt: item.GetValueOrDefault("created_at")?.S,
+                CompletedAt: item.GetValueOrDefault("completed_at")?.S);
+        })
         .OrderByDescending(j => j.CreatedAt)
         .ToList();
     }
@@ -250,16 +224,11 @@ public class TrainingService : ITrainingService
 
         if (job.AgentThingName != null)
         {
-            var payload = JsonSerializer.Serialize(new
-            {
-                state = new { desired = new { cancelJob = jobId } }
-            });
+            var payload = JsonSerializer.Serialize(
+                ShadowDesiredUpdate<AgentDesiredState>.From(
+                    new AgentDesiredState { CancelJob = jobId }));
 
-            await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
-            {
-                ThingName = job.AgentThingName,
-                Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
-            });
+            await UpdateShadowAsync(job.AgentThingName, payload);
         }
 
         await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
@@ -275,7 +244,7 @@ public class TrainingService : ITrainingService
         });
     }
 
-    private async Task<JsonElement?> GetShadowReportedAsync(string thingName)
+    private async Task<AgentReportedState?> GetShadowReportedAsync(string thingName)
     {
         try
         {
@@ -291,11 +260,20 @@ public class TrainingService : ITrainingService
             if (doc.RootElement.TryGetProperty("state", out var state) &&
                 state.TryGetProperty("reported", out var reported))
             {
-                return reported;
+                return JsonSerializer.Deserialize<AgentReportedState>(reported.GetRawText());
             }
         }
         catch { }
 
         return null;
+    }
+
+    private async Task UpdateShadowAsync(string thingName, string payload)
+    {
+        await _iotData.UpdateThingShadowAsync(new UpdateThingShadowRequest
+        {
+            ThingName = thingName,
+            Payload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload))
+        });
     }
 }

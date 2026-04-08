@@ -3,7 +3,8 @@ using System.IO.Compression;
 using System.Text.Json;
 using Amazon.S3;
 using Amazon.S3.Transfer;
-using SnoutSpotter.TrainingAgent.Models;
+using Contracts = SnoutSpotter.Contracts;
+using SnoutSpotter.Shared.Training;
 
 namespace SnoutSpotter.TrainingAgent;
 
@@ -30,7 +31,29 @@ public class JobRunner
         _logger = logger;
     }
 
-    public async Task RunAsync(TrainingJobConfig job, CancellationToken ct)
+    /// <summary>Run from SQS message (new queue-based dispatch).</summary>
+    public Task RunAsync(Contracts.TrainingJobMessage msg, CancellationToken ct)
+    {
+        var job = new TrainingJobDesired
+        {
+            JobId = msg.JobId,
+            ExportS3Key = msg.ExportS3Key,
+            Config = new TrainingJobParams
+            {
+                Epochs = msg.Config.Epochs,
+                BatchSize = msg.Config.BatchSize,
+                ImageSize = msg.Config.ImageSize,
+                LearningRate = msg.Config.LearningRate,
+                Workers = msg.Config.Workers,
+                ModelBase = msg.Config.ModelBase,
+                ResumeFrom = msg.Config.ResumeFrom
+            }
+        };
+        return RunAsync(job, ct);
+    }
+
+    /// <summary>Run from shadow desired state (legacy).</summary>
+    public async Task RunAsync(TrainingJobDesired job, CancellationToken ct)
     {
         var datasetDir = Path.Combine(DataDir, job.JobId);
 
@@ -96,18 +119,20 @@ public class JobRunner
             var metrics = parser.GetFinalMetrics();
             var modelSize = new FileInfo(modelPath).Length / (1024.0 * 1024.0);
 
-            await PublishResult(job.JobId, new TrainingResult(
-                ModelS3Key: modelS3Key,
-                ModelSizeMb: Math.Round(modelSize, 1),
-                FinalMAP50: metrics.MAP50,
-                FinalMAP50_95: metrics.MAP50_95,
-                Precision: metrics.Precision,
-                Recall: metrics.Recall,
-                Classes: ["my_dog", "other_dog"],
-                TotalEpochs: job.Epochs,
-                BestEpoch: metrics.BestEpoch,
-                TrainingTimeSeconds: parser.ElapsedSeconds,
-                DatasetImages: CountDatasetImages(datasetDir)));
+            await PublishResult(job.JobId, new TrainingResult
+            {
+                ModelS3Key          = modelS3Key,
+                ModelSizeMb         = Math.Round(modelSize, 1),
+                FinalMAP50          = metrics.MAP50,
+                FinalMAP50_95       = metrics.MAP50_95,
+                Precision           = metrics.Precision,
+                Recall              = metrics.Recall,
+                Classes             = ["my_dog", "other_dog"],
+                TotalEpochs         = job.Config.Epochs,
+                BestEpoch           = metrics.BestEpoch,
+                TrainingTimeSeconds = parser.ElapsedSeconds,
+                DatasetImages       = CountDatasetImages(datasetDir)
+            });
         }
         finally
         {
@@ -129,11 +154,12 @@ public class JobRunner
         }
     }
 
-    private string BuildTrainingArgs(TrainingJobConfig job, string datasetDir)
+    private static string BuildTrainingArgs(TrainingJobDesired job, string datasetDir)
     {
-        var args = $"--data \"{datasetDir}\" --epochs {job.Epochs} --batch {job.BatchSize} --imgsz {job.ImageSize} --workers {job.Workers}";
-        if (job.ResumeFrom != null)
-            args += $" --resume \"{job.ResumeFrom}\"";
+        var cfg = job.Config;
+        var args = $"--data \"{datasetDir}\" --epochs {cfg.Epochs} --batch {cfg.BatchSize} --imgsz {cfg.ImageSize} --workers {cfg.Workers}";
+        if (cfg.ResumeFrom != null)
+            args += $" --resume \"{cfg.ResumeFrom}\"";
         return args;
     }
 
@@ -236,7 +262,7 @@ public class JobRunner
         }
     }
 
-    private async Task UploadCheckpointAsync(TrainingJobConfig job, string datasetDir)
+    private async Task UploadCheckpointAsync(TrainingJobDesired job, string datasetDir)
     {
         var lastPt = FindFile(datasetDir, "last.pt");
         if (lastPt == null) return;
@@ -267,63 +293,32 @@ public class JobRunner
 
     private async Task PublishProgress(string jobId, string status, TrainingProgress? progress)
     {
-        var payload = new Dictionary<string, object?> { ["job_id"] = jobId, ["status"] = status };
-        if (progress != null)
-        {
-            payload["progress"] = new
-            {
-                epoch = progress.Epoch,
-                total_epochs = progress.TotalEpochs,
-                train_loss = progress.TrainLoss,
-                val_loss = progress.ValLoss,
-                mAP50 = progress.MAP50,
-                mAP50_95 = progress.MAP50_95,
-                best_mAP50 = progress.BestMAP50,
-                elapsed_seconds = progress.ElapsedSeconds,
-                eta_seconds = progress.EtaSeconds,
-                gpu_util_percent = progress.GpuUtilPercent,
-                gpu_temp_c = progress.GpuTempC
-            };
-        }
-
+        var message = new TrainingProgressMessage { JobId = jobId, Status = status, Progress = progress };
         await _mqtt.PublishAsync(
             $"snoutspotter/trainer/{_thingName}/progress",
-            JsonSerializer.Serialize(payload));
+            JsonSerializer.Serialize(message));
     }
 
     private async Task PublishResult(string jobId, TrainingResult result)
     {
-        var payload = new
+        var message = new TrainingProgressMessage
         {
-            job_id = jobId,
-            status = "complete",
-            progress = new { epoch = result.TotalEpochs, total_epochs = result.TotalEpochs },
-            result = new
-            {
-                model_s3_key = result.ModelS3Key,
-                model_size_mb = result.ModelSizeMb,
-                final_mAP50 = result.FinalMAP50,
-                final_mAP50_95 = result.FinalMAP50_95,
-                precision = result.Precision,
-                recall = result.Recall,
-                classes = result.Classes,
-                total_epochs = result.TotalEpochs,
-                best_epoch = result.BestEpoch,
-                training_time_seconds = result.TrainingTimeSeconds,
-                dataset_images = result.DatasetImages
-            }
+            JobId    = jobId,
+            Status   = "complete",
+            Progress = new TrainingProgress { Epoch = result.TotalEpochs, TotalEpochs = result.TotalEpochs },
+            Result   = result
         };
-
         await _mqtt.PublishAsync(
             $"snoutspotter/trainer/{_thingName}/progress",
-            JsonSerializer.Serialize(payload));
+            JsonSerializer.Serialize(message));
     }
 
     private async Task PublishError(string jobId, string error)
     {
         _logger.LogError("Job {JobId} failed: {Error}", jobId, error);
+        var message = new TrainingProgressMessage { JobId = jobId, Status = "failed", Error = error };
         await _mqtt.PublishAsync(
             $"snoutspotter/trainer/{_thingName}/progress",
-            JsonSerializer.Serialize(new { job_id = jobId, status = "failed", error }));
+            JsonSerializer.Serialize(message));
     }
 }

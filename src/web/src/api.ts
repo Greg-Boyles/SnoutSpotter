@@ -222,7 +222,7 @@ export const api = {
 
   // Training
   listTrainingAgents: () =>
-    fetchJson<{ agents: { thingName: string; online: boolean; version: string | null; hostname: string | null; lastHeartbeat: string | null }[] }>("/training/agents"),
+    fetchJson<{ agents: { thingName: string; online: boolean; version: string | null; hostname: string | null; lastHeartbeat: string | null; currentJobId: string | null }[] }>("/training/agents"),
 
   getTrainingAgentStatus: (thingName: string) =>
     fetchJson<{ thingName: string; online: boolean; reported: Record<string, unknown> | null }>(`/training/agents/${thingName}`),

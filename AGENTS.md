@@ -74,8 +74,11 @@ SnoutSpotter/
 │   │   ├── SnoutSpotter.Lambda.ExportDataset/ # Training dataset packaging
 │   │   │   ├── Function.cs                    # Queries labels, downloads images, creates zip + labels.csv
 │   │   │   └── Dockerfile
-│   │   └── SnoutSpotter.Lambda.PiMgmt/        # Pi device registration API (no Okta auth)
+│   │   ├── SnoutSpotter.Lambda.UpdateTrainingProgress/ # IoT Rule target for trainer MQTT progress
+│   │   │   └── Function.cs                    # Deserialises TrainingProgressMessage, patches snout-spotter-training-jobs DynamoDB table
+│   │   └── SnoutSpotter.Lambda.PiMgmt/        # Pi device + trainer registration API (no Okta auth)
 │   │       ├── Controllers/DevicesController.cs
+│   │       ├── Controllers/TrainersController.cs  # POST /api/trainers/register, DELETE, GET
 │   │       ├── Services/DeviceProvisioningService.cs
 │   │       ├── Program.cs
 │   │       └── Dockerfile
@@ -134,10 +137,34 @@ SnoutSpotter/
 │   │   ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
 │   │   └── version.json               # Current Pi software version (written by OTA agent)
 │   │
-│   └── ml/                            # ML training and verification scripts (run locally)
-│       ├── train_detector.py          # Fine-tune YOLOv8n on exported dataset → best.onnx
-│       ├── test_detector.py           # Test the deployed detection model against S3 keyframes or local images
-│       └── verify_onnx.py             # Verify ONNX model is compatible with RunInference/Function.cs
+│   ├── ml/                            # ML training and verification scripts (run locally)
+│   │   ├── train_detector.py          # Fine-tune YOLOv8n on exported dataset → best.onnx
+│   │   ├── test_detector.py           # Test the deployed detection model against S3 keyframes or local images
+│   │   └── verify_onnx.py             # Verify ONNX model is compatible with RunInference/Function.cs
+│   │
+│   ├── shared/                        # Shared .NET class library (SnoutSpotter.Shared.Training)
+│   │   ├── SnoutSpotter.Shared.Training.csproj
+│   │   ├── GpuStatus.cs               # GPU metrics reported in agent shadow
+│   │   ├── AgentReportedState.cs      # Full shadow reported state (agent → API)
+│   │   ├── AgentDesiredState.cs       # Shadow desired state (API → agent): job, cancel, update
+│   │   ├── ShadowEnvelope.cs          # Generic ShadowDesiredUpdate<T>, ShadowReportedUpdate<T>, ShadowDeltaMessage<T>
+│   │   ├── TrainingJobDesired.cs      # Shadow job dispatch payload + TrainingJobParams config
+│   │   ├── TrainingProgress.cs        # Per-epoch MQTT metrics
+│   │   ├── TrainingResult.cs          # Final training result metrics
+│   │   └── TrainingProgressMessage.cs # MQTT envelope for snoutspotter/trainer/+/progress topic
+│   │
+│   └── training-agent/                # .NET training agent (runs in Docker on GPU machine)
+│       ├── Dockerfile                 # Multi-stage: dotnet SDK build + nvidia/cuda:12.1.1 runtime + Python/ultralytics
+│       ├── docker-compose.yml         # NVIDIA runtime, trainer-state volume, AGENT_NAME env var
+│       ├── updater.sh                 # Host-side lifecycle: watches exit codes, pulls new image on code=42
+│       └── SnoutSpotter.TrainingAgent/
+│           ├── Program.cs             # Startup: self-register if no state, load config, connect MQTT, job loop
+│           ├── RegistrationService.cs # First-run: calls /api/trainers/register, saves certs + config to /app/state/
+│           ├── JobRunner.cs           # Download ML scripts + dataset, run training, upload model, publish progress
+│           ├── MqttManager.cs         # AWS IoT Core MQTT client (TLS, auto-reconnect)
+│           ├── GpuInfo.cs             # Calls nvidia-smi, returns GpuStatus
+│           ├── ProgressParser.cs      # Regex parser for YOLO training stdout → TrainingProgress
+│           └── Models/                # Agent-only config models (AgentConfig, IoTConfig, S3Config, etc.)
 │
 └── .github/workflows/
     ├── deploy.yml                     # Main pipeline: path-filtered, only deploys changed components
@@ -313,6 +340,15 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `POST /api/ml/models/activate?version=v2.0` — activate a version (copies to `models/dog-classifier/best.onnx`, writes `active.json`)
 - `POST /api/ml/rerun-inference` — bulk re-run inference on clips (optional `dateFrom`/`dateTo`), queues to SQS
 
+**Training Agents & Jobs:**
+- `GET /api/training/agents` — list registered training agents with online status (from IoT shadow)
+- `GET /api/training/agents/{thingName}` — single agent status + full reported shadow
+- `POST /api/training/agents/{thingName}/update` — trigger agent container update (`{"version": "1.2.0"}`)
+- `POST /api/training/jobs` — submit a training job (dispatched via IoT shadow to an idle agent)
+- `GET /api/training/jobs?status=running&limit=50` — list training jobs
+- `GET /api/training/jobs/{jobId}` — get job detail (config, progress, result)
+- `POST /api/training/jobs/{jobId}/cancel` — request job cancellation
+
 **Pi Management (OTA + Config + Commands):**
 - `GET /api/pi/devices` — list all Pi devices with full shadow state
 - `GET /api/pi/{thingName}/status` — single device status
@@ -333,6 +369,9 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/devices` — list registered device thing names
 - `POST /api/devices/register` — register new device (`{"name": "garden"}`) → returns certs, IoT endpoint, credential provider endpoint
 - `DELETE /api/devices/{thingName}` — deregister device
+- `GET /api/trainers` — list registered training agents
+- `POST /api/trainers/register` — register new training agent (`{"name": "gregs-pc"}`) → returns certs + endpoints; thing name: `snoutspotter-trainer-{name}`
+- `DELETE /api/trainers/{thingName}` — deregister training agent
 
 ---
 
@@ -517,23 +556,42 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 
 ## ML Training Workflow
 
-Training runs locally (requires CUDA GPU). Scripts live in `src/ml/`.
-
 **Model architecture:** YOLOv8n fine-tuned on SnoutSpotter data. 2 classes: `my_dog` (0), `other_dog` (1). Output `[1, 6, 8400]`. AutoLabel Lambda uses stock `yolov8n.onnx` (COCO class 16) for generic dog detection to generate labels.
+
+### Training Agent (recommended)
+
+A .NET agent (`src/training-agent/`) runs in Docker on a GPU machine, registers itself with IoT Core, and receives jobs via IoT shadow.
+
+**First-run setup (one time):**
+```bash
+# src/training-agent/.env
+ECR_REGISTRY=<account-id>.dkr.ecr.eu-west-1.amazonaws.com
+AGENT_NAME=gregs-pc   # becomes IoT thing: snoutspotter-trainer-gregs-pc
+
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+./updater.sh
+```
+On first start the agent calls `POST /api/trainers/register`, saves certs + `config.yaml` to the `trainer-state` Docker volume, and connects. Subsequent starts skip registration.
+
+**Dispatch a job:** Submit via the dashboard (Training page) → API writes `desired.trainingJob` to the agent's IoT shadow → agent downloads ML scripts + dataset from S3, runs `train_detector.py`, uploads `best.onnx` to `models/dog-classifier/versions/`.
+
+**Progress:** Published to `snoutspotter/trainer/{thingName}/progress` → IoT Rule → `UpdateTrainingProgress` Lambda → DynamoDB → dashboard.
+
+**Self-update:** API writes `desired.agentVersion` → agent exits with code 42 → `updater.sh` pulls new image and restarts.
+
+### Manual training (scripts only)
+
+Training scripts in `src/ml/` can be run directly if preferred.
 
 **End-to-end flow:**
 1. Pi records clips → keyframes extracted → AutoLabel Lambda detects dogs + bounding boxes
 2. Human reviews labels in dashboard (Labels page) — confirms `my_dog`/`other_dog`/`no_dog` + breed
 3. Export dataset from dashboard (Training Exports page) → YOLO detection format zip in S3
-4. Train locally: `python src/ml/train_detector.py` (pulls latest export from S3 automatically)
-5. Verify: `python src/ml/verify_onnx.py --model-path src/ml/detector_<id>.onnx --sample-count 5`
+4. `python src/ml/train_detector.py` — pulls latest export from S3, trains, outputs `detector_<id>.onnx`
+5. `python src/ml/verify_onnx.py --model-path src/ml/detector_<id>.onnx --sample-count 5`
 6. Upload via Models page → lands at `models/dog-classifier/best.onnx` → RunInference picks up on next cold start
 
-**Training script flags:**
-- `--data <dir>` — use an already-extracted dataset directory (skips S3 download)
-- `--zip <file>` — use a local export zip
-- `--resume <last.pt>` — resume an interrupted run
-- `--epochs`, `--batch`, `--imgsz`, `--workers` — hyperparameter overrides
+**Training script flags:** `--data <dir>`, `--zip <file>`, `--resume <last.pt>`, `--epochs`, `--batch`, `--imgsz`, `--workers`
 
 **Dataset format** (from ExportDataset Lambda):
 ```
@@ -545,6 +603,10 @@ labels/val/
 manifest.json
 labels.csv
 ```
+
+### Shared types (`src/shared/SnoutSpotter.Shared.Training`)
+
+All IoT shadow and MQTT message types are defined once and shared between the training agent, API, and UpdateTrainingProgress Lambda. Key types: `AgentReportedState`, `AgentDesiredState`, `TrainingJobDesired`, `TrainingProgressMessage`, `TrainingProgress`, `TrainingResult`, `GpuStatus`, and the generic `ShadowDesiredUpdate<T>` / `ShadowReportedUpdate<T>` / `ShadowDeltaMessage<T>` envelope helpers.
 
 ---
 

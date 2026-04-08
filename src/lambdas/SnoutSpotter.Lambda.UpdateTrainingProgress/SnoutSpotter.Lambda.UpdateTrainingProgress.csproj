@@ -14,4 +14,8 @@
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="3.7.400" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\SnoutSpotter.Shared.Training.csproj" />
+  </ItemGroup>
+
 </Project>

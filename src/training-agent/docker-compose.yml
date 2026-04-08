@@ -4,10 +4,10 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - CONFIG_PATH=/app/config.yaml
+      - AGENT_NAME=${AGENT_NAME:-}
+      - TRAINER_REGISTRATION_URL=${TRAINER_REGISTRATION_URL:-https://dl8b12wn88.execute-api.eu-west-1.amazonaws.com}
     volumes:
-      - ./certs:/app/certs:ro
-      - ./config.yaml:/app/config.yaml:ro
+      - trainer-state:/app/state
       - trainer-data:/app/data
       - trainer-models:/app/models
       - trainer-ml:/app/ml
@@ -20,6 +20,7 @@ services:
             - capabilities: [gpu]
 
 volumes:
+  trainer-state:
   trainer-data:
   trainer-models:
   trainer-ml:

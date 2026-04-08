@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY shared/SnoutSpotter.Contracts/SnoutSpotter.Contracts.csproj shared/SnoutSpotter.Contracts/
+COPY shared/SnoutSpotter.Shared.Training.csproj shared/
 COPY api/SnoutSpotter.Api.csproj api/
 RUN dotnet restore api/SnoutSpotter.Api.csproj
 COPY shared/ shared/
