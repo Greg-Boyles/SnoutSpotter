@@ -1,10 +1,12 @@
 # Stage 1: Build .NET agent
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY SnoutSpotter.TrainingAgent/SnoutSpotter.TrainingAgent.csproj SnoutSpotter.TrainingAgent/
-RUN dotnet restore SnoutSpotter.TrainingAgent/SnoutSpotter.TrainingAgent.csproj
-COPY SnoutSpotter.TrainingAgent/ SnoutSpotter.TrainingAgent/
-RUN dotnet publish SnoutSpotter.TrainingAgent -c Release -o /app
+COPY shared/SnoutSpotter.Shared.Training.csproj shared/
+COPY training-agent/SnoutSpotter.TrainingAgent/SnoutSpotter.TrainingAgent.csproj training-agent/SnoutSpotter.TrainingAgent/
+RUN dotnet restore training-agent/SnoutSpotter.TrainingAgent/SnoutSpotter.TrainingAgent.csproj
+COPY shared/ shared/
+COPY training-agent/SnoutSpotter.TrainingAgent/ training-agent/SnoutSpotter.TrainingAgent/
+RUN dotnet publish training-agent/SnoutSpotter.TrainingAgent/SnoutSpotter.TrainingAgent.csproj -c Release -o /app
 
 # Stage 2: Runtime with .NET + Python + CUDA
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
