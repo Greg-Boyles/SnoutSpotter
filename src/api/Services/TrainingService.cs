@@ -48,11 +48,12 @@ public class TrainingService : ITrainingService
                     Online: online,
                     Version: shadow?.AgentVersion,
                     Hostname: shadow?.Hostname,
-                    LastHeartbeat: shadow?.LastHeartbeat));
+                    LastHeartbeat: shadow?.LastHeartbeat,
+                    CurrentJobId: shadow?.CurrentJobId));
             }
             catch
             {
-                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null));
+                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null));
             }
         }
 

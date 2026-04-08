@@ -20,6 +20,7 @@ type TrainerAgent = {
   version: string | null;
   hostname: string | null;
   lastHeartbeat: string | null;
+  currentJobId: string | null;
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -103,11 +104,18 @@ export default function TrainingJobs() {
                 {agent.version && (
                   <span className="text-xs text-gray-400">v{agent.version}</span>
                 )}
-                {agent.lastHeartbeat && (
+                {agent.currentJobId ? (
+                  <Link
+                    to={`/training/${agent.currentJobId}`}
+                    className="text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium hover:bg-amber-200"
+                  >
+                    {agent.currentJobId}
+                  </Link>
+                ) : agent.lastHeartbeat ? (
                   <span className="text-xs text-gray-400">
                     {formatDistanceToNow(new Date(agent.lastHeartbeat), { addSuffix: true })}
                   </span>
-                )}
+                ) : null}
               </div>
             ))}
           </div>
