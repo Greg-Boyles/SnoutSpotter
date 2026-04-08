@@ -38,6 +38,7 @@ public class ApiStack : Stack
         // Read from SSM — written by AutoLabelStack, resolved at deploy time (no cross-stack dependency)
         var backfillQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/auto-label/backfill-queue-url");
         var rerunInferenceQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/inference/rerun-queue-url");
+        var trainingJobQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/training/job-queue-url");
 
         // Lambda function running ASP.NET Core API via Lambda Web Adapter
         var apiFunction = new DockerImageFunction(this, "ApiFunction", new DockerImageFunctionProps
@@ -68,7 +69,8 @@ public class ApiStack : Stack
                 ["INFERENCE_FUNCTION"] = props.InferenceFunctionName,
                 ["RERUN_INFERENCE_QUEUE_URL"] = rerunInferenceQueueUrl,
                 ["TRAINING_JOBS_TABLE"] = props.TrainingJobsTable.TableName,
-                ["TRAINER_THING_GROUP"] = props.TrainerThingGroupName
+                ["TRAINER_THING_GROUP"] = props.TrainerThingGroupName,
+                ["TRAINING_JOB_QUEUE_URL"] = trainingJobQueueUrl
             }
         });
 
@@ -147,6 +149,14 @@ public class ApiStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[] { "sqs:SendMessage" },
             Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-backfill-boxes" }
+        }));
+
+        // SQS SendMessage for training job queue
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "sqs:SendMessage" },
+            Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-training-jobs-queue" }
         }));
 
         // IoT Publish for device commands

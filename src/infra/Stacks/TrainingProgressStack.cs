@@ -3,6 +3,8 @@ using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
+using Amazon.CDK.AWS.SQS;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 using IoT = Amazon.CDK.AWS.IoT;
 
@@ -64,6 +66,31 @@ public class TrainingProgressStack : Stack
                 },
                 RuleDisabled = false
             }
+        });
+
+        // SQS queue for training job dispatch (API produces, training agents consume)
+        var jobDlq = new Queue(this, "TrainingJobDlq", new QueueProps
+        {
+            QueueName = "snout-spotter-training-jobs-dlq",
+            RetentionPeriod = Duration.Days(7)
+        });
+
+        var jobQueue = new Queue(this, "TrainingJobQueue", new QueueProps
+        {
+            QueueName = "snout-spotter-training-jobs-queue",
+            VisibilityTimeout = Duration.Hours(12),
+            RetentionPeriod = Duration.Days(3),
+            DeadLetterQueue = new DeadLetterQueue
+            {
+                Queue = jobDlq,
+                MaxReceiveCount = 2
+            }
+        });
+
+        _ = new StringParameter(this, "TrainingJobQueueUrlParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/training/job-queue-url",
+            StringValue = jobQueue.QueueUrl
         });
     }
 }
