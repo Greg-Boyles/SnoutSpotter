@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Upload, CheckCircle, AlertCircle, Cpu, Loader2, Zap } from "lucide-react";
+import { ArrowLeft, Upload, CheckCircle, AlertCircle, Cpu, Loader2, Zap, RefreshCw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { api } from "../api";
 
@@ -31,6 +31,12 @@ export default function Models() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [activating, setActivating] = useState<string | null>(null);
+
+  // Re-run inference state
+  const [rerunFrom, setRerunFrom] = useState("");
+  const [rerunTo, setRerunTo] = useState("");
+  const [rerunning, setRerunning] = useState(false);
+  const [showRerunPrompt, setShowRerunPrompt] = useState(false);
 
   const loadModels = async () => {
     try {
@@ -109,6 +115,7 @@ export default function Models() {
     try {
       await api.activateModel(version);
       setSuccess(`Version "${version}" is now active`);
+      setShowRerunPrompt(true);
       loadModels();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Activation failed");
@@ -265,6 +272,97 @@ export default function Models() {
           </table>
         </div>
       )}
+
+      {/* Post-activation prompt */}
+      {showRerunPrompt && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-blue-800">Model activated</p>
+            <p className="text-xs text-blue-600 mt-0.5">Re-run inference on existing clips to apply the new model?</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowRerunPrompt(false)}
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg"
+            >
+              Dismiss
+            </button>
+            <button
+              onClick={async () => {
+                setShowRerunPrompt(false);
+                setRerunning(true);
+                setError(null);
+                try {
+                  const result = await api.rerunInference();
+                  setSuccess(`Queued ${result.total} clips for inference re-run`);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Re-run failed");
+                } finally {
+                  setRerunning(false);
+                }
+              }}
+              disabled={rerunning}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+            >
+              {rerunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              Re-run All
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Re-run Inference */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">Re-run Inference</h2>
+        <p className="text-xs text-gray-500 mb-4">
+          Re-run the active model on existing clips. Leave dates empty to process all clips.
+        </p>
+        <div className="flex items-end gap-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">From</label>
+            <input
+              type="date"
+              value={rerunFrom}
+              onChange={(e) => setRerunFrom(e.target.value)}
+              disabled={rerunning}
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">To</label>
+            <input
+              type="date"
+              value={rerunTo}
+              onChange={(e) => setRerunTo(e.target.value)}
+              disabled={rerunning}
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg disabled:opacity-50"
+            />
+          </div>
+          <button
+            onClick={async () => {
+              setRerunning(true);
+              setError(null);
+              setSuccess(null);
+              try {
+                // Convert YYYY-MM-DD to YYYY/MM/DD for the API
+                const dateFrom = rerunFrom ? rerunFrom.replace(/-/g, "/") : undefined;
+                const dateTo = rerunTo ? rerunTo.replace(/-/g, "/") : undefined;
+                const result = await api.rerunInference(dateFrom, dateTo);
+                setSuccess(`Queued ${result.total} clips for inference re-run`);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Re-run failed");
+              } finally {
+                setRerunning(false);
+              }
+            }}
+            disabled={rerunning}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            {rerunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {rerunning ? "Queuing..." : "Re-run Inference"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

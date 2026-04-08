@@ -37,6 +37,7 @@ public class ApiStack : Stack
 
         // Read from SSM — written by AutoLabelStack, resolved at deploy time (no cross-stack dependency)
         var backfillQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/auto-label/backfill-queue-url");
+        var rerunInferenceQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/inference/rerun-queue-url");
 
         // Lambda function running ASP.NET Core API via Lambda Web Adapter
         var apiFunction = new DockerImageFunction(this, "ApiFunction", new DockerImageFunctionProps
@@ -65,6 +66,7 @@ public class ApiStack : Stack
                 ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
                 ["EXPORT_DATASET_FUNCTION"] = props.ExportDatasetFunctionName,
                 ["INFERENCE_FUNCTION"] = props.InferenceFunctionName,
+                ["RERUN_INFERENCE_QUEUE_URL"] = rerunInferenceQueueUrl,
                 ["TRAINING_JOBS_TABLE"] = props.TrainingJobsTable.TableName,
                 ["TRAINER_THING_GROUP"] = props.TrainerThingGroupName
             }
@@ -82,6 +84,14 @@ public class ApiStack : Stack
         props.DataBucket.GrantRead(apiFunction, "raw-clips/*");
         props.DataBucket.GrantRead(apiFunction, "keyframes/*");
         props.DataBucket.GrantDelete(apiFunction);
+
+        // SQS permissions for rerun-inference queue
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "sqs:SendMessage", "sqs:SendMessageBatch" },
+            Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-rerun-inference" }
+        }));
 
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
