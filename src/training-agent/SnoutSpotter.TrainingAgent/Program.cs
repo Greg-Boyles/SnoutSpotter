@@ -57,15 +57,8 @@ var s3 = new AmazonS3Client(iotCreds, region);
 var sqs = new AmazonSQSClient(iotCreds, region);
 var dynamoDb = new AmazonDynamoDBClient(iotCreds, region);
 
-// Discover S3 bucket if not set in config
 if (string.IsNullOrEmpty(config.S3.Bucket))
-{
-    var buckets = await s3.ListBucketsAsync();
-    config.S3.Bucket = buckets.Buckets
-        .FirstOrDefault(b => b.BucketName.StartsWith("snout-spotter-"))?.BucketName
-        ?? throw new InvalidOperationException("Could not find snout-spotter-* S3 bucket");
-    logger.LogInformation("Discovered S3 bucket: {Bucket}", config.S3.Bucket);
-}
+    throw new InvalidOperationException("S3 bucket not set in config — re-register to pick it up from the API");
 
 var queueUrl = config.Training?.JobQueueUrl
     ?? Environment.GetEnvironmentVariable("TRAINING_JOB_QUEUE_URL")

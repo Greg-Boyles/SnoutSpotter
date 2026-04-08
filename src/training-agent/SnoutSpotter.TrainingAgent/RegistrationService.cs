@@ -60,7 +60,7 @@ public static class RegistrationService
                 KeyPath    = keyPath,
                 RootCaPath = caPath
             },
-            S3 = new GeneratedS3Config { Region = "eu-west-1" },
+            S3 = new GeneratedS3Config { Region = "eu-west-1", Bucket = result.S3Bucket ?? "" },
             CredentialsProvider = new GeneratedCredentialsProviderConfig
             {
                 Endpoint = result.CredentialProviderEndpoint
@@ -82,7 +82,8 @@ public static class RegistrationService
         [property: JsonPropertyName("certificateArn")]             string CertificateArn,
         [property: JsonPropertyName("ioTEndpoint")]                string IoTEndpoint,
         [property: JsonPropertyName("credentialProviderEndpoint")] string CredentialProviderEndpoint,
-        [property: JsonPropertyName("rootCaUrl")]                  string RootCaUrl);
+        [property: JsonPropertyName("rootCaUrl")]                  string RootCaUrl,
+        [property: JsonPropertyName("s3Bucket")]                   string? S3Bucket);
 
     // Local classes mirroring AgentConfig for YAML serialisation
     private class GeneratedConfig
@@ -105,6 +106,7 @@ public static class RegistrationService
     private class GeneratedS3Config
     {
         public string Region { get; set; } = "eu-west-1";
+        public string Bucket { get; set; } = "";
     }
 
     private class GeneratedCredentialsProviderConfig

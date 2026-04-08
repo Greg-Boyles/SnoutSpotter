@@ -26,6 +26,7 @@ public class PiMgmtStack : Stack
         var iotPolicyName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/policy-name");
         var trainerThingGroupName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/trainer-thing-group-name");
         var trainerPolicyName = StringParameter.ValueForStringParameter(this, "/snoutspotter/iot/trainer-policy-name");
+        var dataBucketName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/data-bucket-name");
 
         // Lambda function for Pi Management API
         var piMgmtFunction = new DockerImageFunction(this, "PiMgmtFunction", new DockerImageFunctionProps
@@ -44,6 +45,7 @@ public class PiMgmtStack : Stack
                 ["IOT_POLICY_NAME"] = iotPolicyName,
                 ["IOT_TRAINER_THING_GROUP"] = trainerThingGroupName,
                 ["IOT_TRAINER_POLICY_NAME"] = trainerPolicyName,
+                ["DATA_BUCKET"] = dataBucketName,
                 ["AWS_LWA_PORT"] = "8080"
             }
         });

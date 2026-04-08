@@ -11,6 +11,8 @@ public class DeviceProvisioningService
     private readonly string _trainerThingGroupName;
     private readonly string _trainerPolicyName;
 
+    private readonly string? _dataBucket;
+
     public DeviceProvisioningService(IAmazonIoT iot, IConfiguration configuration)
     {
         _iot = iot;
@@ -20,6 +22,7 @@ public class DeviceProvisioningService
             ?? throw new InvalidOperationException("IOT_POLICY_NAME not configured");
         _trainerThingGroupName = configuration["IOT_TRAINER_THING_GROUP"] ?? "snoutspotter-trainers";
         _trainerPolicyName = configuration["IOT_TRAINER_POLICY_NAME"] ?? "snoutspotter-trainer-policy";
+        _dataBucket = configuration["DATA_BUCKET"];
     }
 
     // ── Pi devices ──
@@ -101,7 +104,8 @@ public class DeviceProvisioningService
                     CertificateArn = certificateArn,
                     IoTEndpoint = dataEndpointTask.Result.EndpointAddress,
                     CredentialProviderEndpoint = credEndpointTask.Result.EndpointAddress,
-                    RootCaUrl = "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
+                    RootCaUrl = "https://www.amazontrust.com/repository/AmazonRootCA1.pem",
+                    S3Bucket = _dataBucket
                 };
             }
             catch
