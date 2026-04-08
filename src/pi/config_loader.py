@@ -13,7 +13,7 @@ INSTALL_DIR = Path(__file__).parent
 # Only validates structure — value ranges are checked by config_schema.py.
 REQUIRED_SCHEMA: dict[str, dict[str, type]] = {
     "motion": {"threshold": int, "blur_kernel": int, "min_area": int},
-    "camera": {"preview_resolution": list, "record_resolution": list, "detection_fps": int, "record_fps": int},
+    "camera": {"preview_resolution": str, "record_resolution": str, "detection_fps": int, "record_fps": int},
     "recording": {"output_dir": str, "max_clip_length": int, "post_motion_buffer": int},
     "upload": {"bucket_name": str, "region": str, "prefix": str, "max_retries": int},
     "health": {"namespace": str, "metric_name": str, "interval_seconds": int},

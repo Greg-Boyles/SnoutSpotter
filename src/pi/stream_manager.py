@@ -17,11 +17,11 @@ logger = logging.getLogger("snout-spotter-stream")
 
 def _build_pipeline_cmd(thing_name: str, config: dict) -> str:
     stream_cfg = config.get("streaming", {})
-    raw_res = stream_cfg.get("resolution", [640, 480])
+    raw_res = stream_cfg.get("resolution", "640x480")
     if isinstance(raw_res, str):
         res = [int(x) for x in raw_res.split("x")]
     else:
-        res = raw_res
+        res = raw_res  # backward compat with list format
     fps = stream_cfg.get("framerate", 15)
     bitrate = stream_cfg.get("bitrate", 800)
     region = stream_cfg.get("kvs_region", "eu-west-1")
