@@ -9,4 +9,5 @@ public class DeviceRegistrationResult
     public required string IoTEndpoint { get; init; }
     public required string CredentialProviderEndpoint { get; init; }
     public required string RootCaUrl { get; init; }
+    public string? S3Bucket { get; init; }
 }

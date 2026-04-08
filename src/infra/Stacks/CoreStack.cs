@@ -2,6 +2,7 @@ using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.S3;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -347,6 +348,12 @@ public class CoreStack : Stack
         {
             Value = ApiEcrRepo.RepositoryUri,
             Description = "ECR repository URI for the API"
+        });
+
+        _ = new StringParameter(this, "DataBucketNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/data-bucket-name",
+            StringValue = DataBucket.BucketName
         });
 
         _ = new CfnOutput(this, "DataBucketName", new CfnOutputProps
