@@ -27,6 +27,10 @@ RUN pip3 install --no-cache-dir \
     torch torchvision --index-url https://download.pytorch.org/whl/cu121 && \
     pip3 install --no-cache-dir ultralytics onnx
 
+# Version baked in at build time
+ARG AGENT_VERSION=dev
+ENV AGENT_VERSION=${AGENT_VERSION}
+
 # Copy .NET agent (training scripts are downloaded from S3 at runtime)
 COPY --from=build /app /app
 
