@@ -153,8 +153,8 @@ try
 {
     while (!cts.Token.IsCancellationRequested)
     {
-        // Heartbeat every 5 minutes
-        if ((DateTime.UtcNow - lastHeartbeat).TotalMinutes >= 5)
+        // Heartbeat every minute
+        if ((DateTime.UtcNow - lastHeartbeat).TotalMinutes >= 1)
         {
             await ReportShadow(isTraining ? "training" : "idle", currentJobId);
             lastHeartbeat = DateTime.UtcNow;
