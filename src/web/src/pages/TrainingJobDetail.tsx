@@ -259,6 +259,31 @@ export default function TrainingJobDetail() {
           </div>
         ) : null}
 
+        {/* Download progress */}
+        {job.status === "downloading" && progress?.download_total_bytes != null && (
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-700">Downloading dataset</span>
+              <span className="text-sm text-gray-500">
+                {((progress.download_bytes as number ?? 0) / (1024 * 1024)).toFixed(0)} /
+                {" "}{((progress.download_total_bytes as number) / (1024 * 1024)).toFixed(0)} MB
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+              <div
+                className="bg-blue-500 h-3 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, ((progress.download_bytes as number ?? 0) / (progress.download_total_bytes as number)) * 100)}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>{Math.round(((progress.download_bytes as number ?? 0) / (progress.download_total_bytes as number)) * 100)}%</span>
+              {progress.download_speed_mbps != null && (
+                <span>{(progress.download_speed_mbps as number).toFixed(1)} MB/s</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Progress bar */}
         {(isRunning || isComplete) && totalEpochs > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-5">
