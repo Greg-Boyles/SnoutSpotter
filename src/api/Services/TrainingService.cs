@@ -41,7 +41,7 @@ public class TrainingService : ITrainingService
                 var shadow = await GetShadowReportedAsync(thingName);
                 var online = shadow?.LastHeartbeat != null &&
                     DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
-                    (DateTime.UtcNow - lastHb).TotalMinutes < 5;
+                    (DateTime.UtcNow - lastHb).TotalMinutes < 2;
 
                 var gpu = shadow?.Gpu == null ? null : new TrainerGpuSummary(
                     shadow.Gpu.Name,
@@ -81,7 +81,7 @@ public class TrainingService : ITrainingService
 
         var online = shadow.LastHeartbeat != null &&
             DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
-            (DateTime.UtcNow - lastHb).TotalMinutes < 5;
+            (DateTime.UtcNow - lastHb).TotalMinutes < 2;
 
         return new { thingName, online, reported = shadow };
     }

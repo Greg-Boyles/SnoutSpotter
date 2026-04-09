@@ -153,8 +153,8 @@ try
 {
     while (!cts.Token.IsCancellationRequested)
     {
-        // Heartbeat every 5 minutes
-        if ((DateTime.UtcNow - lastHeartbeat).TotalMinutes >= 5)
+        // Heartbeat every minute
+        if ((DateTime.UtcNow - lastHeartbeat).TotalMinutes >= 1)
         {
             await ReportShadow(isTraining ? "training" : "idle", currentJobId);
             lastHeartbeat = DateTime.UtcNow;
@@ -272,5 +272,9 @@ try
 }
 catch (OperationCanceledException) { }
 
-logger.LogInformation("Agent shutting down");
+logger.LogInformation("Agent shutting down — reporting offline");
+try { await ReportShadow("offline"); }
+catch (Exception ex) { logger.LogWarning("Failed to report offline status on shutdown: {Error}", ex.Message); }
+// mqtt is await using — DisconnectAsync called automatically on dispose
+
 return 0;
