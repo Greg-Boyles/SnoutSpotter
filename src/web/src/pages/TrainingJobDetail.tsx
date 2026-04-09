@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Loader2, CheckCircle, XCircle, Play, Square, Zap } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, Loader2, CheckCircle, XCircle, Play, Square, Zap, Copy } from "lucide-react";
+import { formatDistanceToNow, format } from "date-fns";
 import { api } from "../api";
 
 type JobDetail = {
@@ -23,8 +23,92 @@ function parseJson(s: string | null): Record<string, unknown> | null {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const h = Math.floor(m / 60);
+  if (h > 0) return `${h}h ${m % 60}m`;
+  return `${m}m ${seconds % 60}s`;
+}
+
+function MAP50Value({ value, label }: { value: number; label: string }) {
+  const color = value >= 0.8 ? "text-green-600" : value >= 0.6 ? "text-amber-600" : "text-red-600";
+  const bg = value >= 0.8 ? "bg-green-50" : value >= 0.6 ? "bg-amber-50" : "bg-red-50";
+  const hint = value >= 0.8 ? "Good" : value >= 0.6 ? "Moderate" : "Low";
+  return (
+    <div className={`rounded-xl p-4 ${bg} text-center`}>
+      <p className={`text-2xl font-bold ${color}`}>{value.toFixed(3)}</p>
+      <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+      <p className={`text-xs font-medium mt-1 ${color}`}>{hint}</p>
+    </div>
+  );
+}
+
+const STAGES = [
+  { key: "pending", label: "Pending" },
+  { key: "downloading", label: "Downloading" },
+  { key: "training", label: "Training" },
+  { key: "uploading", label: "Uploading" },
+  { key: "complete", label: "Complete" },
+] as const;
+
+function stageIndex(status: string): number {
+  const map: Record<string, number> = {
+    pending: 0,
+    downloading: 1,
+    training: 2,
+    uploading: 3,
+    complete: 4,
+    cancelling: 2,
+    cancelled: -1,
+    failed: -1,
+  };
+  return map[status] ?? 0;
+}
+
+function StageTimeline({ status }: { status: string }) {
+  const current = stageIndex(status);
+  const isFailed = status === "failed";
+  const isCancelled = status === "cancelled" || status === "cancelling";
+
+  return (
+    <div className="flex items-center gap-0">
+      {STAGES.map((stage, idx) => {
+        const done = current > idx;
+        const active = current === idx && !isFailed && !isCancelled;
+        const isLast = idx === STAGES.length - 1;
+
+        const dotColor = isFailed && active
+          ? "bg-red-500"
+          : done || (active && !isFailed)
+            ? active ? "bg-amber-500 animate-pulse" : "bg-green-500"
+            : "bg-gray-200";
+
+        const lineColor = done ? "bg-green-200" : "bg-gray-100";
+
+        return (
+          <div key={stage.key} className="flex items-center flex-1 min-w-0">
+            <div className="flex flex-col items-center">
+              <div className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
+              <span className={`text-xs mt-1 whitespace-nowrap ${
+                done ? "text-green-600 font-medium" :
+                active ? "text-amber-600 font-medium" :
+                "text-gray-400"
+              }`}>{stage.label}</span>
+            </div>
+            {!isLast && (
+              <div className={`flex-1 h-0.5 mx-1 ${lineColor}`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function TrainingJobDetail() {
   const { jobId } = useParams<{ jobId: string }>();
+  const navigate = useNavigate();
   const [job, setJob] = useState<JobDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +157,16 @@ export default function TrainingJobDetail() {
     setActivating(false);
   };
 
+  const handleClone = () => {
+    const config = parseJson(job?.config ?? null);
+    navigate("/training/new", {
+      state: {
+        exportId: job?.exportId,
+        config,
+      },
+    });
+  };
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-gray-400">
@@ -103,36 +197,68 @@ export default function TrainingJobDetail() {
   const totalEpochs = (progress?.total_epochs as number) ?? (config?.epochs as number) ?? 0;
   const percent = totalEpochs > 0 ? Math.round((epoch / totalEpochs) * 100) : 0;
 
+  const agentDisplayName = job.agentThingName?.replace("snoutspotter-trainer-", "");
+  const createdLabel = job.createdAt
+    ? format(new Date(job.createdAt), "d MMM yyyy, HH:mm")
+    : null;
+
   return (
     <div className="max-w-2xl">
       <Link to="/training" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
         <ArrowLeft className="w-4 h-4" /> Training Jobs
       </Link>
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{job.jobId}</h1>
+          <h1 className="text-xl font-bold text-gray-900">
+            {job.exportId
+              ? <>Export <span className="font-mono">{job.exportId.slice(0, 8)}</span></>
+              : "Training Job"}
+          </h1>
+          <p className="text-xs font-mono text-gray-400 mt-0.5">{job.jobId}</p>
           <p className="text-sm text-gray-500 mt-1">
-            {job.agentThingName?.replace("snoutspotter-trainer-", "") || "Unassigned"}
-            {job.createdAt && ` · Created ${formatDistanceToNow(new Date(job.createdAt), { addSuffix: true })}`}
+            {createdLabel}
+            {agentDisplayName && ` · ${agentDisplayName}`}
           </p>
         </div>
-        <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${
-          isComplete ? "bg-green-100 text-green-700" :
-          job.status === "failed" ? "bg-red-100 text-red-700" :
-          isRunning ? "bg-amber-100 text-amber-700" :
-          "bg-gray-100 text-gray-600"
-        }`}>
-          {isComplete && <CheckCircle className="w-4 h-4" />}
-          {job.status === "failed" && <XCircle className="w-4 h-4" />}
-          {job.status === "training" && <Play className="w-4 h-4" />}
-          {job.status}
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleClone}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+          >
+            <Copy className="w-3.5 h-3.5" /> Clone
+          </button>
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${
+            isComplete ? "bg-green-100 text-green-700" :
+            job.status === "failed" ? "bg-red-100 text-red-700" :
+            job.status === "cancelled" ? "bg-gray-100 text-gray-600" :
+            isRunning ? "bg-amber-100 text-amber-700" :
+            "bg-gray-100 text-gray-600"
+          }`}>
+            {isComplete && <CheckCircle className="w-4 h-4" />}
+            {job.status === "failed" && <XCircle className="w-4 h-4" />}
+            {job.status === "training" && <Play className="w-4 h-4" />}
+            {job.status}
+          </span>
+        </div>
       </div>
 
       {error && <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">{error}</div>}
 
       <div className="space-y-4">
+        {/* Stage timeline */}
+        {job.status !== "pending" || true ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <StageTimeline status={job.status} />
+            {(job.status === "failed" || job.status === "cancelled") && (
+              <p className="text-xs text-gray-400 mt-3 text-center">
+                Job {job.status}
+                {job.completedAt && ` ${formatDistanceToNow(new Date(job.completedAt), { addSuffix: true })}`}
+              </p>
+            )}
+          </div>
+        ) : null}
+
         {/* Progress bar */}
         {(isRunning || isComplete) && totalEpochs > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -156,10 +282,10 @@ export default function TrainingJobDetail() {
           </div>
         )}
 
-        {/* Metrics */}
-        {progress && (
+        {/* Live metrics */}
+        {progress && (isRunning || (isComplete && !result)) && (
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">Metrics</h3>
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Live Metrics</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {progress.mAP50 != null && (
                 <div>
@@ -204,12 +330,27 @@ export default function TrainingJobDetail() {
         {/* Final result */}
         {result && (
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">Results</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900">Results</h3>
+              {result.training_time_seconds != null && (
+                <span className="text-xs text-gray-400">
+                  Training took {formatDuration(result.training_time_seconds as number)}
+                </span>
+              )}
+            </div>
+
+            {/* mAP50 hero metric */}
+            {result.final_mAP50 != null && (
+              <div className="mb-4">
+                <MAP50Value value={result.final_mAP50 as number} label="Final mAP50" />
+              </div>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-              {result.final_mAP50 != null && (
+              {result.final_mAP50_95 != null && (
                 <div>
-                  <p className="text-lg font-bold text-green-600">{(result.final_mAP50 as number).toFixed(3)}</p>
-                  <p className="text-xs text-gray-500">Final mAP50</p>
+                  <p className="text-lg font-bold text-gray-900">{(result.final_mAP50_95 as number).toFixed(3)}</p>
+                  <p className="text-xs text-gray-500">mAP50-95</p>
                 </div>
               )}
               {result.precision != null && (
@@ -228,6 +369,18 @@ export default function TrainingJobDetail() {
                 <div>
                   <p className="text-lg font-bold text-gray-900">{result.best_epoch as number}</p>
                   <p className="text-xs text-gray-500">Best Epoch</p>
+                </div>
+              )}
+              {result.dataset_images != null && (
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{result.dataset_images as number}</p>
+                  <p className="text-xs text-gray-500">Dataset Images</p>
+                </div>
+              )}
+              {result.model_size_mb != null && (
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{(result.model_size_mb as number).toFixed(1)} MB</p>
+                  <p className="text-xs text-gray-500">Model Size</p>
                 </div>
               )}
             </div>
@@ -263,7 +416,7 @@ export default function TrainingJobDetail() {
         {job.error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-5">
             <h3 className="text-sm font-semibold text-red-800 mb-1">Error</h3>
-            <p className="text-sm text-red-700">{job.error}</p>
+            <p className="text-sm text-red-700 font-mono">{job.error}</p>
           </div>
         )}
 

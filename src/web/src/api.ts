@@ -232,7 +232,7 @@ export const api = {
 
   // Training
   listTrainingAgents: () =>
-    fetchJson<{ agents: { thingName: string; online: boolean; version: string | null; hostname: string | null; lastHeartbeat: string | null; currentJobId: string | null }[] }>("/training/agents"),
+    fetchJson<{ agents: { thingName: string; online: boolean; version: string | null; hostname: string | null; lastHeartbeat: string | null; currentJobId: string | null; status?: string | null; gpu?: { name: string; vramMb: number; temperatureC: number; utilizationPercent: number } | null; currentJobProgress?: { epoch: number; total_epochs: number; mAP50?: number } | null }[] }>("/training/agents"),
 
   getTrainingAgentStatus: (thingName: string) =>
     fetchJson<{ thingName: string; online: boolean; reported: Record<string, unknown> | null }>(`/training/agents/${thingName}`),
@@ -244,7 +244,7 @@ export const api = {
     postJson<{ jobId: string }>("/training/jobs", config),
 
   listTrainingJobs: (status?: string, limit = 50) =>
-    fetchJson<{ jobs: { jobId: string; status: string; agentThingName: string | null; exportId: string | null; epochs: number | null; createdAt: string | null; completedAt: string | null }[] }>(`/training/jobs?${status ? `status=${status}&` : ""}limit=${limit}`),
+    fetchJson<{ jobs: { jobId: string; status: string; agentThingName: string | null; exportId: string | null; epochs: number | null; createdAt: string | null; startedAt: string | null; completedAt: string | null; finalMAP50: number | null }[] }>(`/training/jobs?${status ? `status=${status}&` : ""}limit=${limit}`),
 
   getTrainingJob: (jobId: string) =>
     fetchJson<{ jobId: string; status: string; agentThingName: string | null; exportId: string | null; exportS3Key: string | null; config: string | null; progress: string | null; result: string | null; checkpointS3Key: string | null; error: string | null; createdAt: string | null; startedAt: string | null; completedAt: string | null }>(`/training/jobs/${jobId}`),

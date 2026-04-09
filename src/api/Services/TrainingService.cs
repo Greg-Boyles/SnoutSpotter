@@ -43,17 +43,31 @@ public class TrainingService : ITrainingService
                     DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
                     (DateTime.UtcNow - lastHb).TotalMinutes < 5;
 
+                var gpu = shadow?.Gpu == null ? null : new TrainerGpuSummary(
+                    shadow.Gpu.Name,
+                    shadow.Gpu.VramMb,
+                    shadow.Gpu.TemperatureC,
+                    shadow.Gpu.UtilizationPercent);
+
+                var progress = shadow?.CurrentJobProgress == null ? null : new TrainerProgressSummary(
+                    shadow.CurrentJobProgress.Epoch,
+                    shadow.CurrentJobProgress.TotalEpochs,
+                    shadow.CurrentJobProgress.MAP50);
+
                 agents.Add(new TrainerAgentSummary(
                     ThingName: thingName,
                     Online: online,
                     Version: shadow?.AgentVersion,
                     Hostname: shadow?.Hostname,
                     LastHeartbeat: shadow?.LastHeartbeat,
-                    CurrentJobId: shadow?.CurrentJobId));
+                    CurrentJobId: shadow?.CurrentJobId,
+                    Status: shadow?.Status,
+                    Gpu: gpu,
+                    CurrentJobProgress: progress));
             }
             catch
             {
-                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null));
+                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null, null, null, null));
             }
         }
 
@@ -178,6 +192,18 @@ public class TrainingService : ITrainingService
                 epochs = cfg?.Epochs;
             }
 
+            double? finalMAP50 = null;
+            var resultJson = item.GetValueOrDefault("result")?.S;
+            if (resultJson != null)
+            {
+                try
+                {
+                    var r = JsonSerializer.Deserialize<SnoutSpotter.Shared.Training.TrainingResult>(resultJson);
+                    if (r?.FinalMAP50 > 0) finalMAP50 = r.FinalMAP50;
+                }
+                catch { }
+            }
+
             return new TrainingJobSummary(
                 JobId: item.GetValueOrDefault("job_id")?.S ?? "",
                 Status: item.GetValueOrDefault("status")?.S ?? "",
@@ -185,7 +211,9 @@ public class TrainingService : ITrainingService
                 ExportId: item.GetValueOrDefault("export_id")?.S,
                 Epochs: epochs,
                 CreatedAt: item.GetValueOrDefault("created_at")?.S,
-                CompletedAt: item.GetValueOrDefault("completed_at")?.S);
+                StartedAt: item.GetValueOrDefault("started_at")?.S,
+                CompletedAt: item.GetValueOrDefault("completed_at")?.S,
+                FinalMAP50: finalMAP50);
         })
         .OrderByDescending(j => j.CreatedAt)
         .ToList();

@@ -22,6 +22,7 @@ import PiPackages from "./pages/PiPackages";
 import TrainingJobs from "./pages/TrainingJobs";
 import SubmitTraining from "./pages/SubmitTraining";
 import TrainingJobDetail from "./pages/TrainingJobDetail";
+import TrainingAgentDetail from "./pages/TrainingAgentDetail";
 import { setAuthGetter } from "./api";
 
 const navItems = [
@@ -159,6 +160,7 @@ export default function App() {
                   <Route path="/settings" element={<ServerSettings />} />
                   <Route path="/training" element={<TrainingJobs />} />
                   <Route path="/training/new" element={<SubmitTraining />} />
+                  <Route path="/training/agents/:thingName" element={<TrainingAgentDetail />} />
                   <Route path="/training/:jobId" element={<TrainingJobDetail />} />
                   <Route path="/pi-packages" element={<PiPackages />} />
                   <Route path="/health" element={<SystemHealthPage />} />
