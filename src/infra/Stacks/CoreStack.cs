@@ -21,6 +21,7 @@ public class CoreStack : Stack
     public Table LabelsTable { get; }
     public Table ExportsTable { get; }
     public Table TrainingJobsTable { get; }
+    public Table SettingsTable { get; }
     public Repository AutoLabelEcrRepo { get; }
     public Repository ExportDatasetEcrRepo { get; }
     public Repository TrainingAgentEcrRepo { get; }
@@ -313,6 +314,15 @@ public class CoreStack : Stack
             ProjectionType = ProjectionType.ALL
         });
 
+        // DynamoDB table for server-side settings (Lambda processing config)
+        SettingsTable = new Table(this, "SettingsTable", new TableProps
+        {
+            TableName = "snout-spotter-settings",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "setting_key", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.DESTROY,
+        });
+
         // ECR repository for Training Agent Docker image
         TrainingAgentEcrRepo = new Repository(this, "TrainingAgentEcrRepo", new RepositoryProps
         {
@@ -354,6 +364,12 @@ public class CoreStack : Stack
         {
             ParameterName = "/snoutspotter/core/data-bucket-name",
             StringValue = DataBucket.BucketName
+        });
+
+        _ = new StringParameter(this, "SettingsTableNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/settings-table-name",
+            StringValue = SettingsTable.TableName
         });
 
         _ = new CfnOutput(this, "DataBucketName", new CfnOutputProps

@@ -37,6 +37,7 @@ public class ApiStack : Stack
 
         // Read from SSM — written by AutoLabelStack, resolved at deploy time (no cross-stack dependency)
         var backfillQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/auto-label/backfill-queue-url");
+        var settingsTableName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name");
         var rerunInferenceQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/inference/rerun-queue-url");
         var trainingJobQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/training/job-queue-url");
 
@@ -70,7 +71,8 @@ public class ApiStack : Stack
                 ["RERUN_INFERENCE_QUEUE_URL"] = rerunInferenceQueueUrl,
                 ["TRAINING_JOBS_TABLE"] = props.TrainingJobsTable.TableName,
                 ["TRAINER_THING_GROUP"] = props.TrainerThingGroupName,
-                ["TRAINING_JOB_QUEUE_URL"] = trainingJobQueueUrl
+                ["TRAINING_JOB_QUEUE_URL"] = trainingJobQueueUrl,
+                ["SETTINGS_TABLE"] = settingsTableName
             }
         });
 
@@ -79,6 +81,14 @@ public class ApiStack : Stack
         props.LabelsTable.GrantReadWriteData(apiFunction);
         props.ExportsTable.GrantReadWriteData(apiFunction);
         props.TrainingJobsTable.GrantReadWriteData(apiFunction);
+
+        // Settings table (resolved via SSM, not cross-stack)
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Scan" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-settings" }
+        }));
         props.DataBucket.GrantRead(apiFunction);
         props.DataBucket.GrantPut(apiFunction, "training-uploads/*");
         props.DataBucket.GrantPut(apiFunction, "models/*");

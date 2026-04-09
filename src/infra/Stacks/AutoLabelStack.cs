@@ -1,6 +1,7 @@
 using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
+using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.Lambda.EventSources;
 using Amazon.CDK.AWS.S3;
@@ -59,12 +60,19 @@ public class AutoLabelStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
-                ["MODEL_KEY"] = "models/yolov8n.onnx"
+                ["MODEL_KEY"] = "models/yolov8n.onnx",
+                ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
             }
         });
 
         props.DataBucket.GrantRead(AutoLabelFunction);
         props.LabelsTable.GrantReadWriteData(AutoLabelFunction);
+        AutoLabelFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "dynamodb:GetItem", "dynamodb:Scan" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-settings" }
+        }));
 
         // SQS event source — MaxConcurrency=2 (minimum allowed) keeps backfill processing to at most 2 concurrent Lambdas
         AutoLabelFunction.AddEventSource(new SqsEventSource(BackfillQueue, new SqsEventSourceProps

@@ -3,8 +3,10 @@ using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.Events;
 using Amazon.CDK.AWS.Events.Targets;
+using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.S3;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -34,13 +36,20 @@ public class IngestStack : Stack
             Environment = new Dictionary<string, string>
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
-                ["TABLE_NAME"] = props.ClipsTable.TableName
+                ["TABLE_NAME"] = props.ClipsTable.TableName,
+                ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
             }
         });
 
         // Grant permissions
         props.DataBucket.GrantReadWrite(ingestFunction);
         props.ClipsTable.GrantWriteData(ingestFunction);
+        ingestFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "dynamodb:GetItem", "dynamodb:Scan" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-settings" }
+        }));
 
         // EventBridge rule: trigger Lambda when .mp4 uploaded to raw-clips/
         var rule = new Rule(this, "IngestClipRule", new RuleProps
