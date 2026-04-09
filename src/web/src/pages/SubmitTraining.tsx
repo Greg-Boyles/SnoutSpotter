@@ -1,7 +1,28 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, Play } from "lucide-react";
+import { ArrowLeft, Loader2, Play, HelpCircle } from "lucide-react";
 import { api } from "../api";
+
+function Tooltip({ text }: { text: string }) {
+  return (
+    <span className="relative group inline-flex items-center ml-1">
+      <HelpCircle className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 cursor-help" />
+      <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-56 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-10 leading-relaxed">
+        {text}
+        <span className="absolute left-1/2 -translate-x-1/2 top-full border-4 border-transparent border-t-gray-800" />
+      </span>
+    </span>
+  );
+}
+
+function FieldLabel({ children, tooltip }: { children: React.ReactNode; tooltip: string }) {
+  return (
+    <label className="flex items-center text-sm font-medium text-gray-700 mb-1">
+      {children}
+      <Tooltip text={tooltip} />
+    </label>
+  );
+}
 
 export default function SubmitTraining() {
   const navigate = useNavigate();
@@ -78,7 +99,7 @@ export default function SubmitTraining() {
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
         {/* Dataset */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Dataset</label>
+          <FieldLabel tooltip="The labelled image export to train on. Only completed exports are shown. Larger datasets generally produce better models.">Dataset</FieldLabel>
           {exports.length === 0 ? (
             <p className="text-sm text-gray-400">
               No exports available.{" "}
@@ -102,7 +123,7 @@ export default function SubmitTraining() {
         {/* Config grid */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Epochs</label>
+            <FieldLabel tooltip="Number of full passes through the dataset. More epochs can improve accuracy but increase training time. Early stopping kicks in after 20 epochs with no improvement.">Epochs</FieldLabel>
             <input
               type="number"
               min={10}
@@ -113,7 +134,7 @@ export default function SubmitTraining() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Batch size</label>
+            <FieldLabel tooltip="Number of images processed together per training step. Larger batches train faster but use more GPU VRAM. Use 16 for a 16 GB GPU, 8 if you run out of memory.">Batch size</FieldLabel>
             <select
               value={batchSize}
               onChange={(e) => setBatchSize(Number(e.target.value))}
@@ -123,7 +144,7 @@ export default function SubmitTraining() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Image size</label>
+            <FieldLabel tooltip="Images are resized to this square resolution before training. 640px is the YOLO default and matches what RunInference uses at inference time — only change this if you also update the Lambda.">Image size</FieldLabel>
             <select
               value={imageSize}
               onChange={(e) => setImageSize(Number(e.target.value))}
@@ -133,7 +154,7 @@ export default function SubmitTraining() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Learning rate</label>
+            <FieldLabel tooltip="Controls how much the model weights are adjusted per step. 0.01 is the YOLO default and works well for fine-tuning. Lower values (0.001) train more slowly but can be more stable with small datasets.">Learning rate</FieldLabel>
             <input
               type="number"
               step={0.001}
@@ -145,7 +166,7 @@ export default function SubmitTraining() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Workers</label>
+            <FieldLabel tooltip="Number of CPU threads used to load and pre-process images in parallel while the GPU trains. Set to the number of CPU cores available, but no more than 8. Has no effect on model quality.">Workers</FieldLabel>
             <input
               type="number"
               min={1}
@@ -156,7 +177,7 @@ export default function SubmitTraining() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Base model</label>
+            <FieldLabel tooltip="The pre-trained YOLO checkpoint to fine-tune from. Nano (yolov8n) is faster to train and deploy — recommended. Small (yolov8s) is more accurate but larger and slower at inference.">Base model</FieldLabel>
             <select
               value={modelBase}
               onChange={(e) => setModelBase(e.target.value)}
@@ -170,7 +191,7 @@ export default function SubmitTraining() {
 
         {/* Notes */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+          <FieldLabel tooltip="Optional description saved with the job — useful for tracking what changed between runs, e.g. 'Added 50 new bowl labels' or 'Increased epochs to 150'.">Notes (optional)</FieldLabel>
           <input
             type="text"
             value={notes}
