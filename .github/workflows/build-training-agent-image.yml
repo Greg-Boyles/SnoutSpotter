@@ -29,8 +29,11 @@ jobs:
         id: version
         run: |
           BUCKET=${{ secrets.DATA_BUCKET_NAME }}
-          CURRENT=$(aws s3 cp s3://${BUCKET}/releases/training-agent/manifest.json - 2>/dev/null | jq -r '.version // "0"' || echo "0")
-          NEXT=$((CURRENT + 1))
+          CURRENT=$(aws s3 cp s3://${BUCKET}/releases/training-agent/manifest.json - 2>/dev/null | jq -r '.version // "1.0.0"' || echo "1.0.0")
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
           echo "Training agent version: $NEXT (previous: ${CURRENT})"
 
