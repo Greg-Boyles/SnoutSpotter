@@ -11,6 +11,7 @@ public interface ITrainingService
     Task<List<TrainingJobSummary>> ListJobsAsync(string? status = null, int limit = 50);
     Task<TrainingJobDetail?> GetJobAsync(string jobId);
     Task CancelJobAsync(string jobId);
+    Task DeleteJobAsync(string jobId);
 }
 
 public record TrainerAgentSummary(

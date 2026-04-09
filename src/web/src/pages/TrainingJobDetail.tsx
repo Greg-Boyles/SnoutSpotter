@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, CheckCircle, XCircle, Play, Square, Zap, Copy } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle, XCircle, Play, Square, Zap, Copy, Trash2 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { api } from "../api";
 
@@ -114,6 +114,7 @@ export default function TrainingJobDetail() {
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [activating, setActivating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const loadJob = () => {
     if (!jobId) return;
@@ -155,6 +156,18 @@ export default function TrainingJobDetail() {
       setError((e as Error).message);
     }
     setActivating(false);
+  };
+
+  const handleDelete = async () => {
+    if (!jobId || !confirm("Delete this training job? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      await api.deleteTrainingJob(jobId);
+      navigate("/training");
+    } catch (e) {
+      setError((e as Error).message);
+      setDeleting(false);
+    }
   };
 
   const handleClone = () => {
@@ -446,16 +459,28 @@ export default function TrainingJobDetail() {
         )}
 
         {/* Actions */}
-        {isRunning && (
-          <button
-            onClick={handleCancel}
-            disabled={cancelling}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 hover:text-red-600 hover:border-red-200 rounded-lg disabled:opacity-50"
-          >
-            {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
-            {cancelling ? "Cancelling..." : "Cancel Job"}
-          </button>
-        )}
+        <div className="flex gap-3">
+          {isRunning && (
+            <button
+              onClick={handleCancel}
+              disabled={cancelling}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 hover:text-red-600 hover:border-red-200 rounded-lg disabled:opacity-50"
+            >
+              {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+              {cancelling ? "Cancelling..." : "Cancel Job"}
+            </button>
+          )}
+          {!isRunning && (
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-lg disabled:opacity-50"
+            >
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {deleting ? "Deleting..." : "Delete Job"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
