@@ -22,6 +22,8 @@ public class JobRunner
 
     private Process? _trainingProcess;
 
+    public string? CachedMlScriptVersion { get; private set; }
+
     public JobRunner(IAmazonS3 s3, string bucket, MqttManager mqtt, string thingName, ILogger logger)
     {
         _s3 = s3;
@@ -219,6 +221,7 @@ public class JobRunner
         {
             var local = JsonDocument.Parse(await File.ReadAllTextAsync(localVersionPath, ct));
             localVersion = local.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
+            CachedMlScriptVersion = localVersion;
         }
 
         // Check S3 for latest
@@ -232,6 +235,7 @@ public class JobRunner
             if (latestVersion == localVersion)
             {
                 _logger.LogInformation("ML scripts v{Version} already cached", localVersion);
+                CachedMlScriptVersion = localVersion;
                 return;
             }
 
@@ -254,6 +258,7 @@ public class JobRunner
             File.Delete(tarPath);
 
             await File.WriteAllTextAsync(localVersionPath, $"{{\"version\":\"{latestVersion}\"}}", ct);
+            CachedMlScriptVersion = latestVersion;
             _logger.LogInformation("ML scripts v{Version} installed", latestVersion);
         }
         catch (Exception ex)

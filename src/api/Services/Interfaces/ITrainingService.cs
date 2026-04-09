@@ -17,6 +17,7 @@ public record TrainerAgentSummary(
     string ThingName,
     bool Online,
     string? Version,
+    string? MlScriptVersion,
     string? Hostname,
     string? LastHeartbeat,
     string? CurrentJobId,

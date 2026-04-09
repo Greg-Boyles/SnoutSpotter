@@ -31,6 +31,7 @@ type TrainingProgress = {
 
 type AgentReported = {
   agentVersion: string;
+  mlScriptVersion?: string;
   hostname: string;
   lastHeartbeat: string;
   status: string;
@@ -203,6 +204,10 @@ export default function TrainingAgentDetail() {
             <div className="flex justify-between">
               <dt className="text-gray-500">Agent version</dt>
               <dd className="text-gray-900">{r?.agentVersion ? `v${r.agentVersion}` : "—"}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-gray-500">ML scripts version</dt>
+              <dd className="text-gray-900">{r?.mlScriptVersion ? `v${r.mlScriptVersion}` : "—"}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-gray-500">Status</dt>

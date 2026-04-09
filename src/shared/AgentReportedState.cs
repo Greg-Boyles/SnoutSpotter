@@ -7,8 +7,12 @@ public class AgentReportedState
     [JsonPropertyName("agentType")]      
     public string AgentType { get; init; } = "training-agent";
     
-    [JsonPropertyName("agentVersion")]   
+    [JsonPropertyName("agentVersion")]
     public string AgentVersion { get; init; } = "";
+
+    [JsonPropertyName("mlScriptVersion")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MlScriptVersion { get; init; }
     
     [JsonPropertyName("hostname")]       
     public string Hostname { get; init; } = "";

@@ -130,6 +130,7 @@ async Task ReportShadow(string status = "idle", string? jobId = null,
     var reported = new AgentReportedState
     {
         AgentVersion        = "1.0.0",
+        MlScriptVersion     = jobRunner.CachedMlScriptVersion,
         Hostname            = Dns.GetHostName(),
         LastHeartbeat       = DateTime.UtcNow.ToString("O"),
         Status              = status,
