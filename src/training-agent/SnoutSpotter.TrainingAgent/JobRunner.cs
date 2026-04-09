@@ -63,7 +63,15 @@ public class JobRunner
         {
             // 1. Download ML scripts
             await PublishProgress(job.JobId, "downloading", null);
-            await EnsureMlScriptsAsync(ct);
+            try
+            {
+                await EnsureMlScriptsAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await PublishError(job.JobId, $"Failed to prepare ML scripts: {ex.Message}");
+                return;
+            }
 
             // 2. Download and extract dataset
             _logger.LogInformation("Downloading dataset: {Key}", job.ExportS3Key);
@@ -135,6 +143,15 @@ public class JobRunner
                 TrainingTimeSeconds = parser.ElapsedSeconds,
                 DatasetImages       = CountDatasetImages(datasetDir)
             });
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // let caller handle cancellation
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("Unhandled job error: {Error}", ex.Message);
+            try { await PublishError(job.JobId, ex.Message); } catch { /* best effort */ }
         }
         finally
         {
@@ -304,6 +321,13 @@ public class JobRunner
         {
             _logger.LogWarning("Failed to update ML scripts from S3: {Error} — using cached version", ex.Message);
         }
+
+        // Verify scripts are actually present
+        var scriptPath = Path.Combine(MlScriptsDir, "train_detector.py");
+        if (!File.Exists(scriptPath))
+            throw new InvalidOperationException(
+                "train_detector.py not found — ML scripts have never been downloaded. " +
+                "Ensure the ml-training pipeline has run and published to S3.");
     }
 
     private async Task UploadCheckpointAsync(TrainingJobDesired job, string datasetDir)
