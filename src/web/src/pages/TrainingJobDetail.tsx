@@ -13,6 +13,7 @@ type JobDetail = {
   progress: string | null;
   result: string | null;
   error: string | null;
+  failedStage: string | null;
   createdAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
@@ -66,23 +67,39 @@ function stageIndex(status: string): number {
   return map[status] ?? 0;
 }
 
-function StageTimeline({ status }: { status: string }) {
-  const current = stageIndex(status);
+// Maps agent-reported failed_stage values to the UI STAGES index
+function failedStageIndex(failedStage: string): number {
+  const map: Record<string, number> = {
+    preparing: 1,
+    downloading: 1,
+    extracting: 1,
+    training: 2,
+    uploading: 3,
+  };
+  return map[failedStage] ?? 1;
+}
+
+function StageTimeline({ status, failedStage }: { status: string; failedStage: string | null }) {
   const isFailed = status === "failed";
   const isCancelled = status === "cancelled" || status === "cancelling";
+  const current = isFailed ? -1 : stageIndex(status);
+  const failedIdx = isFailed && failedStage ? failedStageIndex(failedStage) : -1;
 
   return (
     <div className="flex items-center gap-0">
       {STAGES.map((stage, idx) => {
-        const done = current > idx;
-        const active = current === idx && !isFailed && !isCancelled;
+        const done = isFailed ? idx < failedIdx : current > idx;
+        const active = !isFailed && !isCancelled && current === idx;
+        const isFail = isFailed && idx === failedIdx;
         const isLast = idx === STAGES.length - 1;
 
-        const dotColor = isFailed && active
-          ? "bg-red-500"
-          : done || (active && !isFailed)
-            ? active ? "bg-amber-500 animate-pulse" : "bg-green-500"
-            : "bg-gray-200";
+        const dotColor = isFail
+          ? "bg-red-500 ring-2 ring-red-200"
+          : done
+            ? "bg-green-500"
+            : active
+              ? "bg-amber-500 animate-pulse"
+              : "bg-gray-200";
 
         const lineColor = done ? "bg-green-200" : "bg-gray-100";
 
@@ -91,6 +108,7 @@ function StageTimeline({ status }: { status: string }) {
             <div className="flex flex-col items-center">
               <div className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
               <span className={`text-xs mt-1 whitespace-nowrap ${
+                isFail ? "text-red-600 font-medium" :
                 done ? "text-green-600 font-medium" :
                 active ? "text-amber-600 font-medium" :
                 "text-gray-400"
@@ -262,7 +280,7 @@ export default function TrainingJobDetail() {
         {/* Stage timeline */}
         {job.status !== "pending" || true ? (
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <StageTimeline status={job.status} />
+            <StageTimeline status={job.status} failedStage={job.failedStage} />
             {(job.status === "failed" || job.status === "cancelled") && (
               <p className="text-xs text-gray-400 mt-3 text-center">
                 Job {job.status}
@@ -454,6 +472,11 @@ export default function TrainingJobDetail() {
         {job.error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-5">
             <h3 className="text-sm font-semibold text-red-800 mb-1">Error</h3>
+            {job.failedStage && (
+              <p className="text-xs text-red-500 mb-2">
+                Failed during: {job.failedStage.charAt(0).toUpperCase() + job.failedStage.slice(1)}
+              </p>
+            )}
             <p className="text-sm text-red-700 font-mono">{job.error}</p>
           </div>
         )}

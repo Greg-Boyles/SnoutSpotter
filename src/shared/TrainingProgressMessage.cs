@@ -26,6 +26,10 @@ public class TrainingProgressMessage
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; init; }
 
+    [JsonPropertyName("failed_stage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? FailedStage { get; init; }
+
     [JsonPropertyName("checkpoint_s3_key")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? CheckpointS3Key { get; init; }

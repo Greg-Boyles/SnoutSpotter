@@ -67,6 +67,12 @@ public class Function
             exprNames["#e"] = "error";
         }
 
+        if (message.FailedStage != null)
+        {
+            updateExpr += ", failed_stage = :failed_stage";
+            exprValues[":failed_stage"] = new() { S = message.FailedStage };
+        }
+
         if (message.Status is "downloading" or "training")
         {
             updateExpr += ", started_at = if_not_exists(started_at, :now)";
