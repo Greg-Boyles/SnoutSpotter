@@ -19,7 +19,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         dotnet-runtime-8.0 \
         python3 python3-pip \
-        tar curl && \
+        tar curl \
+        libxcb1 libgl1 libglib2.0-0 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Python training dependencies (PyTorch + ultralytics)
