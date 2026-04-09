@@ -204,8 +204,8 @@ export const api = {
   activateModel: (version: string) =>
     postJson<{ message: string; version: string }>(`/ml/models/activate?version=${encodeURIComponent(version)}`),
 
-  rerunInference: (dateFrom?: string, dateTo?: string) =>
-    postJson<{ total: number; queued: number }>("/ml/rerun-inference", { dateFrom, dateTo }),
+  rerunInference: (dateFrom?: string, dateTo?: string, clipIds?: string[]) =>
+    postJson<{ total: number; queued: number }>("/ml/rerun-inference", { dateFrom, dateTo, clipIds }),
 
   // Streaming
   startStream: (thingName: string) =>
