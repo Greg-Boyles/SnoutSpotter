@@ -28,6 +28,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.TrainingJobsTable = Environment.GetEnvironmentVariable("TRAINING_JOBS_TABLE") ?? "snout-spotter-training-jobs";
     cfg.TrainerThingGroup = Environment.GetEnvironmentVariable("TRAINER_THING_GROUP") ?? "snoutspotter-trainers";
     cfg.TrainingJobQueueUrl = Environment.GetEnvironmentVariable("TRAINING_JOB_QUEUE_URL") ?? "";
+    cfg.SettingsTable = Environment.GetEnvironmentVariable("SETTINGS_TABLE") ?? "snout-spotter-settings";
     cfg.BackfillQueueUrl = Environment.GetEnvironmentVariable("BACKFILL_QUEUE_URL") ?? "";
     cfg.RerunInferenceQueueUrl = Environment.GetEnvironmentVariable("RERUN_INFERENCE_QUEUE_URL") ?? "";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
@@ -67,6 +68,7 @@ builder.Services.AddSingleton<ILogService, LogService>();
 builder.Services.AddSingleton<ILabelService, LabelService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ITrainingService, TrainingService>();
+builder.Services.AddSingleton<ISettingsService, SettingsService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
