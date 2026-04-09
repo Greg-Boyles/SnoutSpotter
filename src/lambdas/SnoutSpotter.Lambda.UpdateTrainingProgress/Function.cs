@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
@@ -44,13 +45,13 @@ public class Function
         if (message.Progress != null)
         {
             updateExpr += ", progress = :progress";
-            exprValues[":progress"] = new() { S = JsonSerializer.Serialize(message.Progress) };
+            exprValues[":progress"] = new() { M = ToMap(message.Progress) };
         }
 
         if (message.Result != null)
         {
             updateExpr += ", #r = :result";
-            exprValues[":result"] = new() { S = JsonSerializer.Serialize(message.Result) };
+            exprValues[":result"] = new() { M = ToMap(message.Result) };
             exprNames["#r"] = "result";
         }
 
@@ -97,5 +98,46 @@ public class Function
         });
 
         context.Logger.LogInformation($"Updated job {message.JobId}: status={message.Status}");
+    }
+
+    private static Dictionary<string, AttributeValue> ToMap(TrainingProgress p)
+    {
+        var m = new Dictionary<string, AttributeValue>
+        {
+            ["epoch"]        = new() { N = p.Epoch.ToString() },
+            ["total_epochs"] = new() { N = p.TotalEpochs.ToString() },
+        };
+        if (p.TrainLoss.HasValue)         m["train_loss"]          = new() { N = p.TrainLoss.Value.ToString("G", CultureInfo.InvariantCulture) };
+        if (p.ValLoss.HasValue)           m["val_loss"]            = new() { N = p.ValLoss.Value.ToString("G", CultureInfo.InvariantCulture) };
+        if (p.MAP50.HasValue)             m["mAP50"]               = new() { N = p.MAP50.Value.ToString("G", CultureInfo.InvariantCulture) };
+        if (p.MAP50_95.HasValue)          m["mAP50_95"]            = new() { N = p.MAP50_95.Value.ToString("G", CultureInfo.InvariantCulture) };
+        if (p.BestMAP50.HasValue)         m["best_mAP50"]          = new() { N = p.BestMAP50.Value.ToString("G", CultureInfo.InvariantCulture) };
+        if (p.ElapsedSeconds.HasValue)    m["elapsed_seconds"]     = new() { N = p.ElapsedSeconds.Value.ToString() };
+        if (p.EtaSeconds.HasValue)        m["eta_seconds"]         = new() { N = p.EtaSeconds.Value.ToString() };
+        if (p.GpuUtilPercent.HasValue)    m["gpu_util_percent"]    = new() { N = p.GpuUtilPercent.Value.ToString() };
+        if (p.GpuTempC.HasValue)          m["gpu_temp_c"]          = new() { N = p.GpuTempC.Value.ToString() };
+        if (p.DownloadBytes.HasValue)     m["download_bytes"]      = new() { N = p.DownloadBytes.Value.ToString() };
+        if (p.DownloadTotalBytes.HasValue) m["download_total_bytes"] = new() { N = p.DownloadTotalBytes.Value.ToString() };
+        if (p.DownloadSpeedMbps.HasValue) m["download_speed_mbps"] = new() { N = p.DownloadSpeedMbps.Value.ToString("G", CultureInfo.InvariantCulture) };
+        return m;
+    }
+
+    private static Dictionary<string, AttributeValue> ToMap(TrainingResult r)
+    {
+        var m = new Dictionary<string, AttributeValue>
+        {
+            ["model_s3_key"]          = new() { S = r.ModelS3Key },
+            ["model_size_mb"]         = new() { N = r.ModelSizeMb.ToString("G", CultureInfo.InvariantCulture) },
+            ["final_mAP50"]           = new() { N = r.FinalMAP50.ToString("G", CultureInfo.InvariantCulture) },
+            ["total_epochs"]          = new() { N = r.TotalEpochs.ToString() },
+            ["best_epoch"]            = new() { N = r.BestEpoch.ToString() },
+            ["training_time_seconds"] = new() { N = r.TrainingTimeSeconds.ToString() },
+            ["dataset_images"]        = new() { N = r.DatasetImages.ToString() },
+            ["classes"]               = new() { L = r.Classes.Select(c => new AttributeValue { S = c }).ToList() },
+        };
+        if (r.FinalMAP50_95.HasValue) m["final_mAP50_95"] = new() { N = r.FinalMAP50_95.Value.ToString("G", CultureInfo.InvariantCulture) };
+        if (r.Precision.HasValue)     m["precision"]       = new() { N = r.Precision.Value.ToString("G", CultureInfo.InvariantCulture) };
+        if (r.Recall.HasValue)        m["recall"]          = new() { N = r.Recall.Value.ToString("G", CultureInfo.InvariantCulture) };
+        return m;
     }
 }
