@@ -1,8 +1,10 @@
 using Amazon.CDK;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
+using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.S3;
+using Amazon.CDK.AWS.SSM;
 using Constructs;
 
 namespace SnoutSpotter.Infra.Stacks;
@@ -35,7 +37,8 @@ public class ExportDatasetStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
-                ["EXPORTS_TABLE"] = props.ExportsTable.TableName
+                ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
+                ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
             }
         });
 
@@ -43,6 +46,12 @@ public class ExportDatasetStack : Stack
         props.DataBucket.GrantPut(exportFunction, "training-exports/*");
         props.LabelsTable.GrantReadData(exportFunction);
         props.ExportsTable.GrantReadWriteData(exportFunction);
+        exportFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "dynamodb:GetItem", "dynamodb:Scan" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-settings" }
+        }));
 
         _ = new CfnOutput(this, "ExportDatasetFunctionArn", new CfnOutputProps
         {

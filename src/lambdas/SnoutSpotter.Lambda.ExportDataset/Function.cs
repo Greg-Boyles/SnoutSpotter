@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using SnoutSpotter.Contracts;
 using Amazon.Lambda.Core;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -24,6 +25,9 @@ public class Function
     private readonly string _bucketName;
     private readonly string _labelsTable;
     private readonly string _exportsTable;
+    private readonly SettingsReader _settings;
+    private float _trainSplitRatio = 0.8f;
+    private int _maxParallelDownloads = 20;
 
     public Function()
     {
@@ -35,12 +39,16 @@ public class Function
             ?? throw new InvalidOperationException("LABELS_TABLE not set");
         _exportsTable = Environment.GetEnvironmentVariable("EXPORTS_TABLE")
             ?? throw new InvalidOperationException("EXPORTS_TABLE not set");
+        _settings = new SettingsReader(_dynamoDb);
     }
 
     public async Task FunctionHandler(ExportRequest request, ILambdaContext context)
     {
         var exportId = request.ExportId;
         context.Logger.LogInformation($"Starting export {exportId}");
+
+        _trainSplitRatio = await _settings.GetFloatAsync(ServerSettings.ExportTrainSplitRatio);
+        _maxParallelDownloads = await _settings.GetIntAsync(ServerSettings.ExportMaxParallelDownloads);
 
         try
         {
@@ -75,8 +83,8 @@ public class Function
             dogLabelsWithBoxes = dogLabelsWithBoxes.OrderBy(_ => rng.Next()).ToList();
             noDogLabels = noDogLabels.OrderBy(_ => rng.Next()).ToList();
 
-            var dogTrainCount = (int)(dogLabelsWithBoxes.Count * 0.8);
-            var noDogTrainCount = (int)(noDogLabels.Count * 0.8);
+            var dogTrainCount = (int)(dogLabelsWithBoxes.Count * _trainSplitRatio);
+            var noDogTrainCount = (int)(noDogLabels.Count * _trainSplitRatio);
 
             var trainSet = dogLabelsWithBoxes.Take(dogTrainCount)
                 .Concat(noDogLabels.Take(noDogTrainCount)).ToList();
@@ -200,7 +208,7 @@ public class Function
         var downloaded = new (byte[] data, string ext, int imgWidth, int imgHeight)[items.Count];
         await Parallel.ForEachAsync(
             items.Select((item, i) => (item, i)),
-            new ParallelOptions { MaxDegreeOfParallelism = 20 },
+            new ParallelOptions { MaxDegreeOfParallelism = _maxParallelDownloads },
             async ((LabelRecord item, int i) entry, CancellationToken _) =>
             {
                 try

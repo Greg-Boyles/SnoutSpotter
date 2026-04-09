@@ -1,9 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY SnoutSpotter.Lambda.IngestClip.csproj .
-RUN dotnet restore
-COPY . .
-RUN dotnet publish -c Release -o /app/publish
+COPY shared/SnoutSpotter.Contracts/SnoutSpotter.Contracts.csproj shared/SnoutSpotter.Contracts/
+COPY lambdas/SnoutSpotter.Lambda.IngestClip/SnoutSpotter.Lambda.IngestClip.csproj lambdas/SnoutSpotter.Lambda.IngestClip/
+RUN dotnet restore lambdas/SnoutSpotter.Lambda.IngestClip/SnoutSpotter.Lambda.IngestClip.csproj
+COPY shared/ shared/
+COPY lambdas/SnoutSpotter.Lambda.IngestClip/ lambdas/SnoutSpotter.Lambda.IngestClip/
+RUN dotnet publish lambdas/SnoutSpotter.Lambda.IngestClip/SnoutSpotter.Lambda.IngestClip.csproj -c Release -o /app/publish
 
 FROM public.ecr.aws/lambda/dotnet:8 AS runtime
 # Install tar, xz and FFmpeg static build for keyframe extraction

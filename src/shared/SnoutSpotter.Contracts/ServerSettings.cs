@@ -1,0 +1,39 @@
+namespace SnoutSpotter.Contracts;
+
+/// <summary>
+/// Server-side settings keys, defaults, and validation.
+/// Stored in DynamoDB snout-spotter-settings table.
+/// Shared between API (read/write) and all Lambdas (read).
+/// </summary>
+public static class ServerSettings
+{
+    // Ingest
+    public const string IngestKeyframeInterval = "ingest.keyframe_interval_seconds";
+    public const string IngestJpegQuality = "ingest.jpeg_quality";
+
+    // Inference
+    public const string InferenceConfidenceThreshold = "inference.confidence_threshold";
+    public const string InferenceInputSize = "inference.input_size";
+
+    // AutoLabel
+    public const string AutoLabelConfidenceThreshold = "autolabel.confidence_threshold";
+
+    // Export
+    public const string ExportTrainSplitRatio = "export.train_split_ratio";
+    public const string ExportMaxParallelDownloads = "export.max_parallel_downloads";
+
+    public static readonly Dictionary<string, SettingSpec> All = new()
+    {
+        [IngestKeyframeInterval]        = new("Keyframe interval",       "5",    "int",   1,   30,   "Extract 1 frame every N seconds from clips"),
+        [IngestJpegQuality]             = new("JPEG quality",            "2",    "int",   1,   31,   "FFmpeg quality (1=best, 31=worst)"),
+        [InferenceConfidenceThreshold]  = new("Confidence threshold",    "0.4",  "float", 0.1, 0.95, "Minimum detection confidence for RunInference"),
+        [InferenceInputSize]            = new("Input size",              "640",  "int",   320, 1280, "YOLO model input resolution (pixels)"),
+        [AutoLabelConfidenceThreshold]  = new("Confidence threshold",    "0.25", "float", 0.1, 0.95, "Minimum confidence for COCO dog detection"),
+        [ExportTrainSplitRatio]         = new("Train split ratio",       "0.8",  "float", 0.5, 0.95, "Fraction of images for training (rest = validation)"),
+        [ExportMaxParallelDownloads]    = new("Max parallel downloads",  "20",   "int",   1,   50,   "Concurrent S3 downloads during export"),
+    };
+
+    public static string GetDefault(string key) => All.TryGetValue(key, out var spec) ? spec.Default : "";
+}
+
+public record SettingSpec(string Label, string Default, string Type, double Min, double Max, string Description);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, NavLink, useLocation } from "react-router-dom";
-import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, GraduationCap, HardDriveDownload } from "lucide-react";
+import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, GraduationCap, HardDriveDownload, Settings } from "lucide-react";
 import { useOktaAuth, LoginCallback } from "@okta/okta-react";
 import Dashboard from "./pages/Dashboard";
 import ClipsBrowser from "./pages/ClipsBrowser";
@@ -17,6 +17,7 @@ import Labels from "./pages/Labels";
 import LabelDetail from "./pages/LabelDetail";
 import TrainingExports from "./pages/TrainingExports";
 import Models from "./pages/Models";
+import ServerSettings from "./pages/ServerSettings";
 import PiPackages from "./pages/PiPackages";
 import TrainingJobs from "./pages/TrainingJobs";
 import SubmitTraining from "./pages/SubmitTraining";
@@ -33,6 +34,7 @@ const navItems = [
   { to: "/models", icon: Cpu, label: "Models" },
   { to: "/training", icon: GraduationCap, label: "Training" },
   { to: "/pi-packages", icon: HardDriveDownload, label: "Pi Packages" },
+  { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/health", icon: Activity, label: "System" },
 ];
 
@@ -154,6 +156,7 @@ export default function App() {
                   <Route path="/labels" element={<Labels />} />
                   <Route path="/exports" element={<TrainingExports />} />
                   <Route path="/models" element={<Models />} />
+                  <Route path="/settings" element={<ServerSettings />} />
                   <Route path="/training" element={<TrainingJobs />} />
                   <Route path="/training/new" element={<SubmitTraining />} />
                   <Route path="/training/:jobId" element={<TrainingJobDetail />} />

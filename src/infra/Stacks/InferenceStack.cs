@@ -3,6 +3,7 @@ using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.ECR;
 using Amazon.CDK.AWS.Events;
 using Amazon.CDK.AWS.Events.Targets;
+using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Lambda;
 using Amazon.CDK.AWS.Lambda.EventSources;
 using Amazon.CDK.AWS.S3;
@@ -38,13 +39,20 @@ public class InferenceStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
-                ["MODEL_KEY"] = "models/dog-classifier/best.onnx"
+                ["MODEL_KEY"] = "models/dog-classifier/best.onnx",
+                ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
             }
         });
 
         // Grant permissions
         props.DataBucket.GrantRead(inferenceFunction);
         props.ClipsTable.GrantReadWriteData(inferenceFunction);
+        inferenceFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "dynamodb:GetItem", "dynamodb:Scan" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-settings" }
+        }));
 
         // EventBridge rule: trigger Lambda when keyframe JPGs are uploaded
         var rule = new Rule(this, "InferenceKeyframeRule", new RuleProps

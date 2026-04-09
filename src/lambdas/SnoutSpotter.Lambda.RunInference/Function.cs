@@ -18,14 +18,13 @@ namespace SnoutSpotter.Lambda.RunInference;
 public class Function
 {
     private static readonly string[] ClassNames = ["my_dog", "other_dog"];
-    private const int YoloInputSize = 640;
-    private const float ConfidenceThreshold = 0.4f;
 
     private readonly IAmazonS3 _s3Client;
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly string _bucketName;
     private readonly string _tableName;
     private readonly string _modelKey;
+    private readonly SettingsReader _settings;
 
     private InferenceSession? _session;
 
@@ -36,6 +35,7 @@ public class Function
         _bucketName = Environment.GetEnvironmentVariable("BUCKET_NAME")!;
         _tableName = Environment.GetEnvironmentVariable("TABLE_NAME")!;
         _modelKey = Environment.GetEnvironmentVariable("MODEL_KEY")!;
+        _settings = new SettingsReader(_dynamoClient);
     }
 
     public async Task FunctionHandler(JsonElement input, ILambdaContext context)
@@ -59,6 +59,9 @@ public class Function
 
         await EnsureModelLoaded(context);
 
+        var confidenceThreshold = await _settings.GetFloatAsync(ServerSettings.InferenceConfidenceThreshold);
+        var inputSize = await _settings.GetIntAsync(ServerSettings.InferenceInputSize);
+
         var keyframeResults = new List<KeyframeResult>();
         var totalDetections = 0;
 
@@ -68,7 +71,7 @@ public class Function
             {
                 var response = await _s3Client.GetObjectAsync(_bucketName, keyframeKey);
                 using var image = await Image.LoadAsync<Rgb24>(response.ResponseStream);
-                var result = RunDetector(image, keyframeKey);
+                var result = RunDetector(image, keyframeKey, inputSize, confidenceThreshold);
                 keyframeResults.Add(result);
                 totalDetections += result.Detections.Count;
             }
@@ -226,7 +229,7 @@ public class Function
         return localPath;
     }
 
-    private KeyframeResult RunDetector(Image<Rgb24> image, string keyframeKey)
+    private KeyframeResult RunDetector(Image<Rgb24> image, string keyframeKey, int inputSize, float confidenceThreshold)
     {
         var result = new KeyframeResult { KeyframeKey = keyframeKey };
 
@@ -236,15 +239,15 @@ public class Function
             return result;
         }
 
-        using var resized = image.Clone(ctx => ctx.Resize(YoloInputSize, YoloInputSize));
+        using var resized = image.Clone(ctx => ctx.Resize(inputSize, inputSize));
 
-        var tensor = new DenseTensor<float>(new[] { 1, 3, YoloInputSize, YoloInputSize });
+        var tensor = new DenseTensor<float>(new[] { 1, 3, inputSize, inputSize });
         resized.ProcessPixelRows(accessor =>
         {
-            for (var y = 0; y < YoloInputSize; y++)
+            for (var y = 0; y < inputSize; y++)
             {
                 var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < YoloInputSize; x++)
+                for (var x = 0; x < inputSize; x++)
                 {
                     var pixel = row[x];
                     tensor[0, 0, y, x] = pixel.R / 255f;
@@ -258,8 +261,8 @@ public class Function
         using var results = _session.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, tensor) });
         var output = results.First().AsTensor<float>();
 
-        var scaleX = (float)image.Width / YoloInputSize;
-        var scaleY = (float)image.Height / YoloInputSize;
+        var scaleX = (float)image.Width / inputSize;
+        var scaleY = (float)image.Height / inputSize;
 
         // YOLOv8 output: [1, 4+num_classes, 8400]
         var numClasses = output.Dimensions[1] - 4;
@@ -280,7 +283,7 @@ public class Function
                 }
             }
 
-            if (bestConfidence < ConfidenceThreshold) continue;
+            if (bestConfidence < confidenceThreshold) continue;
 
             var cx = output[0, 0, i] * scaleX;
             var cy = output[0, 1, i] * scaleY;

@@ -29,7 +29,9 @@ public class Function
     private readonly string _bucketName;
     private readonly string _tableName;
     private readonly string _modelKey;
+    private readonly SettingsReader _settings;
     private InferenceSession? _session;
+    private float _dogConfidenceThreshold = 0.25f;
 
     public Function()
     {
@@ -40,12 +42,14 @@ public class Function
         _tableName = Environment.GetEnvironmentVariable("LABELS_TABLE")
             ?? throw new InvalidOperationException("LABELS_TABLE not set");
         _modelKey = Environment.GetEnvironmentVariable("MODEL_KEY") ?? "models/yolov8n.onnx";
+        _settings = new SettingsReader(_dynamoDb);
     }
 
     // Single entry point handles both direct invocations (AutoLabelRequest) and SQS trigger events
     public async Task<object> FunctionHandler(System.Text.Json.JsonElement request, ILambdaContext context)
     {
         await EnsureModelLoaded(context);
+        _dogConfidenceThreshold = await _settings.GetFloatAsync(ServerSettings.AutoLabelConfidenceThreshold);
 
         // SQS event: { "Records": [ { "body": "{\"KeyframeKeys\":[...]}" }, ... ] }
         if (request.TryGetProperty("Records", out var records))
@@ -256,7 +260,7 @@ public class Function
         for (var i = 0; i < numDetections; i++)
         {
             var dogConfidence = output[0, 4 + 16, i]; // Class 16 = dog in COCO
-            if (dogConfidence < 0.25f) continue;
+            if (dogConfidence < _dogConfidenceThreshold) continue;
 
             var cx = output[0, 0, i] * scaleX;
             var cy = output[0, 1, i] * scaleY;
