@@ -61,6 +61,7 @@ type Job = {
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     idle: "bg-gray-100 text-gray-600",
+    offline: "bg-gray-100 text-gray-400",
     training: "bg-amber-100 text-amber-700",
     downloading: "bg-blue-100 text-blue-700",
     uploading: "bg-blue-100 text-blue-700",
