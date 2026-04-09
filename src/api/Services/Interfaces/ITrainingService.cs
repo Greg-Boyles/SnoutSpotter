@@ -13,7 +13,20 @@ public interface ITrainingService
     Task CancelJobAsync(string jobId);
 }
 
-public record TrainerAgentSummary(string ThingName, bool Online, string? Version, string? Hostname, string? LastHeartbeat, string? CurrentJobId);
+public record TrainerAgentSummary(
+    string ThingName,
+    bool Online,
+    string? Version,
+    string? Hostname,
+    string? LastHeartbeat,
+    string? CurrentJobId,
+    string? Status,
+    TrainerGpuSummary? Gpu,
+    TrainerProgressSummary? CurrentJobProgress);
+
+public record TrainerGpuSummary(string Name, int VramMb, int TemperatureC, int UtilizationPercent);
+
+public record TrainerProgressSummary(int Epoch, int TotalEpochs, double? MAP50);
 
 public record TrainingJobRequest(
     string ExportId,

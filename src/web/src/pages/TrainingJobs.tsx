@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Cpu, Plus, Loader2, CheckCircle, XCircle, Clock, Play } from "lucide-react";
+import { Cpu, Plus, Loader2, CheckCircle, XCircle, Clock, Play, Thermometer, Zap } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { api } from "../api";
 
@@ -21,6 +21,9 @@ type TrainerAgent = {
   hostname: string | null;
   lastHeartbeat: string | null;
   currentJobId: string | null;
+  status?: string | null;
+  gpu?: { name: string; vramMb: number; temperatureC: number; utilizationPercent: number } | null;
+  currentJobProgress?: { epoch: number; total_epochs: number; mAP50?: number } | null;
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -92,32 +95,84 @@ export default function TrainingJobs() {
         ) : agents.length === 0 ? (
           <p className="text-sm text-gray-400">No training agents registered</p>
         ) : (
-          <div className="flex items-center flex-wrap gap-3">
-            {agents.map((agent) => (
-              <div
-                key={agent.thingName}
-                className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg"
-              >
-                <span className={`w-2 h-2 rounded-full ${agent.online ? "bg-green-500" : "bg-red-500"}`} />
-                <Cpu className="w-4 h-4 text-gray-400" />
-                <span className="text-sm text-gray-700">{agent.hostname || agent.thingName}</span>
-                {agent.version && (
-                  <span className="text-xs text-gray-400">v{agent.version}</span>
-                )}
-                {agent.currentJobId ? (
-                  <Link
-                    to={`/training/${agent.currentJobId}`}
-                    className="text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium hover:bg-amber-200"
-                  >
-                    {agent.currentJobId}
-                  </Link>
-                ) : agent.lastHeartbeat ? (
-                  <span className="text-xs text-gray-400">
-                    {formatDistanceToNow(new Date(agent.lastHeartbeat), { addSuffix: true })}
-                  </span>
-                ) : null}
-              </div>
-            ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {agents.map((agent) => {
+              const progress = agent.currentJobProgress;
+              return (
+                <Link
+                  key={agent.thingName}
+                  to={`/training/agents/${agent.thingName}`}
+                  className="block border border-gray-200 rounded-xl p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
+                >
+                  {/* Header row */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${agent.online ? "bg-green-500 animate-pulse" : "bg-gray-300"}`} />
+                      <span className="text-sm font-medium text-gray-900 truncate">
+                        {agent.hostname || agent.thingName.replace("snoutspotter-trainer-", "")}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {agent.version && (
+                        <span className="text-xs text-gray-400">v{agent.version}</span>
+                      )}
+                      {agent.status === "training" ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                          <Play className="w-3 h-3" /> training
+                        </span>
+                      ) : (
+                        <span className={`text-xs ${agent.online ? "text-green-600" : "text-gray-400"}`}>
+                          {agent.online ? "idle" : "offline"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* GPU row */}
+                  {agent.gpu && (
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
+                      <div className="flex items-center gap-1">
+                        <Cpu className="w-3 h-3" />
+                        <span className="truncate">{agent.gpu.name}</span>
+                        <span className="text-gray-400 shrink-0">{(agent.gpu.vramMb / 1024).toFixed(0)}GB</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="flex items-center gap-0.5">
+                          <Thermometer className="w-3 h-3 text-orange-400" />
+                          {agent.gpu.temperatureC}°
+                        </span>
+                        <span className="flex items-center gap-0.5">
+                          <Zap className="w-3 h-3 text-blue-400" />
+                          {agent.gpu.utilizationPercent}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Progress bar (if training) */}
+                  {agent.currentJobId && progress ? (
+                    <div>
+                      <div className="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>Epoch {progress.epoch}/{progress.total_epochs}</span>
+                        {progress.mAP50 != null && <span>mAP50 {progress.mAP50.toFixed(3)}</span>}
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-1.5">
+                        <div
+                          className="bg-amber-500 h-1.5 rounded-full transition-all duration-500"
+                          style={{ width: `${(progress.epoch / progress.total_epochs) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400">
+                      {agent.lastHeartbeat
+                        ? `Last seen ${formatDistanceToNow(new Date(agent.lastHeartbeat), { addSuffix: true })}`
+                        : "Never connected"}
+                    </p>
+                  )}
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>

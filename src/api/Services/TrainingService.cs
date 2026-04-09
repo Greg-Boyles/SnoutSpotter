@@ -43,17 +43,31 @@ public class TrainingService : ITrainingService
                     DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
                     (DateTime.UtcNow - lastHb).TotalMinutes < 5;
 
+                var gpu = shadow?.Gpu == null ? null : new TrainerGpuSummary(
+                    shadow.Gpu.Name,
+                    shadow.Gpu.VramMb,
+                    shadow.Gpu.TemperatureC,
+                    shadow.Gpu.UtilizationPercent);
+
+                var progress = shadow?.CurrentJobProgress == null ? null : new TrainerProgressSummary(
+                    shadow.CurrentJobProgress.Epoch,
+                    shadow.CurrentJobProgress.TotalEpochs,
+                    shadow.CurrentJobProgress.MAP50);
+
                 agents.Add(new TrainerAgentSummary(
                     ThingName: thingName,
                     Online: online,
                     Version: shadow?.AgentVersion,
                     Hostname: shadow?.Hostname,
                     LastHeartbeat: shadow?.LastHeartbeat,
-                    CurrentJobId: shadow?.CurrentJobId));
+                    CurrentJobId: shadow?.CurrentJobId,
+                    Status: shadow?.Status,
+                    Gpu: gpu,
+                    CurrentJobProgress: progress));
             }
             catch
             {
-                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null));
+                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null, null, null, null));
             }
         }
 
