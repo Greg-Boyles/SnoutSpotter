@@ -58,6 +58,7 @@ public class JobRunner
     public async Task RunAsync(TrainingJobDesired job, CancellationToken ct)
     {
         var datasetDir = Path.Combine(DataDir, job.JobId);
+        var currentStage = "preparing";
 
         try
         {
@@ -69,23 +70,43 @@ public class JobRunner
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                await PublishError(job.JobId, $"Failed to prepare ML scripts: {ex.Message}");
+                await PublishError(job.JobId, $"Failed to prepare ML scripts: {ex.Message}", "preparing");
                 return;
             }
 
-            // 2. Download and extract dataset
+            // 2. Download dataset
             _logger.LogInformation("Downloading dataset: {Key}", job.ExportS3Key);
             var zipPath = Path.Combine(DataDir, $"{job.JobId}.zip");
             Directory.CreateDirectory(DataDir);
 
-            await DownloadWithProgressAsync(job.JobId, job.ExportS3Key, zipPath, ct);
+            currentStage = "downloading";
+            try
+            {
+                await DownloadWithProgressAsync(job.JobId, job.ExportS3Key, zipPath, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await PublishError(job.JobId, $"Failed to download dataset: {ex.Message}", "downloading");
+                return;
+            }
 
-            Directory.CreateDirectory(datasetDir);
-            ZipFile.ExtractToDirectory(zipPath, datasetDir, overwriteFiles: true);
-            File.Delete(zipPath);
-            _logger.LogInformation("Dataset extracted to {Dir}", datasetDir);
+            // 3. Extract dataset
+            currentStage = "extracting";
+            try
+            {
+                Directory.CreateDirectory(datasetDir);
+                ZipFile.ExtractToDirectory(zipPath, datasetDir, overwriteFiles: true);
+                File.Delete(zipPath);
+                _logger.LogInformation("Dataset extracted to {Dir}", datasetDir);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await PublishError(job.JobId, $"Failed to extract dataset: {ex.Message}", "extracting");
+                return;
+            }
 
-            // 3. Run training
+            // 4. Run training
+            currentStage = "training";
             await PublishProgress(job.JobId, "training", null);
 
             var args = BuildTrainingArgs(job, datasetDir);
@@ -105,17 +126,18 @@ public class JobRunner
 
             if (exitCode != 0)
             {
-                await PublishError(job.JobId, $"Training process exited with code {exitCode}");
+                await PublishError(job.JobId, $"Training process exited with code {exitCode}", "training");
                 return;
             }
 
-            // 4. Upload model
+            // 5. Upload model
+            currentStage = "uploading";
             await PublishProgress(job.JobId, "uploading", null);
 
             var modelPath = FindBestModel(datasetDir);
             if (modelPath == null)
             {
-                await PublishError(job.JobId, "No best.onnx found after training");
+                await PublishError(job.JobId, "No best.onnx found after training", "uploading");
                 return;
             }
 
@@ -125,7 +147,7 @@ public class JobRunner
             await transfer.UploadAsync(modelPath, _bucket, modelS3Key, ct);
             _logger.LogInformation("Model uploaded to s3://{Bucket}/{Key}", _bucket, modelS3Key);
 
-            // 5. Report final result
+            // 6. Report final result
             var metrics = parser.GetFinalMetrics();
             var modelSize = new FileInfo(modelPath).Length / (1024.0 * 1024.0);
 
@@ -151,7 +173,7 @@ public class JobRunner
         catch (Exception ex)
         {
             _logger.LogError("Unhandled job error: {Error}", ex.Message);
-            try { await PublishError(job.JobId, ex.Message); } catch { /* best effort */ }
+            try { await PublishError(job.JobId, ex.Message, currentStage); } catch { /* best effort */ }
         }
         finally
         {
@@ -381,10 +403,10 @@ public class JobRunner
             JsonSerializer.Serialize(message));
     }
 
-    private async Task PublishError(string jobId, string error)
+    private async Task PublishError(string jobId, string error, string stage)
     {
-        _logger.LogError("Job {JobId} failed: {Error}", jobId, error);
-        var message = new TrainingProgressMessage { JobId = jobId, Status = "failed", Error = error };
+        _logger.LogError("Job {JobId} failed during {Stage}: {Error}", jobId, stage, error);
+        var message = new TrainingProgressMessage { JobId = jobId, Status = "failed", Error = error, FailedStage = stage };
         await _mqtt.PublishAsync(
             $"snoutspotter/trainer/{_thingName}/progress",
             JsonSerializer.Serialize(message));

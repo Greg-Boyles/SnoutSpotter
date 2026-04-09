@@ -163,6 +163,11 @@ export default function TrainingAgentDetail() {
   const r = agent.reported;
   const displayName = r?.hostname ?? thingName!;
   const progress = r?.currentJobProgress;
+  const activeStatuses = ["pending", "downloading", "training", "uploading", "cancelling"];
+  const currentJob = r?.currentJobId
+    ? jobs.find(j => j.jobId === r.currentJobId)
+    : null;
+  const showTrainingBanner = !!r?.currentJobId && (!currentJob || activeStatuses.includes(currentJob.status));
 
   return (
     <div className="space-y-6">
@@ -277,7 +282,7 @@ export default function TrainingAgentDetail() {
       </div>
 
       {/* Current Job */}
-      {r?.currentJobId && (
+      {showTrainingBanner && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-amber-900 flex items-center gap-2">

@@ -64,6 +64,7 @@ public record TrainingJobDetail(
     string? Result,
     string? CheckpointS3Key,
     string? Error,
+    string? FailedStage,
     string? CreatedAt,
     string? StartedAt,
     string? CompletedAt);

@@ -247,7 +247,7 @@ export const api = {
     fetchJson<{ jobs: { jobId: string; status: string; agentThingName: string | null; exportId: string | null; epochs: number | null; createdAt: string | null; startedAt: string | null; completedAt: string | null; finalMAP50: number | null }[] }>(`/training/jobs?${status ? `status=${status}&` : ""}limit=${limit}`),
 
   getTrainingJob: (jobId: string) =>
-    fetchJson<{ jobId: string; status: string; agentThingName: string | null; exportId: string | null; exportS3Key: string | null; config: string | null; progress: string | null; result: string | null; checkpointS3Key: string | null; error: string | null; createdAt: string | null; startedAt: string | null; completedAt: string | null }>(`/training/jobs/${jobId}`),
+    fetchJson<{ jobId: string; status: string; agentThingName: string | null; exportId: string | null; exportS3Key: string | null; config: string | null; progress: string | null; result: string | null; checkpointS3Key: string | null; error: string | null; failedStage: string | null; createdAt: string | null; startedAt: string | null; completedAt: string | null }>(`/training/jobs/${jobId}`),
 
   cancelTrainingJob: (jobId: string) =>
     postJson<{ message: string }>(`/training/jobs/${jobId}/cancel`),

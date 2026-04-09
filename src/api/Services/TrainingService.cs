@@ -239,6 +239,7 @@ public class TrainingService : ITrainingService
             Result: item.GetValueOrDefault("result")?.S,
             CheckpointS3Key: item.GetValueOrDefault("checkpoint_s3_key")?.S,
             Error: item.GetValueOrDefault("error")?.S,
+            FailedStage: item.GetValueOrDefault("failed_stage")?.S,
             CreatedAt: item.GetValueOrDefault("created_at")?.S,
             StartedAt: item.GetValueOrDefault("started_at")?.S,
             CompletedAt: item.GetValueOrDefault("completed_at")?.S);
