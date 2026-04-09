@@ -30,14 +30,18 @@ jobs:
         id: version
         run: |
           BUCKET=${{ secrets.DATA_BUCKET_NAME }}
-          CURRENT=$(aws s3 cp s3://${BUCKET}/releases/ml-training/latest.json - 2>/dev/null | jq -r '.version // "0"' || echo "0")
-          NEXT=$((CURRENT + 1))
+          CURRENT=$(aws s3 cp s3://${BUCKET}/releases/ml-training/latest.json - 2>/dev/null | jq -r '.version // "1.0.0"' || echo "1.0.0")
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "ML training scripts version: $NEXT"
+          echo "ML training scripts version: $NEXT (previous: ${CURRENT})"
 
       - name: Package scripts
         run: |
-          tar -czf ml-training-v${{ steps.version.outputs.version }}.tar.gz \
+          VERSION=${{ steps.version.outputs.version }}
+          tar -czf ml-training-v${VERSION}.tar.gz \
             -C src/ml \
             train_detector.py verify_onnx.py
 
@@ -47,6 +51,6 @@ jobs:
           BUCKET=${{ secrets.DATA_BUCKET_NAME }}
           aws s3 cp ml-training-v${VERSION}.tar.gz \
             s3://${BUCKET}/releases/ml-training/v${VERSION}.tar.gz
-          echo "{\"version\":\"${VERSION}\",\"published_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" | \
-            aws s3 cp - s3://${BUCKET}/releases/ml-training/latest.json
+          echo "{\"version\":\"${VERSION}\",\"commit\":\"${{ github.sha }}\",\"published_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" | \
+            aws s3 cp - s3://${BUCKET}/releases/ml-training/latest.json --content-type application/json
           echo "Published ml-training v${VERSION}"
