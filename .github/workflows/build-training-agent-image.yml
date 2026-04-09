@@ -46,9 +46,11 @@ jobs:
           docker build \
             --build-arg AGENT_VERSION=$VERSION \
             -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $REGISTRY/$ECR_REPOSITORY:v$VERSION \
             -t $REGISTRY/$ECR_REPOSITORY:latest \
             -f src/training-agent/Dockerfile src
           docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $REGISTRY/$ECR_REPOSITORY:v$VERSION
           docker push $REGISTRY/$ECR_REPOSITORY:latest
 
       - name: Update S3 manifest
