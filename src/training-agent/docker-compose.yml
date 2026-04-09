@@ -12,6 +12,7 @@ services:
       - trainer-ml:/app/ml
       # Dev: uncomment to use local training scripts instead of S3
       # - ../../src/ml:/app/ml:ro
+    shm_size: '8gb'
     deploy:
       resources:
         reservations:

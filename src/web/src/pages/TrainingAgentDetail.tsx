@@ -65,6 +65,7 @@ function StatusBadge({ status }: { status: string }) {
     offline: "bg-gray-100 text-gray-400",
     training: "bg-amber-100 text-amber-700",
     downloading: "bg-blue-100 text-blue-700",
+    scanning: "bg-blue-100 text-blue-700",
     uploading: "bg-blue-100 text-blue-700",
   };
   return (
@@ -163,7 +164,7 @@ export default function TrainingAgentDetail() {
   const r = agent.reported;
   const displayName = r?.hostname ?? thingName!;
   const progress = r?.currentJobProgress;
-  const activeStatuses = ["pending", "downloading", "training", "uploading", "cancelling"];
+  const activeStatuses = ["pending", "downloading", "scanning", "training", "uploading", "cancelling"];
   const currentJob = r?.currentJobId
     ? jobs.find(j => j.jobId === r.currentJobId)
     : null;

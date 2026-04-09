@@ -47,6 +47,7 @@ function MAP50Value({ value, label }: { value: number; label: string }) {
 const STAGES = [
   { key: "pending", label: "Pending" },
   { key: "downloading", label: "Downloading" },
+  { key: "scanning", label: "Scanning" },
   { key: "training", label: "Training" },
   { key: "uploading", label: "Uploading" },
   { key: "complete", label: "Complete" },
@@ -56,10 +57,11 @@ function stageIndex(status: string): number {
   const map: Record<string, number> = {
     pending: 0,
     downloading: 1,
-    training: 2,
-    uploading: 3,
-    complete: 4,
-    cancelling: 2,
+    scanning: 2,
+    training: 3,
+    uploading: 4,
+    complete: 5,
+    cancelling: 3,
     cancelled: -1,
     failed: -1,
   };
@@ -72,8 +74,9 @@ function failedStageIndex(failedStage: string): number {
     preparing: 1,
     downloading: 1,
     extracting: 1,
-    training: 2,
-    uploading: 3,
+    scanning: 2,
+    training: 3,
+    uploading: 4,
   };
   return map[failedStage] ?? 1;
 }
@@ -219,7 +222,7 @@ export default function TrainingJobDetail() {
   const config = job.config;
   const progress = job.progress;
   const result = job.result;
-  const isRunning = ["pending", "downloading", "training", "uploading", "cancelling"].includes(job.status);
+  const isRunning = ["pending", "downloading", "scanning", "training", "uploading", "cancelling"].includes(job.status);
   const isComplete = job.status === "complete";
   const epoch = progress?.epoch ?? 0;
   const totalEpochs = progress?.total_epochs ?? config?.epochs ?? 0;

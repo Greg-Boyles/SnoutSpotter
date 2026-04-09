@@ -105,10 +105,12 @@ public class JobRunner
                 return;
             }
 
-            // 4. Run training
-            currentStage = "training";
-            await PublishProgress(job.JobId, "training", null);
+            // 4. Scan dataset (YOLO scans all images/labels before first epoch)
+            currentStage = "scanning";
+            await PublishProgress(job.JobId, "scanning", null);
 
+            // 5. Run training
+            currentStage = "training";
             var args = BuildTrainingArgs(job, datasetDir);
             _logger.LogInformation("Starting training: python3 {Script} {Args}",
                 Path.Combine(MlScriptsDir, "train_detector.py"), args);
@@ -209,7 +211,7 @@ public class JobRunner
         var psi = new ProcessStartInfo
         {
             FileName = "python3",
-            Arguments = $"{Path.Combine(MlScriptsDir, "train_detector.py")} {args}",
+            Arguments = $"-u {Path.Combine(MlScriptsDir, "train_detector.py")} {args}",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,

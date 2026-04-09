@@ -74,7 +74,7 @@ public class Function
             exprValues[":failed_stage"] = new() { S = message.FailedStage };
         }
 
-        if (message.Status is "downloading" or "training")
+        if (message.Status is "downloading" or "scanning" or "training")
         {
             updateExpr += ", started_at = if_not_exists(started_at, :now)";
         }
