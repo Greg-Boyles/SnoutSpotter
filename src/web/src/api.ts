@@ -207,6 +207,16 @@ export const api = {
   rerunInference: (dateFrom?: string, dateTo?: string) =>
     postJson<{ total: number; queued: number }>("/ml/rerun-inference", { dateFrom, dateTo }),
 
+  // Server Settings
+  getSettings: () =>
+    fetchJson<{ settings: { key: string; value: string; default: string; label: string; type: string; min: number; max: number; description: string }[] }>("/settings"),
+
+  updateSetting: (key: string, value: string) =>
+    putJson<{ message: string }>(`/settings/${encodeURIComponent(key)}`, { value }),
+
+  resetSettings: () =>
+    postJson<{ message: string }>("/settings/reset"),
+
   // Streaming
   startStream: (thingName: string) =>
     postJson<StreamStartResult>(`/stream/${thingName}/start`),
