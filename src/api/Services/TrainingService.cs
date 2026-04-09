@@ -58,6 +58,7 @@ public class TrainingService : ITrainingService
                     ThingName: thingName,
                     Online: online,
                     Version: shadow?.AgentVersion,
+                    MlScriptVersion: shadow?.MlScriptVersion,
                     Hostname: shadow?.Hostname,
                     LastHeartbeat: shadow?.LastHeartbeat,
                     CurrentJobId: shadow?.CurrentJobId,
@@ -67,7 +68,7 @@ public class TrainingService : ITrainingService
             }
             catch
             {
-                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null, null, null, null));
+                agents.Add(new TrainerAgentSummary(thingName, false, null, null, null, null, null, null, null, null));
             }
         }
 
