@@ -1,4 +1,4 @@
-using System.Text.Json;
+using SnoutSpotter.Shared.Training;
 
 namespace SnoutSpotter.Api.Services.Interfaces;
 
@@ -59,9 +59,9 @@ public record TrainingJobDetail(
     string? AgentThingName,
     string? ExportId,
     string? ExportS3Key,
-    string? Config,
-    string? Progress,
-    string? Result,
+    TrainingJobParams? Config,
+    TrainingProgress? Progress,
+    TrainingResult? Result,
     string? CheckpointS3Key,
     string? Error,
     string? FailedStage,

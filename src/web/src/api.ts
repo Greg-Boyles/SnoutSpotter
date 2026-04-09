@@ -247,7 +247,15 @@ export const api = {
     fetchJson<{ jobs: { jobId: string; status: string; agentThingName: string | null; exportId: string | null; epochs: number | null; createdAt: string | null; startedAt: string | null; completedAt: string | null; finalMAP50: number | null }[] }>(`/training/jobs?${status ? `status=${status}&` : ""}limit=${limit}`),
 
   getTrainingJob: (jobId: string) =>
-    fetchJson<{ jobId: string; status: string; agentThingName: string | null; exportId: string | null; exportS3Key: string | null; config: string | null; progress: string | null; result: string | null; checkpointS3Key: string | null; error: string | null; failedStage: string | null; createdAt: string | null; startedAt: string | null; completedAt: string | null }>(`/training/jobs/${jobId}`),
+    fetchJson<{
+      jobId: string; status: string; agentThingName: string | null;
+      exportId: string | null; exportS3Key: string | null;
+      config: { epochs: number; batch_size: number; image_size: number; learning_rate: number; workers: number; model_base: string; resume_from: string | null } | null;
+      progress: { epoch: number; total_epochs: number; train_loss?: number; val_loss?: number; mAP50?: number; mAP50_95?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number } | null;
+      result: { model_s3_key: string; model_size_mb: number; final_mAP50: number; final_mAP50_95?: number; total_epochs: number; best_epoch: number; training_time_seconds: number; dataset_images: number; classes: string[]; precision?: number; recall?: number } | null;
+      checkpointS3Key: string | null; error: string | null; failedStage: string | null;
+      createdAt: string | null; startedAt: string | null; completedAt: string | null;
+    }>(`/training/jobs/${jobId}`),
 
   cancelTrainingJob: (jobId: string) =>
     postJson<{ message: string }>(`/training/jobs/${jobId}/cancel`),

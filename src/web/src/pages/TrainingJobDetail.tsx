@@ -4,25 +4,24 @@ import { ArrowLeft, Loader2, CheckCircle, XCircle, Play, Square, Zap, Copy, Tras
 import { formatDistanceToNow, format } from "date-fns";
 import { api } from "../api";
 
+type JobConfig = { epochs: number; batch_size: number; image_size: number; learning_rate: number; workers: number; model_base: string; resume_from: string | null };
+type JobProgress = { epoch: number; total_epochs: number; train_loss?: number; val_loss?: number; mAP50?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number };
+type JobResult = { model_s3_key: string; model_size_mb: number; final_mAP50: number; final_mAP50_95?: number; total_epochs: number; best_epoch: number; training_time_seconds: number; dataset_images: number; classes: string[]; precision?: number; recall?: number };
+
 type JobDetail = {
   jobId: string;
   status: string;
   agentThingName: string | null;
   exportId: string | null;
-  config: string | null;
-  progress: string | null;
-  result: string | null;
+  config: JobConfig | null;
+  progress: JobProgress | null;
+  result: JobResult | null;
   error: string | null;
   failedStage: string | null;
   createdAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
 };
-
-function parseJson(s: string | null): Record<string, unknown> | null {
-  if (!s) return null;
-  try { return JSON.parse(s); } catch { return null; }
-}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -161,8 +160,7 @@ export default function TrainingJobDetail() {
   };
 
   const handleActivate = async () => {
-    const result = parseJson(job?.result ?? null);
-    const modelKey = result?.model_s3_key as string;
+    const modelKey = job?.result?.model_s3_key;
     if (!modelKey) return;
     const version = modelKey.match(/versions\/(v[\d.]+)\//)?.[1];
     if (!version) return;
@@ -189,11 +187,10 @@ export default function TrainingJobDetail() {
   };
 
   const handleClone = () => {
-    const config = parseJson(job?.config ?? null);
     navigate("/training/new", {
       state: {
         exportId: job?.exportId,
-        config,
+        config: job?.config,
       },
     });
   };
@@ -219,13 +216,13 @@ export default function TrainingJobDetail() {
 
   if (!job) return null;
 
-  const config = parseJson(job.config);
-  const progress = parseJson(job.progress);
-  const result = parseJson(job.result);
+  const config = job.config;
+  const progress = job.progress;
+  const result = job.result;
   const isRunning = ["pending", "downloading", "training", "uploading", "cancelling"].includes(job.status);
   const isComplete = job.status === "complete";
-  const epoch = (progress?.epoch as number) ?? 0;
-  const totalEpochs = (progress?.total_epochs as number) ?? (config?.epochs as number) ?? 0;
+  const epoch = progress?.epoch ?? 0;
+  const totalEpochs = progress?.total_epochs ?? config?.epochs ?? 0;
   const percent = totalEpochs > 0 ? Math.round((epoch / totalEpochs) * 100) : 0;
 
   const agentDisplayName = job.agentThingName?.replace("snoutspotter-trainer-", "");
@@ -296,20 +293,20 @@ export default function TrainingJobDetail() {
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-gray-700">Downloading dataset</span>
               <span className="text-sm text-gray-500">
-                {((progress.download_bytes as number ?? 0) / (1024 * 1024)).toFixed(0)} /
-                {" "}{((progress.download_total_bytes as number) / (1024 * 1024)).toFixed(0)} MB
+                {((progress.download_bytes ?? 0) / (1024 * 1024)).toFixed(0)} /
+                {" "}{(progress.download_total_bytes / (1024 * 1024)).toFixed(0)} MB
               </span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
               <div
                 className="bg-blue-500 h-3 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, ((progress.download_bytes as number ?? 0) / (progress.download_total_bytes as number)) * 100)}%` }}
+                style={{ width: `${Math.min(100, ((progress.download_bytes ?? 0) / progress.download_total_bytes) * 100)}%` }}
               />
             </div>
             <div className="flex justify-between text-xs text-gray-400">
-              <span>{Math.round(((progress.download_bytes as number ?? 0) / (progress.download_total_bytes as number)) * 100)}%</span>
+              <span>{Math.round(((progress.download_bytes ?? 0) / progress.download_total_bytes) * 100)}%</span>
               {progress.download_speed_mbps != null && (
-                <span>{(progress.download_speed_mbps as number).toFixed(1)} MB/s</span>
+                <span>{progress.download_speed_mbps.toFixed(1)} MB/s</span>
               )}
             </div>
           </div>
@@ -332,7 +329,7 @@ export default function TrainingJobDetail() {
             </div>
             {progress?.eta_seconds != null && isRunning && (
               <p className="text-xs text-gray-400 mt-2">
-                ETA: {Math.round((progress.eta_seconds as number) / 60)} min remaining
+                ETA: {Math.round(progress.eta_seconds / 60)} min remaining
               </p>
             )}
           </div>
@@ -345,37 +342,37 @@ export default function TrainingJobDetail() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {progress.mAP50 != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{(progress.mAP50 as number).toFixed(3)}</p>
+                  <p className="text-lg font-bold text-gray-900">{progress.mAP50.toFixed(3)}</p>
                   <p className="text-xs text-gray-500">mAP50</p>
                 </div>
               )}
               {progress.best_mAP50 != null && (
                 <div>
-                  <p className="text-lg font-bold text-green-600">{(progress.best_mAP50 as number).toFixed(3)}</p>
+                  <p className="text-lg font-bold text-green-600">{progress.best_mAP50.toFixed(3)}</p>
                   <p className="text-xs text-gray-500">Best mAP50</p>
                 </div>
               )}
               {progress.train_loss != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{(progress.train_loss as number).toFixed(4)}</p>
+                  <p className="text-lg font-bold text-gray-900">{progress.train_loss.toFixed(4)}</p>
                   <p className="text-xs text-gray-500">Train Loss</p>
                 </div>
               )}
               {progress.val_loss != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{(progress.val_loss as number).toFixed(4)}</p>
+                  <p className="text-lg font-bold text-gray-900">{progress.val_loss.toFixed(4)}</p>
                   <p className="text-xs text-gray-500">Val Loss</p>
                 </div>
               )}
               {progress.gpu_temp_c != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{progress.gpu_temp_c as number}°C</p>
+                  <p className="text-lg font-bold text-gray-900">{progress.gpu_temp_c}°C</p>
                   <p className="text-xs text-gray-500">GPU Temp</p>
                 </div>
               )}
               {progress.gpu_util_percent != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{progress.gpu_util_percent as number}%</p>
+                  <p className="text-lg font-bold text-gray-900">{progress.gpu_util_percent}%</p>
                   <p className="text-xs text-gray-500">GPU Util</p>
                 </div>
               )}
@@ -390,7 +387,7 @@ export default function TrainingJobDetail() {
               <h3 className="text-sm font-semibold text-gray-900">Results</h3>
               {result.training_time_seconds != null && (
                 <span className="text-xs text-gray-400">
-                  Training took {formatDuration(result.training_time_seconds as number)}
+                  Training took {formatDuration(result.training_time_seconds)}
                 </span>
               )}
             </div>
@@ -398,44 +395,44 @@ export default function TrainingJobDetail() {
             {/* mAP50 hero metric */}
             {result.final_mAP50 != null && (
               <div className="mb-4">
-                <MAP50Value value={result.final_mAP50 as number} label="Final mAP50" />
+                <MAP50Value value={result.final_mAP50} label="Final mAP50" />
               </div>
             )}
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
               {result.final_mAP50_95 != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{(result.final_mAP50_95 as number).toFixed(3)}</p>
+                  <p className="text-lg font-bold text-gray-900">{result.final_mAP50_95.toFixed(3)}</p>
                   <p className="text-xs text-gray-500">mAP50-95</p>
                 </div>
               )}
               {result.precision != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{(result.precision as number).toFixed(3)}</p>
+                  <p className="text-lg font-bold text-gray-900">{result.precision.toFixed(3)}</p>
                   <p className="text-xs text-gray-500">Precision</p>
                 </div>
               )}
               {result.recall != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{(result.recall as number).toFixed(3)}</p>
+                  <p className="text-lg font-bold text-gray-900">{result.recall.toFixed(3)}</p>
                   <p className="text-xs text-gray-500">Recall</p>
                 </div>
               )}
               {result.best_epoch != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{result.best_epoch as number}</p>
+                  <p className="text-lg font-bold text-gray-900">{result.best_epoch}</p>
                   <p className="text-xs text-gray-500">Best Epoch</p>
                 </div>
               )}
               {result.dataset_images != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{result.dataset_images as number}</p>
+                  <p className="text-lg font-bold text-gray-900">{result.dataset_images}</p>
                   <p className="text-xs text-gray-500">Dataset Images</p>
                 </div>
               )}
               {result.model_size_mb != null && (
                 <div>
-                  <p className="text-lg font-bold text-gray-900">{(result.model_size_mb as number).toFixed(1)} MB</p>
+                  <p className="text-lg font-bold text-gray-900">{result.model_size_mb.toFixed(1)} MB</p>
                   <p className="text-xs text-gray-500">Model Size</p>
                 </div>
               )}

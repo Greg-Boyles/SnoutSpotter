@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
@@ -119,7 +120,7 @@ public class TrainingService : ITrainingService
             ["status"]       = new() { S = "pending" },
             ["export_id"]    = new() { S = request.ExportId },
             ["export_s3_key"]= new() { S = request.ExportS3Key },
-            ["config"]       = new() { S = JsonSerializer.Serialize(jobParams) },
+            ["config"]       = new() { M = ToMap(jobParams) },
             ["created_at"]   = new() { S = now },
             ["notes"]        = new() { S = request.Notes ?? "" }
         };
@@ -185,25 +186,13 @@ public class TrainingService : ITrainingService
 
         return items.Select(item =>
         {
-            int? epochs = null;
-            var configJson = item.GetValueOrDefault("config")?.S;
-            if (configJson != null)
-            {
-                var cfg = JsonSerializer.Deserialize<TrainingJobParams>(configJson);
-                epochs = cfg?.Epochs;
-            }
+            var configMap = item.GetValueOrDefault("config")?.M;
+            int? epochs = configMap != null && configMap.TryGetValue("epochs", out var ep)
+                ? int.Parse(ep.N) : null;
 
-            double? finalMAP50 = null;
-            var resultJson = item.GetValueOrDefault("result")?.S;
-            if (resultJson != null)
-            {
-                try
-                {
-                    var r = JsonSerializer.Deserialize<SnoutSpotter.Shared.Training.TrainingResult>(resultJson);
-                    if (r?.FinalMAP50 > 0) finalMAP50 = r.FinalMAP50;
-                }
-                catch { }
-            }
+            var resultMap = item.GetValueOrDefault("result")?.M;
+            double? finalMAP50 = resultMap != null && resultMap.TryGetValue("final_mAP50", out var fm)
+                ? double.Parse(fm.N, CultureInfo.InvariantCulture) : null;
 
             return new TrainingJobSummary(
                 JobId: item.GetValueOrDefault("job_id")?.S ?? "",
@@ -228,15 +217,19 @@ public class TrainingService : ITrainingService
         if (!response.IsItemSet) return null;
         var item = response.Item;
 
+        var configMap = item.GetValueOrDefault("config")?.M;
+        var progressMap = item.GetValueOrDefault("progress")?.M;
+        var resultMap = item.GetValueOrDefault("result")?.M;
+
         return new TrainingJobDetail(
             JobId: item.GetValueOrDefault("job_id")?.S ?? "",
             Status: item.GetValueOrDefault("status")?.S ?? "",
             AgentThingName: item.GetValueOrDefault("agent_thing_name")?.S,
             ExportId: item.GetValueOrDefault("export_id")?.S,
             ExportS3Key: item.GetValueOrDefault("export_s3_key")?.S,
-            Config: item.GetValueOrDefault("config")?.S,
-            Progress: item.GetValueOrDefault("progress")?.S,
-            Result: item.GetValueOrDefault("result")?.S,
+            Config:   configMap   != null ? FromConfigMap(configMap)     : null,
+            Progress: progressMap != null ? FromProgressMap(progressMap) : null,
+            Result:   resultMap   != null ? FromResultMap(resultMap)     : null,
             CheckpointS3Key: item.GetValueOrDefault("checkpoint_s3_key")?.S,
             Error: item.GetValueOrDefault("error")?.S,
             FailedStage: item.GetValueOrDefault("failed_stage")?.S,
@@ -284,6 +277,67 @@ public class TrainingService : ITrainingService
             }
         });
     }
+
+    // ── DynamoDB Map helpers ────────────────────────────────────────────────
+
+    private static Dictionary<string, AttributeValue> ToMap(TrainingJobParams p)
+    {
+        var m = new Dictionary<string, AttributeValue>
+        {
+            ["epochs"]        = new() { N = p.Epochs.ToString() },
+            ["batch_size"]    = new() { N = p.BatchSize.ToString() },
+            ["image_size"]    = new() { N = p.ImageSize.ToString() },
+            ["learning_rate"] = new() { N = p.LearningRate.ToString("G", CultureInfo.InvariantCulture) },
+            ["workers"]       = new() { N = p.Workers.ToString() },
+            ["model_base"]    = new() { S = p.ModelBase },
+        };
+        if (p.ResumeFrom != null) m["resume_from"] = new() { S = p.ResumeFrom };
+        return m;
+    }
+
+    private static TrainingJobParams FromConfigMap(Dictionary<string, AttributeValue> m) => new()
+    {
+        Epochs       = int.Parse(m["epochs"].N),
+        BatchSize    = int.Parse(m["batch_size"].N),
+        ImageSize    = int.Parse(m["image_size"].N),
+        LearningRate = double.Parse(m["learning_rate"].N, CultureInfo.InvariantCulture),
+        Workers      = int.Parse(m["workers"].N),
+        ModelBase    = m["model_base"].S,
+        ResumeFrom   = m.TryGetValue("resume_from", out var rf) ? rf.S : null,
+    };
+
+    private static TrainingProgress FromProgressMap(Dictionary<string, AttributeValue> m) => new()
+    {
+        Epoch             = int.Parse(m["epoch"].N),
+        TotalEpochs       = int.Parse(m["total_epochs"].N),
+        TrainLoss         = m.TryGetValue("train_loss", out var tl)  ? double.Parse(tl.N,  CultureInfo.InvariantCulture) : null,
+        ValLoss           = m.TryGetValue("val_loss", out var vl)    ? double.Parse(vl.N,  CultureInfo.InvariantCulture) : null,
+        MAP50             = m.TryGetValue("mAP50", out var mp)       ? double.Parse(mp.N,  CultureInfo.InvariantCulture) : null,
+        MAP50_95          = m.TryGetValue("mAP50_95", out var mp95)  ? double.Parse(mp95.N, CultureInfo.InvariantCulture) : null,
+        BestMAP50         = m.TryGetValue("best_mAP50", out var bm)  ? double.Parse(bm.N,  CultureInfo.InvariantCulture) : null,
+        ElapsedSeconds    = m.TryGetValue("elapsed_seconds", out var es)  ? long.Parse(es.N)  : null,
+        EtaSeconds        = m.TryGetValue("eta_seconds", out var eta)     ? long.Parse(eta.N) : null,
+        GpuUtilPercent    = m.TryGetValue("gpu_util_percent", out var gu) ? int.Parse(gu.N)   : null,
+        GpuTempC          = m.TryGetValue("gpu_temp_c", out var gt)       ? int.Parse(gt.N)   : null,
+        DownloadBytes     = m.TryGetValue("download_bytes", out var db)   ? long.Parse(db.N)  : null,
+        DownloadTotalBytes = m.TryGetValue("download_total_bytes", out var dtb) ? long.Parse(dtb.N) : null,
+        DownloadSpeedMbps = m.TryGetValue("download_speed_mbps", out var ds) ? double.Parse(ds.N, CultureInfo.InvariantCulture) : null,
+    };
+
+    private static TrainingResult FromResultMap(Dictionary<string, AttributeValue> m) => new()
+    {
+        ModelS3Key          = m["model_s3_key"].S,
+        ModelSizeMb         = double.Parse(m["model_size_mb"].N, CultureInfo.InvariantCulture),
+        FinalMAP50          = double.Parse(m["final_mAP50"].N,   CultureInfo.InvariantCulture),
+        TotalEpochs         = int.Parse(m["total_epochs"].N),
+        BestEpoch           = int.Parse(m["best_epoch"].N),
+        TrainingTimeSeconds = long.Parse(m["training_time_seconds"].N),
+        DatasetImages       = int.Parse(m["dataset_images"].N),
+        Classes             = m.TryGetValue("classes", out var cl) ? [.. cl.L.Select(x => x.S)] : [],
+        FinalMAP50_95       = m.TryGetValue("final_mAP50_95", out var f95) ? double.Parse(f95.N, CultureInfo.InvariantCulture) : null,
+        Precision           = m.TryGetValue("precision", out var pr) ? double.Parse(pr.N, CultureInfo.InvariantCulture) : null,
+        Recall              = m.TryGetValue("recall", out var rc)    ? double.Parse(rc.N, CultureInfo.InvariantCulture) : null,
+    };
 
     private async Task<AgentReportedState?> GetShadowReportedAsync(string thingName)
     {
