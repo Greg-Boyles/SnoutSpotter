@@ -344,10 +344,11 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/training/agents` — list registered training agents with online status (from IoT shadow)
 - `GET /api/training/agents/{thingName}` — single agent status + full reported shadow
 - `POST /api/training/agents/{thingName}/update` — trigger agent container update (`{"version": "1.2.0"}`)
-- `POST /api/training/jobs` — submit a training job (dispatched via IoT shadow to an idle agent)
+- `POST /api/training/jobs` — submit a training job (dispatched via SQS to an idle agent)
 - `GET /api/training/jobs?status=running&limit=50` — list training jobs
-- `GET /api/training/jobs/{jobId}` — get job detail (config, progress, result)
+- `GET /api/training/jobs/{jobId}` — get job detail (config, progress, result as native typed objects)
 - `POST /api/training/jobs/{jobId}/cancel` — request job cancellation
+- `DELETE /api/training/jobs/{jobId}` — delete a training job record
 
 **Pi Management (OTA + Config + Commands):**
 - `GET /api/pi/devices` — list all Pi devices with full shadow state
@@ -454,6 +455,30 @@ All main API endpoints require a valid Okta JWT Bearer token.
 | `train_count` | Number | Training split count |
 | `val_count` | Number | Validation split count |
 | `size_mb` | Number | Zip file size |
+
+### Training Jobs Table
+
+**Table:** `snout-spotter-training-jobs` | **Billing:** Pay-per-request
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `job_id` (PK) | String | Unique job identifier (`tj-YYYYMMDD-HHmmss-xxxx`) |
+| `status` | String | `pending`, `downloading`, `scanning`, `training`, `uploading`, `complete`, `failed`, `cancelled` |
+| `agent_thing_name` | String | IoT thing name of the agent running the job |
+| `export_id` | String | Source dataset export ID |
+| `export_s3_key` | String | S3 key of the dataset zip |
+| `config` | Map (M) | Training hyperparameters (`epochs`, `batch_size`, `image_size`, `learning_rate`, `workers`, `model_base`, `resume_from`) |
+| `progress` | Map (M) | Latest progress (`epoch`, `total_epochs`, `train_loss`, `mAP50`, `best_mAP50`, `elapsed_seconds`, `eta_seconds`, `gpu_util_percent`, `gpu_temp_c`, `download_bytes`, `download_total_bytes`, `download_speed_mbps`) |
+| `result` | Map (M) | Final result (`model_s3_key`, `model_size_mb`, `final_mAP50`, `final_mAP50_95`, `precision`, `recall`, `total_epochs`, `best_epoch`, `training_time_seconds`, `dataset_images`, `classes`) |
+| `error` | String | Error message if failed |
+| `failed_stage` | String | Which stage failed (`preparing`, `downloading`, `extracting`, `scanning`, `training`, `uploading`) |
+| `checkpoint_s3_key` | String | S3 key of last.pt checkpoint (saved on cancel/interrupt) |
+| `created_at` | String | ISO 8601 |
+| `started_at` | String | ISO 8601 — set on first `downloading` or `scanning` or `training` status |
+| `completed_at` | String | ISO 8601 — set on `complete`, `failed`, `cancelled`, `interrupted` |
+| `updated_at` | String | ISO 8601 — updated on every status change |
+
+**Important:** `config`, `progress`, and `result` are stored as native DynamoDB Maps (not JSON strings). The API deserialises these directly — no JSON-in-JSON. `TrainingService.cs` has `ToMap`/`FromConfigMap`/`FromProgressMap`/`FromResultMap` helpers.
 
 ---
 
@@ -566,18 +591,43 @@ A .NET agent (`src/training-agent/`) runs in Docker on a GPU machine, registers 
 ```bash
 # src/training-agent/.env
 ECR_REGISTRY=<account-id>.dkr.ecr.eu-west-1.amazonaws.com
+IMAGE_TAG=v1.0.6
 AGENT_NAME=gregs-pc   # becomes IoT thing: snoutspotter-trainer-gregs-pc
 
 aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
-./updater.sh
+docker compose pull && docker compose up -d
 ```
 On first start the agent calls `POST /api/trainers/register`, saves certs + `config.yaml` to the `trainer-state` Docker volume, and connects. Subsequent starts skip registration.
 
-**Dispatch a job:** Submit via the dashboard (Training page) → API writes `desired.trainingJob` to the agent's IoT shadow → agent downloads ML scripts + dataset from S3, runs `train_detector.py`, uploads `best.onnx` to `models/dog-classifier/versions/`.
+**Dispatch a job:** Submit via the dashboard (Training page) → API dispatches via SQS → agent downloads ML scripts + dataset from S3, runs `train_detector.py`, uploads `best.onnx` to `models/dog-classifier/versions/`.
 
-**Progress:** Published to `snoutspotter/trainer/{thingName}/progress` → IoT Rule → `UpdateTrainingProgress` Lambda → DynamoDB → dashboard.
+**Job stages (in order):**
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Job queued, not yet picked up |
+| `downloading` | Agent downloading ML scripts and dataset zip from S3 |
+| `scanning` | YOLO scanning all training/validation images and labels before first epoch |
+| `training` | Training epochs running |
+| `uploading` | Uploading best.onnx to S3 |
+| `complete` | Model uploaded, result published |
+| `failed` | Failed — `error` and `failed_stage` fields indicate where |
+| `cancelled` | Cancelled by user request |
+
+**Progress:** Published to `snoutspotter/trainer/{thingName}/progress` → IoT Rule → `UpdateTrainingProgress` Lambda → DynamoDB → dashboard. `ProgressParser` publishes on each new epoch number (not waiting for validation metrics), then a second update with mAP50 when the `all` metrics line arrives. The Python process is launched with `python3 -u` to disable stdout buffering.
+
+**Failed stage tracking:** `JobRunner` tracks `currentStage` and calls `PublishError(jobId, error, stage)` with the stage name. The `UpdateTrainingProgress` Lambda stores it as `failed_stage` in DynamoDB. The UI timeline highlights the failed node in red.
 
 **Self-update:** API writes `desired.agentVersion` → agent exits with code 42 → `updater.sh` pulls new image and restarts.
+
+**Docker notes:**
+- `shm_size: '8gb'` — required for PyTorch DataLoader workers; the default 64MB `/dev/shm` causes Bus error with multiple workers
+- Docker image includes: `torch`, `torchvision`, `ultralytics`, `onnx`, `onnxruntime`, `boto3`, `Pillow`, `libxcb1`, `libgl1`, `libglib2.0-0` (OpenCV/ultralytics dependencies)
+- ML scripts are downloaded from S3 (`releases/ml-training/latest.json`) at job start; bump version via `package-ml-training.yml` workflow dispatch
+
+**ML script notes (`src/ml/train_detector.py`):**
+- When called with `--data <dir>` (agent's path), `output_dir` is set to `<dir>/runs` (absolute). This prevents ultralytics from nesting the save dir under its default `runs/detect/` prefix, which would break the `best.pt` lookup.
+- ONNX export uses `opset=12, simplify=False` — required for RunInference's tensor parsing.
 
 ### Manual training (scripts only)
 
@@ -726,3 +776,11 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 32. **SQS message types live in SnoutSpotter.Contracts** — All SQS queue messages use concrete record types from `src/shared/SnoutSpotter.Contracts/Messages.cs`: `InferenceMessage(ClipId)` for the rerun-inference queue, `BackfillMessage(KeyframeKeys)` for the backfill-boxes queue. Both producers (API) and consumers (Lambdas) reference this shared project. Never use anonymous types or raw JSON for SQS messages.
 
 33. **RunInference Lambda has three input modes** — Handles SQS Records (from rerun queue), EventBridge events (from S3 keyframe upload), and direct invocation (`{ ClipId }`). SQS is checked first in `ParseInput`. All three paths converge on the same clip processing logic.
+
+34. **Training agent requires `shm_size: '8gb'` in docker-compose** — PyTorch DataLoader with multiple workers uses POSIX shared memory (`/dev/shm`). Docker's default is 64MB, which causes `Bus error (core dumped)` when workers try to share tensor data. The docker-compose.yml sets `shm_size: '8gb'`.
+
+35. **Python stdout is block-buffered when piped** — When the training agent spawns `python3` with `RedirectStandardOutput = true`, Python uses an 8KB block buffer (not line-buffered). This delays all training output until the buffer fills or the process exits. Fix: always launch with `python3 -u` (unbuffered). `JobRunner.cs` includes this flag.
+
+36. **ultralytics saves to `runs/detect/{name}` by default** — If `project` passed to `yolo.train()` is a relative path (e.g. `"runs"`), ultralytics may prepend its default `runs/detect` prefix, creating `runs/detect/runs/{name}`. The `train_detector.py` script sets `output_dir` to an absolute path (`dataset_dir / "runs"` when called with `--data`) so the save location is deterministic.
+
+37. **IoT Shadow null serialization for agent state** — `AgentReportedState.CurrentJobId` and `CurrentJobProgress` must NOT have `[JsonIgnore(WhenWritingNull)]`. IoT Shadow uses merge-patch semantics — omitting a field leaves the old value in the shadow. To clear `currentJobId` after a job finishes, the agent must explicitly serialize `null`. Only truly static fields (like `hostname`) use `WhenWritingNull`.
