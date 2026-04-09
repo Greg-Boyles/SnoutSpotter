@@ -16,4 +16,8 @@
     <PackageReference Include="AWSSDK.S3" Version="3.7.400" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\SnoutSpotter.Contracts\SnoutSpotter.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>

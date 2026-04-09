@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Amazon.DynamoDBv2;
+using SnoutSpotter.Contracts;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda.Core;
 using Amazon.S3;
@@ -18,6 +19,7 @@ public class Function
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly string _bucketName;
     private readonly string _tableName;
+    private readonly SettingsReader _settings;
 
     public Function()
     {
@@ -27,6 +29,7 @@ public class Function
             ?? throw new InvalidOperationException("BUCKET_NAME not set");
         _tableName = Environment.GetEnvironmentVariable("TABLE_NAME")
             ?? throw new InvalidOperationException("TABLE_NAME not set");
+        _settings = new SettingsReader(_dynamoClient);
     }
 
     // Constructor for testing
@@ -52,8 +55,11 @@ public class Function
         var localVideoPath = $"/tmp/{clipId}.mp4";
         await DownloadFromS3(s3Key, localVideoPath);
 
-        // Extract keyframes using FFmpeg (1 frame per 5 seconds)
-        var keyframePaths = await ExtractKeyframes(localVideoPath, clipId, context);
+        // Read settings for keyframe extraction
+        var keyframeInterval = await _settings.GetIntAsync(ServerSettings.IngestKeyframeInterval);
+        var jpegQuality = await _settings.GetIntAsync(ServerSettings.IngestJpegQuality);
+
+        var keyframePaths = await ExtractKeyframes(localVideoPath, clipId, keyframeInterval, jpegQuality, context);
 
         // Upload keyframes to S3
         var keyframeKeys = new List<string>();
@@ -143,17 +149,17 @@ public class Function
     }
 
     private static async Task<List<string>> ExtractKeyframes(
-        string videoPath, string clipId, ILambdaContext context)
+        string videoPath, string clipId, int keyframeInterval, int jpegQuality, ILambdaContext context)
     {
         var outputPattern = $"/tmp/{clipId}_%04d.jpg";
 
-        // Extract 1 frame every 5 seconds
+        // Extract keyframes at configured interval and quality
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                Arguments = $"-i \"{videoPath}\" -vf \"fps=1/5\" -q:v 2 \"{outputPattern}\"",
+                Arguments = $"-i \"{videoPath}\" -vf \"fps=1/{keyframeInterval}\" -q:v {jpegQuality} \"{outputPattern}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
