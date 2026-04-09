@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { Video, Clock, Trash2 } from "lucide-react";
+import { Video, Clock, Trash2, RefreshCw } from "lucide-react";
 import { api } from "../api";
 import type { Clip } from "../types";
 
@@ -161,6 +161,17 @@ export default function ClipsBrowser() {
                 </div>
               </div>
             </Link>
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                await api.rerunInference(undefined, undefined, [clip.clipId]);
+                setClips((prev) => prev.map((c) => c.clipId === clip.clipId ? { ...c, detectionType: "pending" } : c));
+              }}
+              className="absolute top-2 right-10 p-1.5 bg-white/80 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Re-run inference"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
             <button
               onClick={async (e) => {
                 e.stopPropagation();

@@ -56,7 +56,7 @@ export default function ClipDetail() {
   const handleRunInference = async () => {
     if (!id) return;
     setInferring(true);
-    try { await api.runInference(id); } catch (e) { console.error(e); }
+    try { await api.rerunInference(undefined, undefined, [id]); } catch (e) { console.error(e); }
     setInferring(false);
   };
 

@@ -337,7 +337,10 @@ public class LabelsController : ControllerBase
     [HttpPost("rerun-inference")]
     public async Task<ActionResult> RerunInference([FromBody] RerunInferenceRequest? request = null)
     {
-        var clipIds = await _clipService.GetClipIdsForDateRangeAsync(request?.DateFrom, request?.DateTo);
+        // Accept explicit clip IDs or query by date range
+        var clipIds = request?.ClipIds?.Count > 0
+            ? request.ClipIds
+            : await _clipService.GetClipIdsForDateRangeAsync(request?.DateFrom, request?.DateTo);
         if (clipIds.Count == 0)
             return Ok(new { total = 0, queued = 0 });
 
@@ -368,7 +371,7 @@ public class LabelsController : ControllerBase
     }
 }
 
-public record RerunInferenceRequest(string? DateFrom = null, string? DateTo = null);
+public record RerunInferenceRequest(string? DateFrom = null, string? DateTo = null, List<string>? ClipIds = null);
 
 public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
 public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
