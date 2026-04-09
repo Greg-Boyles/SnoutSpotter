@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, Play, HelpCircle } from "lucide-react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { ArrowLeft, Loader2, Play, HelpCircle, Database } from "lucide-react";
+import { format } from "date-fns";
 import { api } from "../api";
 
 function Tooltip({ text }: { text: string }) {
@@ -24,20 +25,25 @@ function FieldLabel({ children, tooltip }: { children: React.ReactNode; tooltip:
   );
 }
 
+type ExportItem = Record<string, string>;
+
 export default function SubmitTraining() {
   const navigate = useNavigate();
-  const [exports, setExports] = useState<Record<string, string>[]>([]);
+  const location = useLocation();
+  const prefill = location.state as { exportId?: string; config?: Record<string, unknown> } | null;
+
+  const [exports, setExports] = useState<ExportItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [selectedExport, setSelectedExport] = useState("");
-  const [epochs, setEpochs] = useState(100);
-  const [batchSize, setBatchSize] = useState(16);
-  const [imageSize, setImageSize] = useState(640);
-  const [learningRate, setLearningRate] = useState(0.01);
-  const [workers, setWorkers] = useState(8);
-  const [modelBase, setModelBase] = useState("yolov8n.pt");
+  const [epochs, setEpochs] = useState(prefill?.config?.epochs ? Number(prefill.config.epochs) : 100);
+  const [batchSize, setBatchSize] = useState(prefill?.config?.batchSize ? Number(prefill.config.batchSize) : 16);
+  const [imageSize, setImageSize] = useState(prefill?.config?.imageSize ? Number(prefill.config.imageSize) : 640);
+  const [learningRate, setLearningRate] = useState(prefill?.config?.learningRate ? Number(prefill.config.learningRate) : 0.01);
+  const [workers, setWorkers] = useState(prefill?.config?.workers ? Number(prefill.config.workers) : 8);
+  const [modelBase, setModelBase] = useState(prefill?.config?.modelBase ? String(prefill.config.modelBase) : "yolov8n.pt");
   const [notes, setNotes] = useState("");
 
   useEffect(() => {
@@ -45,7 +51,11 @@ export default function SubmitTraining() {
       .then((data) => {
         const complete = data.exports.filter((e) => e.status === "complete");
         setExports(complete);
-        if (complete.length > 0) setSelectedExport(complete[0].export_id);
+        if (prefill?.exportId && complete.some((e) => e.export_id === prefill.exportId)) {
+          setSelectedExport(prefill.exportId);
+        } else if (complete.length > 0) {
+          setSelectedExport(complete[0].export_id);
+        }
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -76,6 +86,8 @@ export default function SubmitTraining() {
     }
   };
 
+  const selectedExp = exports.find((e) => e.export_id === selectedExport);
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-gray-400">
@@ -96,6 +108,12 @@ export default function SubmitTraining() {
         <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">{error}</div>
       )}
 
+      {prefill && (
+        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-lg text-sm">
+          Pre-filled from a previous job. Review settings before submitting.
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
         {/* Dataset */}
         <div>
@@ -106,17 +124,47 @@ export default function SubmitTraining() {
               <Link to="/exports" className="text-blue-600 hover:text-blue-700">Create an export</Link> first.
             </p>
           ) : (
-            <select
-              value={selectedExport}
-              onChange={(e) => setSelectedExport(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-            >
-              {exports.map((exp) => (
-                <option key={exp.export_id} value={exp.export_id}>
-                  {exp.export_id} — {exp.total_images} images, {exp.size_mb} MB
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                value={selectedExport}
+                onChange={(e) => setSelectedExport(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+              >
+                {exports.map((exp) => (
+                  <option key={exp.export_id} value={exp.export_id}>
+                    {exp.export_id.slice(0, 8)}… — {exp.total_images} images, {exp.size_mb} MB
+                  </option>
+                ))}
+              </select>
+
+              {/* Dataset summary card */}
+              {selectedExp && (
+                <div className="mt-2 flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <Database className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                      {selectedExp.total_images && (
+                        <span><span className="font-medium">{selectedExp.total_images}</span> images total</span>
+                      )}
+                      {selectedExp.my_dog_count && (
+                        <span><span className="font-medium">{selectedExp.my_dog_count}</span> my_dog</span>
+                      )}
+                      {selectedExp.other_dog_count && (
+                        <span><span className="font-medium">{selectedExp.other_dog_count}</span> other_dog</span>
+                      )}
+                      {selectedExp.size_mb && (
+                        <span><span className="font-medium">{selectedExp.size_mb}</span> MB</span>
+                      )}
+                    </div>
+                    {selectedExp.created_at && (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Created {format(new Date(selectedExp.created_at), "d MMM yyyy, HH:mm")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

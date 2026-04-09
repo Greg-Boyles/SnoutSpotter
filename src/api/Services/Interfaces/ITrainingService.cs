@@ -47,7 +47,9 @@ public record TrainingJobSummary(
     string? ExportId,
     int? Epochs,
     string? CreatedAt,
-    string? CompletedAt);
+    string? StartedAt,
+    string? CompletedAt,
+    double? FinalMAP50);
 
 public record TrainingJobDetail(
     string JobId,

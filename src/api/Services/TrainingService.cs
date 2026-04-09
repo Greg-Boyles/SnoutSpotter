@@ -192,6 +192,18 @@ public class TrainingService : ITrainingService
                 epochs = cfg?.Epochs;
             }
 
+            double? finalMAP50 = null;
+            var resultJson = item.GetValueOrDefault("result")?.S;
+            if (resultJson != null)
+            {
+                try
+                {
+                    var r = JsonSerializer.Deserialize<SnoutSpotter.Shared.Training.TrainingResult>(resultJson);
+                    if (r?.FinalMAP50 > 0) finalMAP50 = r.FinalMAP50;
+                }
+                catch { }
+            }
+
             return new TrainingJobSummary(
                 JobId: item.GetValueOrDefault("job_id")?.S ?? "",
                 Status: item.GetValueOrDefault("status")?.S ?? "",
@@ -199,7 +211,9 @@ public class TrainingService : ITrainingService
                 ExportId: item.GetValueOrDefault("export_id")?.S,
                 Epochs: epochs,
                 CreatedAt: item.GetValueOrDefault("created_at")?.S,
-                CompletedAt: item.GetValueOrDefault("completed_at")?.S);
+                StartedAt: item.GetValueOrDefault("started_at")?.S,
+                CompletedAt: item.GetValueOrDefault("completed_at")?.S,
+                FinalMAP50: finalMAP50);
         })
         .OrderByDescending(j => j.CreatedAt)
         .ToList();
