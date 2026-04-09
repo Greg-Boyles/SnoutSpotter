@@ -252,6 +252,9 @@ export const api = {
   cancelTrainingJob: (jobId: string) =>
     postJson<{ message: string }>(`/training/jobs/${jobId}/cancel`),
 
+  deleteTrainingJob: (jobId: string) =>
+    deleteJson<null>(`/training/jobs/${jobId}`),
+
   // Pi Releases
   listPiReleases: () =>
     fetchJson<{ releases: { version: string; s3Key: string; sizeBytes: number; lastModified: string; isLatest: boolean }[]; latestVersion: string | null }>("/pi/releases"),

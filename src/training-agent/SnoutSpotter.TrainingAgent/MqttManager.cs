@@ -126,12 +126,23 @@ public interface ILogger
 
 public class ConsoleLogger : ILogger
 {
+    // ILogger uses named placeholders ({JobId}, {Error}, etc.) not positional ({0}, {1}).
+    // Replace named placeholders with positional ones for string.Format.
+    private static string Format(string message, object?[] args)
+    {
+        if (args.Length == 0) return message;
+        var idx = 0;
+        var result = System.Text.RegularExpressions.Regex.Replace(
+            message, @"\{[^}]+\}", _ => $"{{{idx++}}}");
+        return string.Format(result, args);
+    }
+
     public void LogInformation(string message, params object?[] args)
-        => Console.WriteLine($"{DateTime.UtcNow:s} [INFO] {string.Format(message.Replace("{", "{{").Replace("}", "}}"), args)}");
+        => Console.WriteLine($"{DateTime.UtcNow:s} [INFO] {Format(message, args)}");
 
     public void LogWarning(string message, params object?[] args)
-        => Console.WriteLine($"{DateTime.UtcNow:s} [WARN] {string.Format(message.Replace("{", "{{").Replace("}", "}}"), args)}");
+        => Console.WriteLine($"{DateTime.UtcNow:s} [WARN] {Format(message, args)}");
 
     public void LogError(string message, params object?[] args)
-        => Console.Error.WriteLine($"{DateTime.UtcNow:s} [ERROR] {string.Format(message.Replace("{", "{{").Replace("}", "}}"), args)}");
+        => Console.Error.WriteLine($"{DateTime.UtcNow:s} [ERROR] {Format(message, args)}");
 }

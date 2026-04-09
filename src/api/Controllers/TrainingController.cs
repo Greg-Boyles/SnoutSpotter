@@ -79,6 +79,20 @@ public class TrainingController : ControllerBase
             return BadRequest(new { error = ex.Message });
         }
     }
+
+    [HttpDelete("jobs/{jobId}")]
+    public async Task<ActionResult> DeleteJob(string jobId)
+    {
+        try
+        {
+            await _trainingService.DeleteJobAsync(jobId);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
 }
 
 public record AgentUpdateRequest(string Version);

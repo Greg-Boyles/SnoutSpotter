@@ -244,6 +244,17 @@ public class TrainingService : ITrainingService
             CompletedAt: item.GetValueOrDefault("completed_at")?.S);
     }
 
+    public async Task DeleteJobAsync(string jobId)
+    {
+        var job = await GetJobAsync(jobId);
+        if (job == null) throw new InvalidOperationException($"Job {jobId} not found");
+        if (job.Status is not ("complete" or "failed" or "cancelled"))
+            throw new InvalidOperationException($"Job {jobId} cannot be deleted while in '{job.Status}' state");
+
+        await _dynamoDb.DeleteItemAsync(_config.TrainingJobsTable,
+            new Dictionary<string, AttributeValue> { ["job_id"] = new() { S = jobId } });
+    }
+
     public async Task CancelJobAsync(string jobId)
     {
         var job = await GetJobAsync(jobId);

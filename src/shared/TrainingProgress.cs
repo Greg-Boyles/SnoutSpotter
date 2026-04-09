@@ -45,4 +45,16 @@ public class TrainingProgress
     [JsonPropertyName("gpu_temp_c")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? GpuTempC { get; init; }
+
+    [JsonPropertyName("download_bytes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DownloadBytes { get; init; }
+
+    [JsonPropertyName("download_total_bytes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DownloadTotalBytes { get; init; }
+
+    [JsonPropertyName("download_speed_mbps")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? DownloadSpeedMbps { get; init; }
 }

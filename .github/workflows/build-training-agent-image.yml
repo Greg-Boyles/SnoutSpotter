@@ -37,6 +37,9 @@ jobs:
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
           echo "Training agent version: $NEXT (previous: ${CURRENT})"
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
@@ -44,17 +47,16 @@ jobs:
       - name: Build and push Docker image
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          IMAGE_TAG=${{ github.sha }}
           REGISTRY=${{ steps.ecr-login.outputs.registry }}
-          docker build \
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --build-arg AGENT_VERSION=$VERSION \
-            -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            --push \
+            -t $REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
             -t $REGISTRY/$ECR_REPOSITORY:v$VERSION \
             -t $REGISTRY/$ECR_REPOSITORY:latest \
             -f src/training-agent/Dockerfile src
-          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $REGISTRY/$ECR_REPOSITORY:v$VERSION
-          docker push $REGISTRY/$ECR_REPOSITORY:latest
 
       - name: Update S3 manifest
         run: |

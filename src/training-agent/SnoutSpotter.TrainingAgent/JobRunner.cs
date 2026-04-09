@@ -63,15 +63,22 @@ public class JobRunner
         {
             // 1. Download ML scripts
             await PublishProgress(job.JobId, "downloading", null);
-            await EnsureMlScriptsAsync(ct);
+            try
+            {
+                await EnsureMlScriptsAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await PublishError(job.JobId, $"Failed to prepare ML scripts: {ex.Message}");
+                return;
+            }
 
             // 2. Download and extract dataset
             _logger.LogInformation("Downloading dataset: {Key}", job.ExportS3Key);
             var zipPath = Path.Combine(DataDir, $"{job.JobId}.zip");
             Directory.CreateDirectory(DataDir);
 
-            var transfer = new TransferUtility(_s3);
-            await transfer.DownloadAsync(zipPath, _bucket, job.ExportS3Key, ct);
+            await DownloadWithProgressAsync(job.JobId, job.ExportS3Key, zipPath, ct);
 
             Directory.CreateDirectory(datasetDir);
             ZipFile.ExtractToDirectory(zipPath, datasetDir, overwriteFiles: true);
@@ -114,6 +121,7 @@ public class JobRunner
 
             var version = $"v{DateTime.UtcNow:yyyyMMdd-HHmmss}";
             var modelS3Key = $"models/dog-classifier/versions/{version}/best.onnx";
+            var transfer = new TransferUtility(_s3);
             await transfer.UploadAsync(modelPath, _bucket, modelS3Key, ct);
             _logger.LogInformation("Model uploaded to s3://{Bucket}/{Key}", _bucket, modelS3Key);
 
@@ -135,6 +143,15 @@ public class JobRunner
                 TrainingTimeSeconds = parser.ElapsedSeconds,
                 DatasetImages       = CountDatasetImages(datasetDir)
             });
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // let caller handle cancellation
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("Unhandled job error: {Error}", ex.Message);
+            try { await PublishError(job.JobId, ex.Message); } catch { /* best effort */ }
         }
         finally
         {
@@ -211,6 +228,45 @@ public class JobRunner
         return exitCode;
     }
 
+    private async Task DownloadWithProgressAsync(string jobId, string s3Key, string destPath, CancellationToken ct)
+    {
+        var response = await _s3.GetObjectAsync(_bucket, s3Key, ct);
+        var totalBytes = response.ContentLength;
+
+        using var responseStream = response.ResponseStream;
+        await using var fileStream = File.Create(destPath);
+
+        var buffer = new byte[81920]; // 80 KB chunks
+        long downloadedBytes = 0;
+        var startTime = DateTime.UtcNow;
+        var lastReport = DateTime.UtcNow;
+        int read;
+
+        while ((read = await responseStream.ReadAsync(buffer, ct)) > 0)
+        {
+            await fileStream.WriteAsync(buffer.AsMemory(0, read), ct);
+            downloadedBytes += read;
+
+            if ((DateTime.UtcNow - lastReport).TotalSeconds >= 1)
+            {
+                var elapsedSec = (DateTime.UtcNow - startTime).TotalSeconds;
+                var speedMbps = elapsedSec > 0 ? downloadedBytes / (1024.0 * 1024.0) / elapsedSec : 0;
+
+                await PublishProgress(jobId, "downloading", new TrainingProgress
+                {
+                    DownloadBytes = downloadedBytes,
+                    DownloadTotalBytes = totalBytes > 0 ? totalBytes : null,
+                    DownloadSpeedMbps = Math.Round(speedMbps, 2),
+                });
+                lastReport = DateTime.UtcNow;
+            }
+        }
+
+        var totalElapsed = (DateTime.UtcNow - startTime).TotalSeconds;
+        var avgSpeedMbps = totalElapsed > 0 ? downloadedBytes / (1024.0 * 1024.0) / totalElapsed : 0;
+        _logger.LogInformation("Downloaded {Bytes:N0} bytes at {Speed:F1} MB/s", downloadedBytes, avgSpeedMbps);
+    }
+
     private async Task EnsureMlScriptsAsync(CancellationToken ct)
     {
         Directory.CreateDirectory(MlScriptsDir);
@@ -265,6 +321,13 @@ public class JobRunner
         {
             _logger.LogWarning("Failed to update ML scripts from S3: {Error} — using cached version", ex.Message);
         }
+
+        // Verify scripts are actually present
+        var scriptPath = Path.Combine(MlScriptsDir, "train_detector.py");
+        if (!File.Exists(scriptPath))
+            throw new InvalidOperationException(
+                "train_detector.py not found — ML scripts have never been downloaded. " +
+                "Ensure the ml-training pipeline has run and published to S3.");
     }
 
     private async Task UploadCheckpointAsync(TrainingJobDesired job, string datasetDir)
