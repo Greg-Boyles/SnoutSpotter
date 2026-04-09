@@ -35,10 +35,34 @@ public class ProgressParser
         var epochMatch = EpochRegex.Match(line);
         if (epochMatch.Success)
         {
-            _lastEpoch = int.Parse(epochMatch.Groups[1].Value);
+            var epoch = int.Parse(epochMatch.Groups[1].Value);
             _totalEpochs = int.Parse(epochMatch.Groups[2].Value);
             _lastTrainLoss = double.Parse(epochMatch.Groups[3].Value);
-            return null; // Wait for metrics line
+
+            // Publish as soon as the epoch number changes — don't wait for the
+            // val metrics line, which may be delayed by Python's output buffering.
+            // A second update with mAP50 follows when MetricsRegex matches.
+            if (epoch == _lastEpoch) return null;
+            _lastEpoch = epoch;
+
+            var elapsed = (long)(DateTime.UtcNow - _startTime).TotalSeconds;
+            var perEpoch = _lastEpoch > 0 ? elapsed / _lastEpoch : 0;
+            var eta = perEpoch * (_totalEpochs - _lastEpoch);
+            var gpu = GpuInfo.GetStatus();
+
+            return new TrainingProgress
+            {
+                Epoch          = _lastEpoch,
+                TotalEpochs    = _totalEpochs,
+                TrainLoss      = _lastTrainLoss,
+                MAP50          = _lastMAP50 > 0 ? _lastMAP50 : null,
+                MAP50_95       = _lastMAP50_95 > 0 ? _lastMAP50_95 : null,
+                BestMAP50      = _bestMAP50 > 0 ? _bestMAP50 : null,
+                ElapsedSeconds = elapsed,
+                EtaSeconds     = eta,
+                GpuUtilPercent = gpu?.UtilizationPercent,
+                GpuTempC       = gpu?.TemperatureC
+            };
         }
 
         var metricsMatch = MetricsRegex.Match(line);
@@ -55,7 +79,6 @@ public class ProgressParser
             var elapsed = (long)(DateTime.UtcNow - _startTime).TotalSeconds;
             var perEpoch = _lastEpoch > 0 ? elapsed / _lastEpoch : 0;
             var eta = perEpoch * (_totalEpochs - _lastEpoch);
-
             var gpu = GpuInfo.GetStatus();
 
             return new TrainingProgress

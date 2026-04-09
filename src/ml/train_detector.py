@@ -228,7 +228,7 @@ def main():
 
     work_dir    = Path(tempfile.mkdtemp(prefix="snoutspotter-train-"))
     dataset_dir = work_dir / "dataset"
-    output_dir  = Path("runs")
+    output_dir  = work_dir / "runs"   # absolute — avoids ultralytics prepending runs/detect
     export_id   = "local"
 
     try:
@@ -240,6 +240,7 @@ def main():
             if args.data:
                 # Already-extracted dataset — just fix the yaml path in place
                 dataset_dir = Path(args.data).resolve()
+                output_dir  = dataset_dir / "runs"  # absolute, inside dataset dir so agent finds outputs
                 print(f"\nUsing local dataset: {dataset_dir}")
                 print("\n--- Dataset ---")
                 yaml_path = dataset_dir / "dataset.yaml"
