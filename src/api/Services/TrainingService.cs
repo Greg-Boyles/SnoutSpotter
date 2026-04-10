@@ -242,7 +242,7 @@ public class TrainingService : ITrainingService
     {
         var job = await GetJobAsync(jobId);
         if (job == null) throw new InvalidOperationException($"Job {jobId} not found");
-        if (job.Status is not ("complete" or "failed" or "cancelled"))
+        if (job.Status is not ("complete" or "failed" or "cancelled" or "cancelling"))
             throw new InvalidOperationException($"Job {jobId} cannot be deleted while in '{job.Status}' state");
 
         await _dynamoDb.DeleteItemAsync(_config.TrainingJobsTable,
