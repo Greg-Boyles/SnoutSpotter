@@ -493,7 +493,7 @@ export default function TrainingJobDetail() {
               {cancelling ? "Cancelling..." : "Cancel Job"}
             </button>
           )}
-          {!isRunning && (
+          {(!isRunning || job.status === "cancelling") && (
             <button
               onClick={handleDelete}
               disabled={deleting}
