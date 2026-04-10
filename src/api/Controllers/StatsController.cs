@@ -1,5 +1,8 @@
+using Amazon.SQS;
+using Amazon.SQS.Model;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -12,11 +15,13 @@ public class StatsController : ControllerBase
 {
     private readonly IClipService _clipService;
     private readonly IPiUpdateService _piUpdateService;
+    private readonly AppConfig _config;
 
-    public StatsController(IClipService clipService, IPiUpdateService piUpdateService)
+    public StatsController(IClipService clipService, IPiUpdateService piUpdateService, IOptions<AppConfig> config)
     {
         _clipService = clipService;
         _piUpdateService = piUpdateService;
+        _config = config.Value;
     }
 
     [HttpGet]
@@ -117,5 +122,64 @@ public class StatsController : ControllerBase
             latestVersion,
             devices
         });
+    }
+
+    [HttpGet("queues")]
+    public async Task<ActionResult> GetQueueStats()
+    {
+        var queues = new (string Name, string Url)[]
+        {
+            ("Backfill Boxes", _config.BackfillQueueUrl),
+            ("Rerun Inference", _config.RerunInferenceQueueUrl),
+            ("Training Jobs", _config.TrainingJobQueueUrl),
+        };
+
+        using var sqsClient = new AmazonSQSClient();
+        var results = new List<object>();
+
+        foreach (var (name, url) in queues)
+        {
+            if (string.IsNullOrEmpty(url)) continue;
+
+            try
+            {
+                var attrs = await sqsClient.GetQueueAttributesAsync(new GetQueueAttributesRequest
+                {
+                    QueueUrl = url,
+                    AttributeNames = new List<string>
+                    {
+                        "ApproximateNumberOfMessages",
+                        "ApproximateNumberOfMessagesNotVisible"
+                    }
+                });
+
+                var pending = int.Parse(attrs.Attributes.GetValueOrDefault("ApproximateNumberOfMessages", "0"));
+                var inFlight = int.Parse(attrs.Attributes.GetValueOrDefault("ApproximateNumberOfMessagesNotVisible", "0"));
+
+                // Derive DLQ URL: strip -queue suffix if present, add -dlq
+                var dlqPending = 0;
+                var queueName = url.Split('/').Last();
+                var baseName = queueName.EndsWith("-queue") ? queueName[..^6] : queueName;
+                var dlqUrl = url[..^queueName.Length] + baseName + "-dlq";
+                try
+                {
+                    var dlqAttrs = await sqsClient.GetQueueAttributesAsync(new GetQueueAttributesRequest
+                    {
+                        QueueUrl = dlqUrl,
+                        AttributeNames = new List<string> { "ApproximateNumberOfMessages" }
+                    });
+                    dlqPending = int.Parse(dlqAttrs.Attributes.GetValueOrDefault("ApproximateNumberOfMessages", "0"));
+                }
+                catch { /* DLQ may not exist or URL pattern different */ }
+
+                results.Add(new { name, pending, inFlight, dlqPending });
+            }
+            catch
+            {
+                results.Add(new { name, pending = -1, inFlight = -1, dlqPending = -1 });
+            }
+        }
+
+        return Ok(new { queues = results });
     }
 }

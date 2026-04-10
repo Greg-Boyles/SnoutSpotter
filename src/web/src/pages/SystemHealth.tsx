@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { Server, WifiOff, Plus, RefreshCw, ChevronRight, Wifi, AlertTriangle } from "lucide-react";
+import { Server, WifiOff, Plus, RefreshCw, ChevronRight, Wifi, AlertTriangle, Inbox } from "lucide-react";
 import { api } from "../api";
 import type { SystemHealth } from "../types";
 import StatusBadge from "../components/health/StatusBadge";
@@ -13,8 +13,9 @@ export default function SystemHealthPage() {
   const [updating, setUpdating] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [queueStats, setQueueStats] = useState<{ name: string; pending: number; inFlight: number; dlqPending: number }[]>([]);
 
-  const refreshHealth = () =>
+  const refreshHealth = () => {
     Promise.all([api.getHealth(), api.getDevices()])
       .then(([h, d]) => {
         const deviceMap = new Map(d.devices.map((dev) => [dev.thingName, dev]));
@@ -24,6 +25,8 @@ export default function SystemHealthPage() {
         });
       })
       .catch(console.error);
+    api.getQueueStats().then((d) => setQueueStats(d.queues)).catch(console.error);
+  };
 
   useEffect(() => {
     Promise.all([api.getHealth(), api.getDevices()])
@@ -35,6 +38,7 @@ export default function SystemHealthPage() {
         });
       })
       .catch((e: Error) => setError(e.message));
+    api.getQueueStats().then((d) => setQueueStats(d.queues)).catch(console.error);
 
     const interval = setInterval(refreshHealth, 10_000);
     return () => clearInterval(interval);
@@ -108,6 +112,40 @@ export default function SystemHealthPage() {
           Checked {formatDistanceToNow(new Date(health.checkedAt), { addSuffix: true })}
         </p>
       </div>
+
+      {/* Queue Stats */}
+      {queueStats.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Inbox className="w-5 h-5 text-gray-400" />
+            <span className="text-sm font-semibold text-gray-900">Processing Queues</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {queueStats.map((q) => (
+              <div key={q.name} className="flex items-center justify-between px-3 py-2 border border-gray-100 rounded-lg">
+                <span className="text-sm text-gray-700">{q.name}</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                    q.pending === 0 ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                  }`}>
+                    {q.pending} pending
+                  </span>
+                  {q.inFlight > 0 && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">
+                      {q.inFlight} in-flight
+                    </span>
+                  )}
+                  {q.dlqPending > 0 && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-red-100 text-red-700">
+                      {q.dlqPending} failed
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Device Table */}
       <h2 className="text-lg font-semibold text-gray-900 mb-3">Raspberry Pi Devices</h2>

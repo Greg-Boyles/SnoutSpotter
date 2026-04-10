@@ -207,6 +207,10 @@ export const api = {
   rerunInference: (dateFrom?: string, dateTo?: string, clipIds?: string[]) =>
     postJson<{ total: number; queued: number }>("/ml/rerun-inference", { dateFrom, dateTo, clipIds }),
 
+  // Queue Stats
+  getQueueStats: () =>
+    fetchJson<{ queues: { name: string; pending: number; inFlight: number; dlqPending: number }[] }>("/stats/queues"),
+
   // Server Settings
   getSettings: () =>
     fetchJson<{ settings: { key: string; value: string; default: string; label: string; type: string; min: number; max: number; description: string }[] }>("/settings"),
