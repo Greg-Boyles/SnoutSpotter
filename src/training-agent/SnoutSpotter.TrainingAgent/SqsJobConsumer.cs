@@ -65,7 +65,7 @@ public class SqsJobConsumer
     /// Extend visibility timeout to prevent the message from becoming visible
     /// to other consumers while training is still running. Call every 10 minutes.
     /// </summary>
-    public async Task ExtendVisibilityAsync(string receiptHandle, int seconds = 43200)
+    public async Task ExtendVisibilityAsync(string receiptHandle, int seconds = 3600)
     {
         await _sqs.ChangeMessageVisibilityAsync(new ChangeMessageVisibilityRequest
         {

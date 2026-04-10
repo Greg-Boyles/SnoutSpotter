@@ -230,17 +230,28 @@ public class JobRunner
                 _logger.LogInformation("[TRAIN] {Line}", line);
                 var progress = parser.ParseLine(line);
                 if (progress != null)
-                    await PublishProgress(jobId, "training", progress);
+                {
+                    try { await PublishProgress(jobId, "training", progress); }
+                    catch (Exception ex) { _logger.LogWarning("Failed to publish progress: {Error}", ex.Message); }
+                }
             }
         }, ct);
 
-        // Read stderr for errors
+        // Read stderr — YOLO writes epoch progress here via tqdm/logging
         var stderrTask = Task.Run(async () =>
         {
             while (await _trainingProcess.StandardError.ReadLineAsync(ct) is { } line)
             {
                 if (!string.IsNullOrWhiteSpace(line))
+                {
                     _logger.LogWarning("[TRAIN-ERR] {Line}", line);
+                    var progress = parser.ParseLine(line);
+                    if (progress != null)
+                    {
+                        try { await PublishProgress(jobId, "training", progress); }
+                        catch (Exception ex) { _logger.LogWarning("Failed to publish progress: {Error}", ex.Message); }
+                    }
+                }
             }
         }, ct);
 
