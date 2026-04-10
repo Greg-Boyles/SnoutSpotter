@@ -319,6 +319,7 @@ public class TrainingService : ITrainingService
         EtaSeconds        = m.TryGetValue("eta_seconds", out var eta)     ? long.Parse(eta.N) : null,
         GpuUtilPercent    = m.TryGetValue("gpu_util_percent", out var gu) ? int.Parse(gu.N)   : null,
         GpuTempC          = m.TryGetValue("gpu_temp_c", out var gt)       ? int.Parse(gt.N)   : null,
+        EpochProgress     = m.TryGetValue("epoch_progress", out var ep)    ? int.Parse(ep.N)   : null,
         DownloadBytes     = m.TryGetValue("download_bytes", out var db)   ? long.Parse(db.N)  : null,
         DownloadTotalBytes = m.TryGetValue("download_total_bytes", out var dtb) ? long.Parse(dtb.N) : null,
         DownloadSpeedMbps = m.TryGetValue("download_speed_mbps", out var ds) ? double.Parse(ds.N, CultureInfo.InvariantCulture) : null,

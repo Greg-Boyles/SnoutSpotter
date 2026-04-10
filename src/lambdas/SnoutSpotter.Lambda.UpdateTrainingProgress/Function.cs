@@ -116,6 +116,7 @@ public class Function
         if (p.EtaSeconds.HasValue)        m["eta_seconds"]         = new() { N = p.EtaSeconds.Value.ToString() };
         if (p.GpuUtilPercent.HasValue)    m["gpu_util_percent"]    = new() { N = p.GpuUtilPercent.Value.ToString() };
         if (p.GpuTempC.HasValue)          m["gpu_temp_c"]          = new() { N = p.GpuTempC.Value.ToString() };
+        if (p.EpochProgress.HasValue)    m["epoch_progress"]      = new() { N = p.EpochProgress.Value.ToString() };
         if (p.DownloadBytes.HasValue)     m["download_bytes"]      = new() { N = p.DownloadBytes.Value.ToString() };
         if (p.DownloadTotalBytes.HasValue) m["download_total_bytes"] = new() { N = p.DownloadTotalBytes.Value.ToString() };
         if (p.DownloadSpeedMbps.HasValue) m["download_speed_mbps"] = new() { N = p.DownloadSpeedMbps.Value.ToString("G", CultureInfo.InvariantCulture) };

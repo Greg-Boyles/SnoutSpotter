@@ -18,10 +18,16 @@ public class ProgressParser
         @"^\s+all\s+\d+\s+\d+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)",
         RegexOptions.Compiled);
 
+    // Match tqdm percentage:  :  45%|
+    private static readonly Regex PercentRegex = new(
+        @":\s+(\d+)%\|",
+        RegexOptions.Compiled);
+
     private int _lastEpoch;
     private int _totalEpochs;
     private double _lastTrainLoss;
     private double _bestMAP50;
+    private int _lastPublishedPercent = -1;
     private readonly DateTime _startTime = DateTime.UtcNow;
 
     // Last parsed validation metrics (set when MetricsRegex matches)
@@ -39,21 +45,32 @@ public class ProgressParser
             _totalEpochs = int.Parse(epochMatch.Groups[2].Value);
             _lastTrainLoss = double.Parse(epochMatch.Groups[3].Value);
 
-            // Publish as soon as the epoch number changes — don't wait for the
-            // val metrics line, which may be delayed by Python's output buffering.
-            // A second update with mAP50 follows when MetricsRegex matches.
-            if (epoch == _lastEpoch) return null;
-            _lastEpoch = epoch;
+            // Extract tqdm percentage (0-100) from the line
+            int epochProgress = 0;
+            var pctMatch = PercentRegex.Match(line);
+            if (pctMatch.Success)
+                epochProgress = int.Parse(pctMatch.Groups[1].Value);
+
+            // Publish on epoch change OR when percentage jumps by >=10 within same epoch
+            var epochChanged = epoch != _lastEpoch;
+            var significantProgress = !epochChanged && (epochProgress - _lastPublishedPercent >= 10);
+
+            if (!epochChanged && !significantProgress) return null;
+
+            if (epochChanged)
+                _lastEpoch = epoch;
+            _lastPublishedPercent = epochProgress;
 
             var elapsed = (long)(DateTime.UtcNow - _startTime).TotalSeconds;
-            var perEpoch = _lastEpoch > 0 ? elapsed / _lastEpoch : 0;
-            var eta = perEpoch * (_totalEpochs - _lastEpoch);
+            var completedFraction = (_lastEpoch - 1 + epochProgress / 100.0) / _totalEpochs;
+            var eta = completedFraction > 0 ? (long)(elapsed / completedFraction * (1 - completedFraction)) : 0;
             var gpu = GpuInfo.GetStatus();
 
             return new TrainingProgress
             {
                 Epoch          = _lastEpoch,
                 TotalEpochs    = _totalEpochs,
+                EpochProgress  = epochProgress,
                 TrainLoss      = _lastTrainLoss,
                 MAP50          = _lastMAP50 > 0 ? _lastMAP50 : null,
                 MAP50_95       = _lastMAP50_95 > 0 ? _lastMAP50_95 : null,
