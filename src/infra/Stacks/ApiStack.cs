@@ -169,6 +169,14 @@ public class ApiStack : Stack
             Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-training-jobs-queue" }
         }));
 
+        // GetQueueAttributes for queue stats on health page (all queues + DLQs)
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "sqs:GetQueueAttributes" },
+            Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-*" }
+        }));
+
         // IoT Publish for device commands
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
