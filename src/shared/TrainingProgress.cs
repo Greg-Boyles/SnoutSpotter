@@ -10,6 +10,10 @@ public class TrainingProgress
     [JsonPropertyName("total_epochs")]
     public int TotalEpochs { get; init; }
 
+    [JsonPropertyName("epoch_progress")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? EpochProgress { get; init; }
+
     [JsonPropertyName("train_loss")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? TrainLoss { get; init; }

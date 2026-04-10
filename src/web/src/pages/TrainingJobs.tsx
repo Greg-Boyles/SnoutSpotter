@@ -25,7 +25,7 @@ type TrainerAgent = {
   currentJobId: string | null;
   status?: string | null;
   gpu?: { name: string; vramMb: number; temperatureC: number; utilizationPercent: number } | null;
-  currentJobProgress?: { epoch: number; total_epochs: number; mAP50?: number } | null;
+  currentJobProgress?: { epoch: number; total_epochs: number; epoch_progress?: number; mAP50?: number } | null;
 };
 
 const STATUS_TABS = ["all", "pending", "training", "complete", "failed", "cancelled"] as const;
@@ -192,13 +192,18 @@ export default function TrainingJobs() {
                   {agent.currentJobId && progress ? (
                     <div>
                       <div className="flex justify-between text-xs text-gray-500 mb-1">
-                        <span>Epoch {progress.epoch}/{progress.total_epochs}</span>
+                        <span>
+                          Epoch {progress.epoch}/{progress.total_epochs}
+                          {progress.epoch_progress != null && progress.epoch_progress > 0 && progress.epoch_progress < 100 && (
+                            <span className="text-gray-400"> ({progress.epoch_progress}%)</span>
+                          )}
+                        </span>
                         {progress.mAP50 != null && <span>mAP50 {progress.mAP50.toFixed(3)}</span>}
                       </div>
                       <div className="w-full bg-gray-100 rounded-full h-1.5">
                         <div
                           className="bg-amber-500 h-1.5 rounded-full transition-all duration-500"
-                          style={{ width: `${(progress.epoch / progress.total_epochs) * 100}%` }}
+                          style={{ width: `${((progress.epoch - 1 + (progress.epoch_progress ?? 0) / 100) / progress.total_epochs) * 100}%` }}
                         />
                       </div>
                     </div>

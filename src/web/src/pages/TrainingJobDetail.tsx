@@ -5,7 +5,7 @@ import { formatDistanceToNow, format } from "date-fns";
 import { api } from "../api";
 
 type JobConfig = { epochs: number; batch_size: number; image_size: number; learning_rate: number; workers: number; model_base: string; resume_from: string | null };
-type JobProgress = { epoch: number; total_epochs: number; train_loss?: number; val_loss?: number; mAP50?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number };
+type JobProgress = { epoch: number; total_epochs: number; epoch_progress?: number; train_loss?: number; val_loss?: number; mAP50?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number };
 type JobResult = { model_s3_key: string; model_size_mb: number; final_mAP50: number; final_mAP50_95?: number; total_epochs: number; best_epoch: number; training_time_seconds: number; dataset_images: number; classes: string[]; precision?: number; recall?: number };
 
 type JobDetail = {
@@ -226,7 +226,10 @@ export default function TrainingJobDetail() {
   const isComplete = job.status === "complete";
   const epoch = progress?.epoch ?? 0;
   const totalEpochs = progress?.total_epochs ?? config?.epochs ?? 0;
-  const percent = totalEpochs > 0 ? Math.round((epoch / totalEpochs) * 100) : 0;
+  const epochProgress = progress?.epoch_progress ?? 0;
+  const percent = totalEpochs > 0
+    ? Math.round(((epoch - 1 + epochProgress / 100) / totalEpochs) * 100)
+    : 0;
 
   const agentDisplayName = job.agentThingName?.replace("snoutspotter-trainer-", "");
   const createdLabel = job.createdAt
@@ -321,6 +324,9 @@ export default function TrainingJobDetail() {
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-gray-700">
                 Epoch {epoch} / {totalEpochs}
+                {epochProgress > 0 && epochProgress < 100 && (
+                  <span className="text-gray-400 font-normal ml-1">({epochProgress}%)</span>
+                )}
               </span>
               <span className="text-sm text-gray-500">{percent}%</span>
             </div>
