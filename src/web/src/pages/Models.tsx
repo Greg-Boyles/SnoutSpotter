@@ -133,9 +133,9 @@ export default function Models() {
         >
           <ArrowLeft className="w-4 h-4" /> Training Exports
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">Dog Classifier Models</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Detection Models</h1>
         <p className="text-sm text-gray-500 mt-1">
-          MobileNetV3 ONNX models for the inference pipeline. Upload new versions and choose which one is active.
+          YOLOv8 ONNX models for the inference pipeline. Upload new versions and choose which one is active.
         </p>
       </div>
 
