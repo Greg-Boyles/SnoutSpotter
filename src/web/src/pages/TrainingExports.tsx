@@ -16,6 +16,9 @@ interface ExportItem {
   my_dog_count?: string;
   not_my_dog_count?: string;
   no_dog_count?: string;
+  skipped_my_dog_count?: string;
+  skipped_other_dog_count?: string;
+  // legacy field from exports before per-class split
   skipped_no_boxes_count?: string;
   train_count?: string;
   val_count?: string;
@@ -226,28 +229,43 @@ export default function TrainingExports() {
                 <StatusBadge status={exp.status} />
               </div>
 
-              {exp.status === "complete" && (
-                <>
-                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">Included</p>
-                  <div className="grid grid-cols-4 gap-3 mb-2">
-                    <Stat label="My Dog"    value={exp.my_dog_count}    color="text-green-600" />
-                    <Stat label="Other Dog" value={exp.not_my_dog_count} color="text-gray-700" />
-                    <Stat label="No Dog"    value={exp.no_dog_count}     color="text-gray-500" />
-                    <Stat label="Total"     value={exp.total_images}     color="text-gray-900" />
-                  </div>
-                  {Number(exp.skipped_no_boxes_count ?? 0) > 0 && (
-                    <>
-                      <p className="text-xs font-medium text-amber-600 uppercase tracking-wide mb-1">Skipped</p>
-                      <div className="grid grid-cols-4 gap-3 mb-2">
-                        <Stat label="No bounding box" value={exp.skipped_no_boxes_count} color="text-amber-600" />
-                      </div>
-                    </>
-                  )}
-                  <p className="text-xs text-gray-400 mb-3">
-                    {exp.size_mb || 0} MB · Train: {exp.train_count} · Val: {exp.val_count}
-                  </p>
-                </>
-              )}
+              {exp.status === "complete" && (() => {
+                const skippedMyDog = Number(exp.skipped_my_dog_count ?? 0);
+                const skippedOtherDog = Number(exp.skipped_other_dog_count ?? 0);
+                const skippedTotal = skippedMyDog + skippedOtherDog || Number(exp.skipped_no_boxes_count ?? 0);
+                const hasPerClassSkipped = exp.skipped_my_dog_count != null || exp.skipped_other_dog_count != null;
+                return (
+                  <>
+                    <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">Included in export</p>
+                    <div className="grid grid-cols-4 gap-3 mb-3">
+                      <Stat label="My Dog"    value={exp.my_dog_count}     color="text-green-600" />
+                      <Stat label="Other Dog" value={exp.not_my_dog_count}  color="text-gray-700" />
+                      <Stat label="No Dog"    value={exp.no_dog_count}      color="text-gray-500" />
+                      <Stat label="Total"     value={exp.total_images}      color="text-gray-900" />
+                    </div>
+                    {skippedTotal > 0 && (
+                      <>
+                        <p className="text-xs font-medium text-amber-600 uppercase tracking-wide mb-1">Excluded — no bounding box</p>
+                        <div className="grid grid-cols-4 gap-3 mb-3">
+                          {hasPerClassSkipped ? (
+                            <>
+                              <Stat label="My Dog"    value={exp.skipped_my_dog_count}    color="text-amber-600" />
+                              <Stat label="Other Dog" value={exp.skipped_other_dog_count}  color="text-amber-500" />
+                              <div />
+                              <Stat label="Total"     value={String(skippedTotal)}          color="text-amber-700" />
+                            </>
+                          ) : (
+                            <Stat label="Total" value={String(skippedTotal)} color="text-amber-600" />
+                          )}
+                        </div>
+                      </>
+                    )}
+                    <p className="text-xs text-gray-400 mb-3">
+                      {exp.size_mb || 0} MB · Train: {exp.train_count} · Val: {exp.val_count}
+                    </p>
+                  </>
+                );
+              })()}
 
               {exp.error && (
                 <p className="text-xs text-red-600 mb-3">{exp.error}</p>
