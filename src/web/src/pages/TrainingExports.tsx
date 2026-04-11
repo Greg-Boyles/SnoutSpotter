@@ -15,10 +15,21 @@ interface ExportItem {
   total_images?: string;
   my_dog_count?: string;
   not_my_dog_count?: string;
+  no_dog_count?: string;
+  skipped_no_boxes_count?: string;
   train_count?: string;
   val_count?: string;
   size_mb?: string;
   error?: string;
+}
+
+function Stat({ label, value, color }: { label: string; value?: string; color: string }) {
+  return (
+    <div className="text-center">
+      <p className={`text-lg font-bold ${color}`}>{value ?? "—"}</p>
+      <p className="text-xs text-gray-500">{label}</p>
+    </div>
+  );
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -216,30 +227,26 @@ export default function TrainingExports() {
               </div>
 
               {exp.status === "complete" && (
-                <div className="grid grid-cols-4 gap-3 mb-3">
-                  <div className="text-center">
-                    <p className="text-lg font-bold text-gray-900">{exp.total_images || 0}</p>
-                    <p className="text-xs text-gray-500">Total</p>
+                <>
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">Included</p>
+                  <div className="grid grid-cols-4 gap-3 mb-2">
+                    <Stat label="My Dog"    value={exp.my_dog_count}    color="text-green-600" />
+                    <Stat label="Other Dog" value={exp.not_my_dog_count} color="text-gray-700" />
+                    <Stat label="No Dog"    value={exp.no_dog_count}     color="text-gray-500" />
+                    <Stat label="Total"     value={exp.total_images}     color="text-gray-900" />
                   </div>
-                  <div className="text-center">
-                    <p className="text-lg font-bold text-green-600">{exp.my_dog_count || 0}</p>
-                    <p className="text-xs text-gray-500">My Dog</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-lg font-bold text-gray-600">{exp.not_my_dog_count || 0}</p>
-                    <p className="text-xs text-gray-500">Not My Dog</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-lg font-bold text-gray-900">{exp.size_mb || 0} MB</p>
-                    <p className="text-xs text-gray-500">Size</p>
-                  </div>
-                </div>
-              )}
-
-              {exp.status === "complete" && exp.train_count && (
-                <p className="text-xs text-gray-400 mb-3">
-                  Train: {exp.train_count} | Val: {exp.val_count}
-                </p>
+                  {Number(exp.skipped_no_boxes_count ?? 0) > 0 && (
+                    <>
+                      <p className="text-xs font-medium text-amber-600 uppercase tracking-wide mb-1">Skipped</p>
+                      <div className="grid grid-cols-4 gap-3 mb-2">
+                        <Stat label="No bounding box" value={exp.skipped_no_boxes_count} color="text-amber-600" />
+                      </div>
+                    </>
+                  )}
+                  <p className="text-xs text-gray-400 mb-3">
+                    {exp.size_mb || 0} MB · Train: {exp.train_count} · Val: {exp.val_count}
+                  </p>
+                </>
               )}
 
               {exp.error && (
