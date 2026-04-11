@@ -176,6 +176,7 @@ public class Function
                 },
                 UpdateExpression = "SET #s = :status, completed_at = :completed, s3_key = :key, " +
                                    "total_images = :total, my_dog_count = :mydog, not_my_dog_count = :notmydog, " +
+                                   "no_dog_count = :nodog, skipped_no_boxes_count = :skipped, " +
                                    "train_count = :train, val_count = :val, size_mb = :size",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#s"] = "status" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
@@ -186,6 +187,8 @@ public class Function
                     [":total"] = new() { N = (dogLabelsWithBoxes.Count + noDogLabels.Count).ToString() },
                     [":mydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "my_dog").ToString() },
                     [":notmydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "other_dog").ToString() },
+                    [":nodog"] = new() { N = noDogLabels.Count.ToString() },
+                    [":skipped"] = new() { N = dogLabelsNoBoxes.ToString() },
                     [":train"] = new() { N = trainSet.Count.ToString() },
                     [":val"] = new() { N = valSet.Count.ToString() },
                     [":size"] = new() { N = sizeMb.ToString() },
