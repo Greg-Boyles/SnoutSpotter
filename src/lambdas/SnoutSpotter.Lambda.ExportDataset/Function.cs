@@ -65,12 +65,13 @@ public class Function
             var dogLabelsWithBoxes = labels
                 .Where(l => l.ConfirmedLabel is "my_dog" or "other_dog" && HasBoundingBoxes(l.BoundingBoxes))
                 .ToList();
-            var dogLabelsNoBoxes = labels
-                .Count(l => l.ConfirmedLabel is "my_dog" or "other_dog" && !HasBoundingBoxes(l.BoundingBoxes));
+            var skippedMyDog = labels.Count(l => l.ConfirmedLabel == "my_dog" && !HasBoundingBoxes(l.BoundingBoxes));
+            var skippedOtherDog = labels.Count(l => l.ConfirmedLabel == "other_dog" && !HasBoundingBoxes(l.BoundingBoxes));
+            var dogLabelsNoBoxes = skippedMyDog + skippedOtherDog;
             var noDogLabels = labels.Where(l => l.ConfirmedLabel == "no_dog").ToList();
 
             context.Logger.LogInformation(
-                $"Dogs with boxes: {dogLabelsWithBoxes.Count}, dogs without boxes (skipped): {dogLabelsNoBoxes}, no_dog (background): {noDogLabels.Count}");
+                $"Dogs with boxes: {dogLabelsWithBoxes.Count}, skipped my_dog: {skippedMyDog}, skipped other_dog: {skippedOtherDog}, no_dog (background): {noDogLabels.Count}");
 
             if (dogLabelsWithBoxes.Count == 0)
             {
@@ -176,7 +177,7 @@ public class Function
                 },
                 UpdateExpression = "SET #s = :status, completed_at = :completed, s3_key = :key, " +
                                    "total_images = :total, my_dog_count = :mydog, not_my_dog_count = :notmydog, " +
-                                   "no_dog_count = :nodog, skipped_no_boxes_count = :skipped, " +
+                                   "no_dog_count = :nodog, skipped_my_dog_count = :skippedmy, skipped_other_dog_count = :skippedother, " +
                                    "train_count = :train, val_count = :val, size_mb = :size",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#s"] = "status" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
@@ -187,8 +188,9 @@ public class Function
                     [":total"] = new() { N = (dogLabelsWithBoxes.Count + noDogLabels.Count).ToString() },
                     [":mydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "my_dog").ToString() },
                     [":notmydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "other_dog").ToString() },
-                    [":nodog"] = new() { N = noDogLabels.Count.ToString() },
-                    [":skipped"] = new() { N = dogLabelsNoBoxes.ToString() },
+                    [":nodog"]        = new() { N = noDogLabels.Count.ToString() },
+                    [":skippedmy"]    = new() { N = skippedMyDog.ToString() },
+                    [":skippedother"] = new() { N = skippedOtherDog.ToString() },
                     [":train"] = new() { N = trainSet.Count.ToString() },
                     [":val"] = new() { N = valSet.Count.ToString() },
                     [":size"] = new() { N = sizeMb.ToString() },
