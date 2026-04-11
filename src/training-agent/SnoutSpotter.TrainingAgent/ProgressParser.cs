@@ -23,6 +23,11 @@ public class ProgressParser
         @":\s+(\d+)%\|",
         RegexOptions.Compiled);
 
+    // Strip ANSI/VT100 escape sequences (e.g. \x1b[K from tqdm progress bars)
+    private static readonly Regex AnsiRegex = new(
+        @"\x1b\[[0-9;]*[A-Za-z]|\x1b\[[A-Za-z]|\x1b[A-Za-z]",
+        RegexOptions.Compiled);
+
     private int _lastEpoch;
     private int _totalEpochs;
     private double _lastTrainLoss;
@@ -38,6 +43,7 @@ public class ProgressParser
 
     public TrainingProgress? ParseLine(string line)
     {
+        line = AnsiRegex.Replace(line, "");
         var epochMatch = EpochRegex.Match(line);
         if (epochMatch.Success)
         {

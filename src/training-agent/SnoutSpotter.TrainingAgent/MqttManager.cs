@@ -88,13 +88,23 @@ public class MqttManager : IAsyncDisposable
 
     public async Task PublishAsync(string topic, string payload)
     {
-        var message = new MqttApplicationMessageBuilder()
-            .WithTopic(topic)
-            .WithPayload(payload)
-            .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
-            .Build();
+        try
+        {
+            var message = new MqttApplicationMessageBuilder()
+                .WithTopic(topic)
+                .WithPayload(payload)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                .Build();
 
-        await _client.PublishAsync(message);
+            var result = await _client.PublishAsync(message);
+            if (result.ReasonCode != MQTTnet.Client.MqttClientPublishReasonCode.Success)
+                _logger.LogWarning("MQTT publish to {Topic} returned reason code: {Code}", topic, result.ReasonCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("MQTT publish to {Topic} failed: {Error}", topic, ex.Message);
+            throw;
+        }
     }
 
     private async Task ResubscribeAsync()

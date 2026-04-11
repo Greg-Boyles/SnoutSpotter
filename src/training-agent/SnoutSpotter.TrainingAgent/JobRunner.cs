@@ -396,6 +396,7 @@ public class JobRunner
 
     private async Task PublishProgress(string jobId, string status, TrainingProgress? progress)
     {
+        _logger.LogInformation("Publishing progress: status={Status} epoch={Epoch}", status, progress?.Epoch);
         var message = new TrainingProgressMessage { JobId = jobId, Status = status, Progress = progress };
         await _mqtt.PublishAsync(
             $"snoutspotter/trainer/{_thingName}/progress",
