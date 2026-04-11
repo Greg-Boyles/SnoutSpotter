@@ -40,7 +40,7 @@ public class SettingsService : ISettingsService
         foreach (var (key, spec) in ServerSettings.All)
         {
             var currentValue = stored.TryGetValue(key, out var v) ? v : spec.Default;
-            result[key] = new SettingValue(key, currentValue, spec.Default, spec.Label, spec.Type, spec.Min, spec.Max, spec.Description);
+            result[key] = new SettingValue(key, currentValue, spec.Default, spec.Label, spec.Type, spec.Min, spec.Max, spec.Description, spec.Options);
         }
 
         return result;
@@ -65,6 +65,11 @@ public class SettingsService : ISettingsService
                 throw new ArgumentException($"{key} must be a number");
             if (floatVal < spec.Min || floatVal > spec.Max)
                 throw new ArgumentException($"{key} must be between {spec.Min} and {spec.Max}");
+        }
+        else if (spec.Type == "select")
+        {
+            if (spec.Options == null || !spec.Options.Contains(value))
+                throw new ArgumentException($"{key} must be one of: {string.Join(", ", spec.Options ?? Array.Empty<string>())}");
         }
 
         await _dynamoDb.PutItemAsync(_tableName, new Dictionary<string, AttributeValue>

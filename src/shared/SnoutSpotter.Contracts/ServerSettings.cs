@@ -17,10 +17,18 @@ public static class ServerSettings
 
     // AutoLabel
     public const string AutoLabelConfidenceThreshold = "autolabel.confidence_threshold";
+    public const string AutoLabelModelKey = "autolabel.model_key";
 
     // Export
     public const string ExportTrainSplitRatio = "export.train_split_ratio";
     public const string ExportMaxParallelDownloads = "export.max_parallel_downloads";
+
+    private static readonly string[] AutoLabelModelOptions =
+    {
+        "models/yolov8n.onnx",
+        "models/yolov8s.onnx",
+        "models/yolov8m.onnx",
+    };
 
     public static readonly Dictionary<string, SettingSpec> All = new()
     {
@@ -29,6 +37,7 @@ public static class ServerSettings
         [InferenceConfidenceThreshold]  = new("Confidence threshold",    "0.4",  "float", 0.1, 0.95, "Minimum detection confidence for RunInference"),
         [InferenceInputSize]            = new("Input size",              "640",  "int",   320, 1280, "YOLO model input resolution (pixels)"),
         [AutoLabelConfidenceThreshold]  = new("Confidence threshold",    "0.25", "float", 0.1, 0.95, "Minimum confidence for COCO dog detection"),
+        [AutoLabelModelKey]             = new("Detection model",         "models/yolov8m.onnx", "select", 0, 0, "COCO-pretrained YOLOv8 model used for auto-labelling. Larger = more accurate but slower.", AutoLabelModelOptions),
         [ExportTrainSplitRatio]         = new("Train split ratio",       "0.8",  "float", 0.5, 0.95, "Fraction of images for training (rest = validation)"),
         [ExportMaxParallelDownloads]    = new("Max parallel downloads",  "20",   "int",   1,   50,   "Concurrent S3 downloads during export"),
     };
@@ -36,4 +45,4 @@ public static class ServerSettings
     public static string GetDefault(string key) => All.TryGetValue(key, out var spec) ? spec.Default : "";
 }
 
-public record SettingSpec(string Label, string Default, string Type, double Min, double Max, string Description);
+public record SettingSpec(string Label, string Default, string Type, double Min, double Max, string Description, string[]? Options = null);

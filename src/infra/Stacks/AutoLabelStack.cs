@@ -60,7 +60,6 @@ public class AutoLabelStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
-                ["MODEL_KEY"] = "models/yolov8n.onnx",
                 ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
             }
         });
