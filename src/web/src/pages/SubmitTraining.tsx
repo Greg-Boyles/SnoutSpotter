@@ -39,7 +39,7 @@ export default function SubmitTraining() {
 
   const [selectedExport, setSelectedExport] = useState("");
   const [epochs, setEpochs] = useState(prefill?.config?.epochs ? Number(prefill.config.epochs) : 100);
-  const [batchSize, setBatchSize] = useState(prefill?.config?.batchSize ? Number(prefill.config.batchSize) : 16);
+  const [batchSize, setBatchSize] = useState(prefill?.config?.batchSize ? Number(prefill.config.batchSize) : 64);
   const [imageSize, setImageSize] = useState(prefill?.config?.imageSize ? Number(prefill.config.imageSize) : 640);
   const [learningRate, setLearningRate] = useState(prefill?.config?.learningRate ? Number(prefill.config.learningRate) : 0.01);
   const [workers, setWorkers] = useState(prefill?.config?.workers ? Number(prefill.config.workers) : 8);
@@ -182,13 +182,13 @@ export default function SubmitTraining() {
             />
           </div>
           <div>
-            <FieldLabel tooltip="Number of images processed together per training step. Larger batches train faster but use more GPU VRAM. Use 16 for a 16 GB GPU, 8 if you run out of memory.">Batch size</FieldLabel>
+            <FieldLabel tooltip="Number of images processed together per training step. Larger batches keep the GPU busier and train faster. For a 16 GB GPU (e.g. RTX 4080 Super) use 64 or 128. Drop to 32 or 16 if you get CUDA out-of-memory errors.">Batch size</FieldLabel>
             <select
               value={batchSize}
               onChange={(e) => setBatchSize(Number(e.target.value))}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
             >
-              {[8, 16, 32].map((v) => <option key={v} value={v}>{v}</option>)}
+              {[8, 16, 32, 64, 128].map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
           <div>
