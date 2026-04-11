@@ -11,6 +11,7 @@ type Setting = {
   min: number;
   max: number;
   description: string;
+  options?: string[];
 };
 
 const SECTIONS = [
@@ -162,6 +163,7 @@ export default function ServerSettings() {
               <div className="space-y-4">
                 {sectionSettings.map((s) => {
                   const changed = draft[s.key] !== s.value;
+                  const isSelect = s.type === "select";
                   return (
                     <div key={s.key}>
                       <div className="flex items-center justify-between gap-4">
@@ -170,21 +172,35 @@ export default function ServerSettings() {
                           <p className="text-xs text-gray-400 mt-0.5">{s.description}</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <input
-                            type="number"
-                            step={s.type === "float" ? 0.01 : 1}
-                            min={s.min}
-                            max={s.max}
-                            value={draft[s.key] ?? s.default}
-                            onChange={(e) => setDraft((prev) => ({ ...prev, [s.key]: e.target.value }))}
-                            className={`w-24 px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                              changed ? "border-blue-400 bg-blue-50" : "border-gray-300"
-                            }`}
-                          />
+                          {isSelect ? (
+                            <select
+                              value={draft[s.key] ?? s.default}
+                              onChange={(e) => setDraft((prev) => ({ ...prev, [s.key]: e.target.value }))}
+                              className={`px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                                changed ? "border-blue-400 bg-blue-50" : "border-gray-300"
+                              }`}
+                            >
+                              {(s.options ?? []).map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="number"
+                              step={s.type === "float" ? 0.01 : 1}
+                              min={s.min}
+                              max={s.max}
+                              value={draft[s.key] ?? s.default}
+                              onChange={(e) => setDraft((prev) => ({ ...prev, [s.key]: e.target.value }))}
+                              className={`w-24 px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                                changed ? "border-blue-400 bg-blue-50" : "border-gray-300"
+                              }`}
+                            />
+                          )}
                         </div>
                       </div>
                       <p className="text-xs text-gray-300 mt-1">
-                        Range: {s.min}–{s.max} · Default: {s.default}
+                        {isSelect ? `Default: ${s.default}` : `Range: ${s.min}–${s.max} · Default: ${s.default}`}
                       </p>
                     </div>
                   );

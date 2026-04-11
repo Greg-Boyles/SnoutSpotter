@@ -28,9 +28,9 @@ public class Function
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _bucketName;
     private readonly string _tableName;
-    private readonly string _modelKey;
     private readonly SettingsReader _settings;
     private InferenceSession? _session;
+    private string? _loadedModelKey;
     private float _dogConfidenceThreshold = 0.25f;
 
     public Function()
@@ -41,14 +41,14 @@ public class Function
             ?? throw new InvalidOperationException("BUCKET_NAME not set");
         _tableName = Environment.GetEnvironmentVariable("LABELS_TABLE")
             ?? throw new InvalidOperationException("LABELS_TABLE not set");
-        _modelKey = Environment.GetEnvironmentVariable("MODEL_KEY") ?? "models/yolov8n.onnx";
         _settings = new SettingsReader(_dynamoDb);
     }
 
     // Single entry point handles both direct invocations (AutoLabelRequest) and SQS trigger events
     public async Task<object> FunctionHandler(System.Text.Json.JsonElement request, ILambdaContext context)
     {
-        await EnsureModelLoaded(context);
+        var modelKey = await _settings.GetStringAsync(ServerSettings.AutoLabelModelKey);
+        await EnsureModelLoaded(modelKey, context);
         _dogConfidenceThreshold = await _settings.GetFloatAsync(ServerSettings.AutoLabelConfidenceThreshold);
 
         // SQS event: { "Records": [ { "body": "{\"KeyframeKeys\":[...]}" }, ... ] }
@@ -204,21 +204,29 @@ public class Function
         return new { reprocessed, failed, total = keys.Count };
     }
 
-    private async Task EnsureModelLoaded(ILambdaContext context)
+    private async Task EnsureModelLoaded(string modelKey, ILambdaContext context)
     {
-        if (_session != null) return;
+        if (_session != null && _loadedModelKey == modelKey) return;
 
-        var localPath = $"/tmp/{Path.GetFileName(_modelKey)}";
+        if (_session != null && _loadedModelKey != modelKey)
+        {
+            context.Logger.LogInformation($"Model key changed from {_loadedModelKey} to {modelKey} — reloading");
+            _session.Dispose();
+            _session = null;
+        }
+
+        var localPath = $"/tmp/{Path.GetFileName(modelKey)}";
         if (!File.Exists(localPath))
         {
-            context.Logger.LogInformation($"Downloading model from s3://{_bucketName}/{_modelKey}");
-            var response = await _s3.GetObjectAsync(_bucketName, _modelKey);
+            context.Logger.LogInformation($"Downloading model from s3://{_bucketName}/{modelKey}");
+            var response = await _s3.GetObjectAsync(_bucketName, modelKey);
             await using var fileStream = File.Create(localPath);
             await response.ResponseStream.CopyToAsync(fileStream);
         }
 
         _session = new InferenceSession(localPath);
-        context.Logger.LogInformation("Model loaded");
+        _loadedModelKey = modelKey;
+        context.Logger.LogInformation($"Model loaded: {modelKey}");
     }
 
     private async Task<(string label, float confidence, List<float[]> boxes)> DetectDogs(string keyframeKey)

@@ -7,4 +7,4 @@ public interface ISettingsService
     Task ResetAllAsync();
 }
 
-public record SettingValue(string Key, string Value, string Default, string Label, string Type, double Min, double Max, string Description);
+public record SettingValue(string Key, string Value, string Default, string Label, string Type, double Min, double Max, string Description, string[]? Options = null);
