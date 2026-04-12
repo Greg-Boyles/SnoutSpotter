@@ -16,6 +16,9 @@ namespace SnoutSpotter.Lambda.ExportDataset;
 public class ExportRequest
 {
     public string ExportId { get; set; } = string.Empty;
+    public int? MaxPerClass { get; set; }
+    public bool IncludeBackground { get; set; } = true;
+    public float BackgroundRatio { get; set; } = 1.0f;
 }
 
 public class Function
