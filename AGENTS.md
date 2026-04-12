@@ -37,6 +37,7 @@ SnoutSpotter/
 │   │   │   ├── ExportService.cs       # Training dataset export trigger and management
 │   │   │   ├── HealthService.cs       # CloudWatch heartbeat checks
 │   │   │   ├── LabelService.cs        # Label CRUD, breed, stats, upload, backfill
+│   │   │   ├── SettingsService.cs     # Server settings CRUD + validation (int/float/select)
 │   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, config validation
 │   │   │   ├── S3PresignService.cs    # Presigned URL generation
 │   │   │   └── S3UrlService.cs        # S3 URL helpers
@@ -58,8 +59,10 @@ SnoutSpotter/
 │   │       └── CiCdStack.cs           # OIDC role for GitHub Actions
 │   │
 │   ├── shared/
-│   │   └── SnoutSpotter.Contracts/        # Shared message types for SQS queues
-│   │       └── Messages.cs               # InferenceMessage, BackfillMessage
+│   │   └── SnoutSpotter.Contracts/        # Shared message types, server settings, settings reader
+│   │       ├── Messages.cs               # InferenceMessage, BackfillMessage
+│   │       ├── ServerSettings.cs         # Setting keys, defaults, validation specs (shared by API + all Lambdas)
+│   │       └── SettingsReader.cs         # DynamoDB settings reader with 5-minute cache (used by Lambdas)
 │   │
 │   ├── lambdas/
 │   │   ├── SnoutSpotter.Lambda.IngestClip/    # Triggered by S3 raw-clips upload
@@ -68,8 +71,8 @@ SnoutSpotter/
 │   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload OR SQS rerun queue
 │   │   │   ├── Function.cs                    # Custom YOLOv8 inference (my_dog/other_dog detection + bounding boxes)
 │   │   │   └── Dockerfile
-│   │   ├── SnoutSpotter.Lambda.AutoLabel/     # YOLOv8 dog detection on keyframes
-│   │   │   ├── Function.cs                    # ONNX inference, writes labels to DynamoDB
+│   │   ├── SnoutSpotter.Lambda.AutoLabel/     # COCO-pretrained YOLOv8 dog detection on keyframes
+│   │   │   ├── Function.cs                    # ONNX inference (model key from server settings), writes labels to DynamoDB
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.ExportDataset/ # Training dataset packaging
 │   │   │   ├── Function.cs                    # Queries labels, downloads images, creates zip + labels.csv
@@ -97,7 +100,11 @@ SnoutSpotter/
 │   │   │   │   ├── Detections.tsx     # Detection results list
 │   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions
 │   │   │   │   ├── TrainingExports.tsx# Training dataset export list and download
-│   │   │   │   ├── Models.tsx         # Classifier model version management: upload, list, activate
+│   │   │   │   ├── Models.tsx         # YOLOv8 detection model version management: upload, list, activate
+│   │   │   │   ├── SubmitTraining.tsx # New training job form: dataset, hyperparams, prefill from prev job
+│   │   │   │   ├── TrainingJobDetail.tsx # Training job detail: stage timeline, epoch progress, metrics, cancel
+│   │   │   │   ├── TrainingAgentDetail.tsx # Agent detail: status, GPU, current job, job history
+│   │   │   │   ├── ServerSettings.tsx # Server settings editor: grouped sections, numeric + select inputs
 │   │   │   │   ├── PiPackages.tsx    # Pi release version list, delete, and management
 │   │   │   │   ├── SystemHealth.tsx   # Landing page: API health + device summary table
 │   │   │   │   ├── DeviceDetail.tsx   # Per-device detail: status, version selector, services, camera, system, actions
@@ -158,12 +165,13 @@ SnoutSpotter/
 │       ├── docker-compose.yml         # NVIDIA runtime, trainer-state volume, AGENT_NAME env var
 │       ├── updater.sh                 # Host-side lifecycle: watches exit codes, pulls new image on code=42
 │       └── SnoutSpotter.TrainingAgent/
-│           ├── Program.cs             # Startup: self-register if no state, load config, connect MQTT, job loop
+│           ├── Program.cs             # Startup: self-register if no state, load config, connect MQTT, poll SQS
 │           ├── RegistrationService.cs # First-run: calls /api/trainers/register, saves certs + config to /app/state/
+│           ├── SqsJobConsumer.cs      # Polls SQS training queue, extends visibility, dispatches to JobRunner
 │           ├── JobRunner.cs           # Download ML scripts + dataset, run training, upload model, publish progress
-│           ├── MqttManager.cs         # AWS IoT Core MQTT client (TLS, auto-reconnect)
+│           ├── MqttManager.cs         # AWS IoT Core MQTT client (TLS, auto-reconnect, QoS 1)
 │           ├── GpuInfo.cs             # Calls nvidia-smi, returns GpuStatus
-│           ├── ProgressParser.cs      # Regex parser for YOLO training stdout → TrainingProgress
+│           ├── ProgressParser.cs      # Regex parser for YOLO training stdout → TrainingProgress (strips ANSI escapes)
 │           └── Models/                # Agent-only config models (AgentConfig, IoTConfig, S3Config, etc.)
 │
 └── .github/workflows/
@@ -279,11 +287,14 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 2. **IoTStack** — IoT resources (depends on CoreStack for DataBucket)
 3. **IngestStack** — depends on CoreStack
 4. **InferenceStack** — depends on CoreStack
-5. **ApiStack** — depends on CoreStack, reads CDK context for `oktaIssuer`/`allowedOrigin`
-6. **PiMgmtStack** — depends on CoreStack
-7. **WebStack** — standalone (S3 + CloudFront)
-8. **MonitoringStack** — depends on CoreStack
-9. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
+5. **AutoLabelStack** — depends on CoreStack
+6. **ExportDatasetStack** — depends on CoreStack
+7. **TrainingStack** — depends on CoreStack (SQS queue, UpdateTrainingProgress Lambda, IoT Rule)
+8. **ApiStack** — depends on CoreStack, reads CDK context + SSM params from other stacks
+9. **PiMgmtStack** — depends on CoreStack
+10. **WebStack** — standalone (S3 + CloudFront)
+11. **MonitoringStack** — depends on CoreStack
+12. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
 
 **IMPORTANT — No cross-stack dependencies between Lambda stacks.** Each Lambda stack must only depend on CoreStack (for ECR repos, tables, buckets). Never pass outputs from one Lambda stack to another via CDK props — this creates deploy-time coupling where deploying stack A forces CDK to also deploy stack B, which fails if stack B's Docker image wasn't built for the current commit. Instead, use SSM parameters: the source stack writes to `/snoutspotter/{stack}/{param}` and the consuming stack reads via `StringParameter.ValueForStringParameter()`, which resolves at CloudFormation deploy time without a CDK dependency. See IoTStack → PiMgmtStack and AutoLabelStack → ApiStack for examples.
 
@@ -291,15 +302,16 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports`, 7 ECR repos |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs`, ECR repos |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
 | InferenceStack | Docker Lambda triggered by S3 `keyframes/` events + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3) |
 | WebStack | S3 static site bucket, CloudFront distribution |
-| AutoLabelStack | Docker Lambda triggered by auto-label API call |
+| AutoLabelStack | Docker Lambda (2 GB) + SQS backfill queue (BatchSize=1, MaxConcurrency=2) + settings table read |
 | ExportDatasetStack | Docker Lambda for training dataset packaging |
+| TrainingStack | SQS job queue, UpdateTrainingProgress Lambda (IoT Rule target), training-jobs DynamoDB table |
 | CiCdStack | GitHub Actions OIDC role with S3, ECR, Lambda, CloudFront, CFn permissions |
 
 ---
@@ -349,6 +361,11 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/training/jobs/{jobId}` — get job detail (config, progress, result as native typed objects)
 - `POST /api/training/jobs/{jobId}/cancel` — request job cancellation
 - `DELETE /api/training/jobs/{jobId}` — delete a training job record
+
+**Server Settings:**
+- `GET /api/settings` — all settings with current values, defaults, specs, and options
+- `PUT /api/settings/{key}` — update a setting (validates type, range, and select options)
+- `POST /api/settings/reset` — reset all settings to defaults
 
 **Pi Management (OTA + Config + Commands):**
 - `GET /api/pi/devices` — list all Pi devices with full shadow state
@@ -449,9 +466,12 @@ All main API endpoints require a valid Okta JWT Bearer token.
 | `export_id` (PK) | String | Unique export identifier |
 | `status` | String | `running`, `complete`, `failed` |
 | `s3_key` | String | S3 key for the exported zip |
-| `total_images` | Number | Total image count |
-| `my_dog_count` | Number | Count of my_dog labels |
-| `not_my_dog_count` | Number | Count of other_dog + no_dog labels |
+| `total_images` | Number | Total images included (my_dog + other_dog with boxes + no_dog) |
+| `my_dog_count` | Number | Count of my_dog labels included |
+| `not_my_dog_count` | Number | Count of other_dog labels included |
+| `no_dog_count` | Number | Count of no_dog labels included (background images) |
+| `skipped_my_dog_count` | Number | my_dog labels excluded — no bounding box |
+| `skipped_other_dog_count` | Number | other_dog labels excluded — no bounding box |
 | `train_count` | Number | Training split count |
 | `val_count` | Number | Validation split count |
 | `size_mb` | Number | Zip file size |
@@ -581,7 +601,7 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 
 ## ML Training Workflow
 
-**Model architecture:** YOLOv8n fine-tuned on SnoutSpotter data. 2 classes: `my_dog` (0), `other_dog` (1). Output `[1, 6, 8400]`. AutoLabel Lambda uses stock `yolov8n.onnx` (COCO class 16) for generic dog detection to generate labels.
+**Model architecture:** YOLOv8n fine-tuned on SnoutSpotter data. 2 classes: `my_dog` (0), `other_dog` (1). Output `[1, 6, 8400]`. AutoLabel Lambda uses a COCO-pretrained YOLOv8 model (class 16 = dog) for generic dog detection to generate labels — the model variant (n/s/m) is configurable via the `autolabel.model_key` server setting (default: `yolov8m.onnx`).
 
 ### Training Agent (recommended)
 
@@ -705,7 +725,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 - **Pi Management API has no auth** — Pi devices connect directly, cannot use Okta
 - **CORS** is locked to `allowedOrigin` on main API; open on Pi Management
 - **Naming:** IoT things prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
-- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-classifier/best.onnx`, `models/dog-detector/best.onnx`, `models/yolov8n.onnx`, `releases/pi/`, `terraform/`
+- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-classifier/versions/` + `best.onnx` + `active.json`, `models/yolov8n.onnx` + `yolov8s.onnx` + `yolov8m.onnx` (COCO pretrained for AutoLabel), `releases/pi/`, `releases/ml-training/`, `training-checkpoints/`, `terraform/`
 
 ---
 
@@ -745,7 +765,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 17. **System Health is split across two pages** — `/health` is a clean landing page with device summary table. `/device/:thingName` is the full device detail page. Sub-pages (config, logs, commands, shadow) link back to the detail page, not `/health`.
 
-18. **Model deployment is direct-replace** — Both `models/dog-classifier/best.onnx` (RunInference) and `models/dog-detector/best.onnx` (AutoLabel) are managed via the Models page. Uploading replaces the file in place — there is no versioning or activate step. The Lambda picks up the new model on the next cold start. Use `src/ml/verify_onnx.py` to validate a model before uploading.
+18. **Model deployment** — RunInference uses `models/dog-classifier/best.onnx` (custom fine-tuned, managed via Models page with versioned uploads and activate). AutoLabel uses COCO-pretrained YOLOv8 models (`models/yolov8{n,s,m}.onnx`) selected via the `autolabel.model_key` server setting — a warm Lambda reloads the model if the setting changes.
 
 19. **Custom YOLOv8 output format** — A fine-tuned YOLOv8 with 2 classes outputs tensor shape `[1, 6, 8400]` (4 bbox coords + 2 class scores). This differs from the pre-trained YOLOv8n which outputs `[1, 84, 8400]` (80 COCO classes). The RunInference Lambda dynamically reads the number of classes from the output tensor dimensions.
 
@@ -783,4 +803,6 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 36. **ultralytics saves to `runs/detect/{name}` by default** — If `project` passed to `yolo.train()` is a relative path (e.g. `"runs"`), ultralytics may prepend its default `runs/detect` prefix, creating `runs/detect/runs/{name}`. The `train_detector.py` script sets `output_dir` to an absolute path (`dataset_dir / "runs"` when called with `--data`) so the save location is deterministic.
 
-37. **IoT Shadow null serialization for agent state** — `AgentReportedState.CurrentJobId` and `CurrentJobProgress` must NOT have `[JsonIgnore(WhenWritingNull)]`. IoT Shadow uses merge-patch semantics — omitting a field leaves the old value in the shadow. To clear `currentJobId` after a job finishes, the agent must explicitly serialize `null`. Only truly static fields (like `hostname`) use `WhenWritingNull`.
+37. **Server settings system** — `SnoutSpotter.Contracts/ServerSettings.cs` defines all settings centrally with `SettingSpec(Label, Default, Type, Min, Max, Description, Options)`. Types: `int`, `float`, `select`. The `select` type uses an `Options` string array for allowed values (e.g. model key). `SettingsReader` (used by Lambdas) caches all values for 5 minutes. Settings are stored in DynamoDB `snout-spotter-settings` (PK: `setting_key`). The API (`SettingsService`) validates on write; the UI renders dropdowns for `select` type and numeric inputs for `int`/`float`.
+
+38. **IoT Shadow null serialization for agent state** — `AgentReportedState.CurrentJobId` and `CurrentJobProgress` must NOT have `[JsonIgnore(WhenWritingNull)]`. IoT Shadow uses merge-patch semantics — omitting a field leaves the old value in the shadow. To clear `currentJobId` after a job finishes, the agent must explicitly serialize `null`. Only truly static fields (like `hostname`) use `WhenWritingNull`.
