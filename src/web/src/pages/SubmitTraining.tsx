@@ -182,13 +182,13 @@ export default function SubmitTraining() {
             />
           </div>
           <div>
-            <FieldLabel tooltip="Number of images processed together per training step. Larger batches keep the GPU busier and train faster. For a 16 GB GPU (e.g. RTX 4080 Super) use 64 or 128. Drop to 32 or 16 if you get CUDA out-of-memory errors.">Batch size</FieldLabel>
+            <FieldLabel tooltip="Number of images processed together per training step. Larger batches keep the GPU busier and train faster. For a 16 GB GPU (e.g. RTX 4080 Super) 64 is a safe maximum — 128 can exhaust system RAM due to DataLoader pre-fetching and will crash. Drop to 32 or 16 if you get CUDA out-of-memory errors.">Batch size</FieldLabel>
             <select
               value={batchSize}
               onChange={(e) => setBatchSize(Number(e.target.value))}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
             >
-              {[8, 16, 32, 64, 128].map((v) => <option key={v} value={v}>{v}</option>)}
+              {[8, 16, 32, 64].map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
           <div>
