@@ -22,10 +22,19 @@ public class ExportService : IExportService
         _config = config.Value;
     }
 
-    public async Task<string> TriggerExportAsync()
+    public async Task<string> TriggerExportAsync(int? maxPerClass = null, bool includeBackground = true, float backgroundRatio = 1.0f)
     {
         var exportId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow.ToString("O");
+
+        // Store config as a DynamoDB Map so it's visible while running
+        var configMap = new Dictionary<string, AttributeValue>
+        {
+            ["include_background"] = new() { BOOL = includeBackground },
+            ["background_ratio"] = new() { N = backgroundRatio.ToString("F2") },
+        };
+        if (maxPerClass.HasValue)
+            configMap["max_per_class"] = new() { N = maxPerClass.Value.ToString() };
 
         // Create export row with status "running"
         await _dynamoDb.PutItemAsync(_config.ExportsTable, new Dictionary<string, AttributeValue>
@@ -33,6 +42,7 @@ public class ExportService : IExportService
             ["export_id"] = new() { S = exportId },
             ["status"] = new() { S = "running" },
             ["created_at"] = new() { S = now },
+            ["config"] = new() { M = configMap },
         });
 
         // Invoke Lambda async
@@ -41,7 +51,13 @@ public class ExportService : IExportService
         {
             FunctionName = _config.ExportDatasetFunction,
             InvocationType = InvocationType.Event,
-            Payload = JsonSerializer.Serialize(new { ExportId = exportId })
+            Payload = JsonSerializer.Serialize(new
+            {
+                ExportId = exportId,
+                MaxPerClass = maxPerClass,
+                IncludeBackground = includeBackground,
+                BackgroundRatio = backgroundRatio
+            })
         });
 
         return exportId;
@@ -62,6 +78,18 @@ public class ExportService : IExportService
                 {
                     if (v.S != null) dict[k] = v.S;
                     else if (v.N != null) dict[k] = v.N;
+                    else if (v.IsBOOLSet) dict[k] = v.BOOL.ToString().ToLowerInvariant();
+                    else if (v.M != null && v.M.Count > 0)
+                    {
+                        var mapDict = new Dictionary<string, object>();
+                        foreach (var (mk, mv) in v.M)
+                        {
+                            if (mv.S != null) mapDict[mk] = mv.S;
+                            else if (mv.N != null) mapDict[mk] = double.Parse(mv.N, System.Globalization.CultureInfo.InvariantCulture);
+                            else if (mv.IsBOOLSet) mapDict[mk] = mv.BOOL;
+                        }
+                        dict[k] = JsonSerializer.Serialize(mapDict);
+                    }
                 }
                 return dict;
             })

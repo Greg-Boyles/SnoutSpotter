@@ -16,6 +16,9 @@ namespace SnoutSpotter.Lambda.ExportDataset;
 public class ExportRequest
 {
     public string ExportId { get; set; } = string.Empty;
+    public int? MaxPerClass { get; set; }
+    public bool IncludeBackground { get; set; } = true;
+    public float BackgroundRatio { get; set; } = 1.0f;
 }
 
 public class Function
@@ -79,8 +82,42 @@ public class Function
                 return;
             }
 
-            // 80/20 train/val split (random shuffle)
             var rng = new Random();
+
+            // Apply class balancing if configured
+            if (request.MaxPerClass is > 0)
+            {
+                var target = request.MaxPerClass.Value;
+                var myDogList = dogLabelsWithBoxes.Where(l => l.ConfirmedLabel == "my_dog").ToList();
+                var otherDogList = dogLabelsWithBoxes.Where(l => l.ConfirmedLabel == "other_dog").ToList();
+
+                context.Logger.LogInformation(
+                    $"Balancing to {target}/class — before: my_dog={myDogList.Count}, other_dog={otherDogList.Count}");
+
+                myDogList = BalanceClass(myDogList, target, rng);
+                otherDogList = BalanceClass(otherDogList, target, rng);
+                dogLabelsWithBoxes = myDogList.Concat(otherDogList).ToList();
+
+                context.Logger.LogInformation(
+                    $"After balancing: my_dog={myDogList.Count}, other_dog={otherDogList.Count}");
+            }
+
+            // Apply background filtering
+            if (!request.IncludeBackground)
+            {
+                noDogLabels.Clear();
+            }
+            else if (request.BackgroundRatio < 2.0f && noDogLabels.Count > 0)
+            {
+                var maxBg = (int)(dogLabelsWithBoxes.Count * request.BackgroundRatio);
+                if (maxBg < noDogLabels.Count)
+                {
+                    noDogLabels = noDogLabels.OrderBy(_ => rng.Next()).Take(maxBg).ToList();
+                    context.Logger.LogInformation($"Background capped to {noDogLabels.Count} (ratio {request.BackgroundRatio})");
+                }
+            }
+
+            // 80/20 train/val split (random shuffle)
             dogLabelsWithBoxes = dogLabelsWithBoxes.OrderBy(_ => rng.Next()).ToList();
             noDogLabels = noDogLabels.OrderBy(_ => rng.Next()).ToList();
 
@@ -138,6 +175,12 @@ public class Function
                     train_count = trainSet.Count,
                     val_count = valSet.Count,
                     breeds = breedCounts,
+                    config = new
+                    {
+                        max_per_class = request.MaxPerClass,
+                        include_background = request.IncludeBackground,
+                        background_ratio = request.BackgroundRatio,
+                    },
                 };
                 var manifestEntry = archive.CreateEntry("manifest.json");
                 await using (var manifestStream = manifestEntry.Open())
@@ -294,6 +337,19 @@ public class Function
         }
 
         return sb.ToString();
+    }
+
+    private static List<LabelRecord> BalanceClass(List<LabelRecord> items, int target, Random rng)
+    {
+        if (items.Count == 0) return items;
+        if (items.Count >= target)
+            return items.OrderBy(_ => rng.Next()).Take(target).ToList();
+
+        // Oversample: keep all originals, then duplicate random entries to reach target
+        var result = new List<LabelRecord>(items);
+        while (result.Count < target)
+            result.Add(items[rng.Next(items.Count)]);
+        return result;
     }
 
     private static bool HasBoundingBoxes(string json)

@@ -211,11 +211,14 @@ public class LabelsController : ControllerBase
     }
 
     [HttpPost("export")]
-    public async Task<ActionResult> TriggerExport()
+    public async Task<ActionResult> TriggerExport([FromBody] TriggerExportRequest? request = null)
     {
         try
         {
-            var exportId = await _exportService.TriggerExportAsync();
+            var exportId = await _exportService.TriggerExportAsync(
+                request?.MaxPerClass,
+                request?.IncludeBackground ?? true,
+                request?.BackgroundRatio ?? 1.0f);
             return Ok(new { exportId, message = "Export started" });
         }
         catch (Exception ex)
@@ -223,6 +226,11 @@ public class LabelsController : ControllerBase
             return StatusCode(500, new { error = ex.Message });
         }
     }
+
+    public record TriggerExportRequest(
+        int? MaxPerClass = null,
+        bool IncludeBackground = true,
+        float BackgroundRatio = 1.0f);
 
     [HttpGet("exports")]
     public async Task<ActionResult> ListExports()
