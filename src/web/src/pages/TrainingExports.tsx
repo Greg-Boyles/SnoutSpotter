@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban } from "lucide-react";
+import { Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban, ChevronDown, ChevronUp } from "lucide-react";
 
 function Skeleton({ className }: { className: string }) {
   return <div className={`animate-pulse bg-gray-200 rounded ${className}`} />;
@@ -24,6 +24,7 @@ interface ExportItem {
   val_count?: string;
   size_mb?: string;
   error?: string;
+  config?: string;
 }
 
 function Stat({ label, value, color }: { label: string; value?: string; color: string }) {
@@ -60,6 +61,10 @@ export default function TrainingExports() {
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [labelStats, setLabelStats] = useState<{ myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
+  const [showExportForm, setShowExportForm] = useState(false);
+  const [maxPerClass, setMaxPerClass] = useState("");
+  const [includeBackground, setIncludeBackground] = useState(true);
+  const [backgroundRatio, setBackgroundRatio] = useState("1.0");
 
   const loadExports = () => {
     api.listExports()
@@ -100,18 +105,89 @@ export default function TrainingExports() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Training Exports</h1>
         <button
-          onClick={async () => {
-            setExporting(true);
-            try { await api.triggerExport(); loadExports(); } catch (e) { console.error(e); }
-            setExporting(false);
-          }}
+          onClick={() => setShowExportForm(!showExportForm)}
           disabled={exporting}
           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50"
         >
           {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
           {exporting ? "Exporting..." : "New Export"}
+          {!exporting && (showExportForm ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
         </button>
       </div>
+
+      {showExportForm && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-4">Export Options</h2>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Max per class</label>
+              <input
+                type="number"
+                min={100}
+                placeholder="No limit"
+                value={maxPerClass}
+                onChange={(e) => setMaxPerClass(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">Oversample minority, undersample majority to this target</p>
+            </div>
+            <div>
+              <label className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-1">
+                <input
+                  type="checkbox"
+                  checked={includeBackground}
+                  onChange={(e) => setIncludeBackground(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Include background images
+              </label>
+              {includeBackground && (
+                <div className="mt-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Background ratio</label>
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0.1}
+                    max={2.0}
+                    value={backgroundRatio}
+                    onChange={(e) => setBackgroundRatio(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">No-dog count as fraction of total dog images</p>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                setExporting(true);
+                try {
+                  const config: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number } = {};
+                  if (maxPerClass) config.maxPerClass = parseInt(maxPerClass);
+                  config.includeBackground = includeBackground;
+                  if (includeBackground) config.backgroundRatio = parseFloat(backgroundRatio);
+                  await api.triggerExport(config);
+                  loadExports();
+                  setShowExportForm(false);
+                } catch (e) { console.error(e); }
+                setExporting(false);
+              }}
+              disabled={exporting}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50"
+            >
+              {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+              Start Export
+            </button>
+            <button
+              onClick={() => setShowExportForm(false)}
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Label Summary */}
       {!labelStats ? (
@@ -263,6 +339,17 @@ export default function TrainingExports() {
                     <p className="text-xs text-gray-400 mb-3">
                       {exp.size_mb || 0} MB · Train: {exp.train_count} · Val: {exp.val_count}
                     </p>
+                    {exp.config && (() => {
+                      try {
+                        const cfg = JSON.parse(exp.config);
+                        const parts: string[] = [];
+                        if (cfg.max_per_class) parts.push(`Balanced to ${cfg.max_per_class}/class`);
+                        if (cfg.include_background === false) parts.push("No backgrounds");
+                        else if (cfg.background_ratio != null && cfg.background_ratio !== 1) parts.push(`BG ratio: ${cfg.background_ratio}`);
+                        if (parts.length === 0) return null;
+                        return <p className="text-xs text-indigo-600 mb-3">{parts.join(" · ")}</p>;
+                      } catch { return null; }
+                    })()}
                   </>
                 );
               })()}

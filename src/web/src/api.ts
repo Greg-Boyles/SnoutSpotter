@@ -179,8 +179,8 @@ export const api = {
   },
 
   // Training exports
-  triggerExport: () =>
-    postJson<{ exportId: string; message: string }>("/ml/export"),
+  triggerExport: (config?: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number }) =>
+    postJson<{ exportId: string; message: string }>("/ml/export", config),
 
   listExports: () =>
     fetchJson<{ exports: Record<string, string>[] }>("/ml/exports"),
