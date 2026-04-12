@@ -75,7 +75,7 @@ SnoutSpotter/
 │   │   │   ├── Function.cs                    # ONNX inference (model key from server settings), writes labels to DynamoDB
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.ExportDataset/ # Training dataset packaging
-│   │   │   ├── Function.cs                    # Queries labels, downloads images, creates zip + labels.csv
+│   │   │   ├── Function.cs                    # Queries labels, balances classes (oversample/undersample), downloads images, creates zip + labels.csv
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.UpdateTrainingProgress/ # IoT Rule target for trainer MQTT progress
 │   │   │   └── Function.cs                    # Deserialises TrainingProgressMessage, patches snout-spotter-training-jobs DynamoDB table
@@ -99,7 +99,7 @@ SnoutSpotter/
 │   │   │   │   ├── ClipDetail.tsx     # Video player + keyframes + detections
 │   │   │   │   ├── Detections.tsx     # Detection results list
 │   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions
-│   │   │   │   ├── TrainingExports.tsx# Training dataset export list and download
+│   │   │   │   ├── TrainingExports.tsx# Training dataset export: config form (class balancing, background), list, download
 │   │   │   │   ├── Models.tsx         # YOLOv8 detection model version management: upload, list, activate
 │   │   │   │   ├── SubmitTraining.tsx # New training job form: dataset, hyperparams, prefill from prev job
 │   │   │   │   ├── TrainingJobDetail.tsx # Training job detail: stage timeline, epoch progress, metrics, cancel
@@ -310,7 +310,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 | InferenceStack | Docker Lambda triggered by S3 `keyframes/` events + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3) |
 | WebStack | S3 static site bucket, CloudFront distribution |
 | AutoLabelStack | Docker Lambda (2 GB) + SQS backfill queue (BatchSize=1, MaxConcurrency=2) + settings table read |
-| ExportDatasetStack | Docker Lambda for training dataset packaging |
+| ExportDatasetStack | Docker Lambda for training dataset packaging (class balancing, background filtering) |
 | TrainingStack | SQS job queue, UpdateTrainingProgress Lambda (IoT Rule target), training-jobs DynamoDB table |
 | CiCdStack | GitHub Actions OIDC role with S3, ECR, Lambda, CloudFront, CFn permissions |
 
@@ -341,7 +341,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `POST /api/ml/labels/bulk-confirm` — bulk confirm labels with breed
 - `POST /api/ml/labels/upload?label=other_dog&breed=Chihuahua` — upload training images
 - `POST /api/ml/labels/backfill-breed` — set breed on existing labels missing it
-- `POST /api/ml/export` — trigger training dataset export
+- `POST /api/ml/export` — trigger training dataset export (optional body: `maxPerClass`, `includeBackground`, `backgroundRatio` for class balancing)
 - `GET /api/ml/exports` — list exports
 - `GET /api/ml/exports/{exportId}/download` — presigned download URL
 - `DELETE /api/ml/exports/{exportId}` — delete export
@@ -465,6 +465,8 @@ All main API endpoints require a valid Okta JWT Bearer token.
 |-----------|------|-------------|
 | `export_id` (PK) | String | Unique export identifier |
 | `status` | String | `running`, `complete`, `failed` |
+| `created_at` | String | ISO 8601 timestamp |
+| `config` | Map (M) | Export options: `include_background` (BOOL), `background_ratio` (N), `max_per_class` (N, optional) |
 | `s3_key` | String | S3 key for the exported zip |
 | `total_images` | Number | Total images included (my_dog + other_dog with boxes + no_dog) |
 | `my_dog_count` | Number | Count of my_dog labels included |
@@ -656,12 +658,20 @@ Training scripts in `src/ml/` can be run directly if preferred.
 **End-to-end flow:**
 1. Pi records clips → keyframes extracted → AutoLabel Lambda detects dogs + bounding boxes
 2. Human reviews labels in dashboard (Labels page) — confirms `my_dog`/`other_dog`/`no_dog` + breed
-3. Export dataset from dashboard (Training Exports page) → YOLO detection format zip in S3
+3. Export dataset from dashboard (Training Exports page) → configure class balancing options → YOLO detection format zip in S3
 4. `python src/ml/train_detector.py` — pulls latest export from S3, trains, outputs `detector_<id>.onnx`
 5. `python src/ml/verify_onnx.py --model-path src/ml/detector_<id>.onnx --sample-count 5`
 6. Upload via Models page → lands at `models/dog-classifier/best.onnx` → RunInference picks up on next cold start
 
 **Training script flags:** `--data <dir>`, `--zip <file>`, `--resume <last.pt>`, `--epochs`, `--batch`, `--imgsz`, `--workers`
+
+**Export class balancing options** (configured per-export via the UI or `POST /api/ml/export` body):
+- `maxPerClass` — target count per class; oversamples minority (duplicates), undersamples majority (random pick)
+- `includeBackground` — whether to include `no_dog` images (default true)
+- `backgroundRatio` — max no_dog images as fraction of total dog images (default 1.0)
+
+**Known limitation — single-stage YOLO for fine-grained classification:**
+YOLOv8 detection achieves high precision (0.84) but low recall (~0.14) for `my_dog` vs `other_dog`, even with balanced datasets (2000/class). The problem is architectural: both classes are visually "dogs" and single-stage detection conflates localisation with fine-grained identity. Balanced data alone does not fix this. Future direction: two-stage pipeline — YOLO for dog detection + lightweight classifier (MobileNetV3 / EfficientNet) on cropped patches for my_dog vs other_dog.
 
 **Dataset format** (from ExportDataset Lambda):
 ```
