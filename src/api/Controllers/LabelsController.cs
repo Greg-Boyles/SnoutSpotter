@@ -218,7 +218,9 @@ public class LabelsController : ControllerBase
             var exportId = await _exportService.TriggerExportAsync(
                 request?.MaxPerClass,
                 request?.IncludeBackground ?? true,
-                request?.BackgroundRatio ?? 1.0f);
+                request?.BackgroundRatio ?? 1.0f,
+                request?.ExportType ?? "detection",
+                request?.CropPadding ?? 0.1f);
             return Ok(new { exportId, message = "Export started" });
         }
         catch (Exception ex)
@@ -230,7 +232,9 @@ public class LabelsController : ControllerBase
     public record TriggerExportRequest(
         int? MaxPerClass = null,
         bool IncludeBackground = true,
-        float BackgroundRatio = 1.0f);
+        float BackgroundRatio = 1.0f,
+        string ExportType = "detection",
+        float CropPadding = 0.1f);
 
     [HttpGet("exports")]
     public async Task<ActionResult> ListExports()
