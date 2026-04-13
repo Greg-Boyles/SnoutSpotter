@@ -78,7 +78,8 @@ await using var mqtt = new MqttManager(
 await mqtt.ConnectAsync();
 
 // State
-var jobRunner = new JobRunner(s3, config.S3.Bucket, mqtt, thingName, logger);
+var modelsTable = config.Training?.ModelsTable ?? "snout-spotter-models";
+var jobRunner = new JobRunner(s3, dynamoDb, config.S3.Bucket, modelsTable, mqtt, thingName, logger);
 var sqsConsumer = new SqsJobConsumer(sqs, queueUrl, logger);
 string? pendingCancel = null;
 string? pendingUpdate = null;

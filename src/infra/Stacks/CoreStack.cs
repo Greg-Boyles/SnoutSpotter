@@ -22,6 +22,7 @@ public class CoreStack : Stack
     public Table ExportsTable { get; }
     public Table TrainingJobsTable { get; }
     public Table SettingsTable { get; }
+    public Table ModelsTable { get; }
     public Repository AutoLabelEcrRepo { get; }
     public Repository ExportDatasetEcrRepo { get; }
     public Repository TrainingAgentEcrRepo { get; }
@@ -321,6 +322,23 @@ public class CoreStack : Stack
             PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "setting_key", Type = AttributeType.STRING },
             BillingMode = BillingMode.PAY_PER_REQUEST,
             RemovalPolicy = RemovalPolicy.DESTROY,
+        });
+
+        // DynamoDB table for ML model registry
+        ModelsTable = new Table(this, "ModelsTable", new TableProps
+        {
+            TableName = "snout-spotter-models",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "model_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.DESTROY,
+        });
+
+        ModelsTable.AddGlobalSecondaryIndex(new GlobalSecondaryIndexProps
+        {
+            IndexName = "by-type",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "model_type", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "created_at", Type = AttributeType.STRING },
+            ProjectionType = ProjectionType.ALL
         });
 
         // ECR repository for Training Agent Docker image

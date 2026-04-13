@@ -18,6 +18,7 @@ public class AppConfig
     public string TrainerThingGroup { get; set; } = "snoutspotter-trainers";
     public string TrainingJobQueueUrl { get; set; } = "";
     public string SettingsTable { get; set; } = "snout-spotter-settings";
+    public string ModelsTable { get; set; } = "snout-spotter-models";
     public string OktaIssuer { get; set; } = "";
     public string AllowedOrigin { get; set; } = "";
 }

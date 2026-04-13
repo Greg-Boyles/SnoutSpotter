@@ -18,6 +18,7 @@ public class ApiStackProps : StackProps
     public required Table LabelsTable { get; init; }
     public required Table ExportsTable { get; init; }
     public required Table TrainingJobsTable { get; init; }
+    public required Table ModelsTable { get; init; }
     public string TrainerThingGroupName { get; init; } = "snoutspotter-trainers";
     public required Repository ApiEcrRepo { get; init; }
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
@@ -72,7 +73,8 @@ public class ApiStack : Stack
                 ["TRAINING_JOBS_TABLE"] = props.TrainingJobsTable.TableName,
                 ["TRAINER_THING_GROUP"] = props.TrainerThingGroupName,
                 ["TRAINING_JOB_QUEUE_URL"] = trainingJobQueueUrl,
-                ["SETTINGS_TABLE"] = settingsTableName
+                ["SETTINGS_TABLE"] = settingsTableName,
+                ["MODELS_TABLE"] = props.ModelsTable.TableName
             }
         });
 
@@ -81,6 +83,7 @@ public class ApiStack : Stack
         props.LabelsTable.GrantReadWriteData(apiFunction);
         props.ExportsTable.GrantReadWriteData(apiFunction);
         props.TrainingJobsTable.GrantReadWriteData(apiFunction);
+        props.ModelsTable.GrantReadWriteData(apiFunction);
 
         // Settings table (resolved via SSM, not cross-stack)
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps

@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Compression;
 using System.Text.Json;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Amazon.S3;
 using Amazon.S3.Transfer;
 using Contracts = SnoutSpotter.Contracts;
@@ -15,7 +18,9 @@ public class JobRunner
     private const string ModelsDir = "/app/models";
 
     private readonly IAmazonS3 _s3;
+    private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _bucket;
+    private readonly string _modelsTable;
     private readonly MqttManager _mqtt;
     private readonly string _thingName;
     private readonly ILogger _logger;
@@ -24,10 +29,12 @@ public class JobRunner
 
     public string? CachedMlScriptVersion { get; private set; }
 
-    public JobRunner(IAmazonS3 s3, string bucket, MqttManager mqtt, string thingName, ILogger logger)
+    public JobRunner(IAmazonS3 s3, IAmazonDynamoDB dynamoDb, string bucket, string modelsTable, MqttManager mqtt, string thingName, ILogger logger)
     {
         _s3 = s3;
+        _dynamoDb = dynamoDb;
         _bucket = bucket;
+        _modelsTable = modelsTable;
         _mqtt = mqtt;
         _thingName = thingName;
         _logger = logger;
@@ -169,8 +176,13 @@ public class JobRunner
             await transfer.UploadAsync(modelPath, _bucket, modelS3Key, ct);
             _logger.LogInformation("Model uploaded to s3://{Bucket}/{Key}", _bucket, modelS3Key);
 
+            // 5b. Register model in DynamoDB
+            var modelFileInfo = new FileInfo(modelPath);
+            await RegisterModelAsync(jobType, version, modelS3Key, modelFileInfo.Length, job.JobId,
+                isClassifier ? classifierParser : null, isClassifier ? null : detectorParser);
+
             // 6. Report final result
-            var modelSize = new FileInfo(modelPath).Length / (1024.0 * 1024.0);
+            var modelSize = modelFileInfo.Length / (1024.0 * 1024.0);
             var datasetImages = CountDatasetImages(datasetDir);
 
             if (isClassifier && classifierParser != null)
@@ -444,6 +456,53 @@ public class JobRunner
         if (Directory.Exists(valDir))
             count += Directory.GetFiles(valDir, "*", SearchOption.AllDirectories).Length;
         return count;
+    }
+
+    private async Task RegisterModelAsync(string modelType, string version, string s3Key, long sizeBytes,
+        string trainingJobId, ClassifierProgressParser? classifierParser, ProgressParser? detectorParser)
+    {
+        try
+        {
+            var item = new Dictionary<string, AttributeValue>
+            {
+                ["model_id"] = new() { S = $"{modelType}#{version}" },
+                ["model_type"] = new() { S = modelType },
+                ["version"] = new() { S = version },
+                ["s3_key"] = new() { S = s3Key },
+                ["size_bytes"] = new() { N = sizeBytes.ToString() },
+                ["status"] = new() { S = "uploaded" },
+                ["created_at"] = new() { S = DateTime.UtcNow.ToString("O") },
+                ["source"] = new() { S = "training" },
+                ["training_job_id"] = new() { S = trainingJobId },
+            };
+
+            var metrics = new Dictionary<string, AttributeValue>();
+            if (classifierParser != null)
+            {
+                var m = classifierParser.GetFinalMetrics();
+                metrics["accuracy"] = new() { N = m.Accuracy.ToString("G", CultureInfo.InvariantCulture) };
+                metrics["f1_score"] = new() { N = m.F1.ToString("G", CultureInfo.InvariantCulture) };
+                metrics["precision"] = new() { N = m.Precision.ToString("G", CultureInfo.InvariantCulture) };
+                metrics["recall"] = new() { N = m.Recall.ToString("G", CultureInfo.InvariantCulture) };
+            }
+            else if (detectorParser != null)
+            {
+                var m = detectorParser.GetFinalMetrics();
+                metrics["final_mAP50"] = new() { N = m.MAP50.ToString("G", CultureInfo.InvariantCulture) };
+                metrics["precision"] = new() { N = m.Precision.ToString("G", CultureInfo.InvariantCulture) };
+                metrics["recall"] = new() { N = m.Recall.ToString("G", CultureInfo.InvariantCulture) };
+            }
+
+            if (metrics.Count > 0)
+                item["metrics"] = new() { M = metrics };
+
+            await _dynamoDb.PutItemAsync(_modelsTable, item);
+            _logger.LogInformation("Model registered in DynamoDB: {Type}#{Version}", modelType, version);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Failed to register model in DynamoDB: {Error} — model still uploaded to S3", ex.Message);
+        }
     }
 
     private async Task PublishProgress(string jobId, string status, TrainingProgress? progress)
