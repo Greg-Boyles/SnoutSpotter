@@ -25,6 +25,16 @@ public class LabelsController : ControllerBase
     private const string ClassifierActiveKey = "models/dog-classifier/best.onnx";
     private const string ClassifierActiveVersionKey = "models/dog-classifier/active.json";
 
+    private const string DetectorPrefix = "models/dog-detector/versions/";
+    private const string DetectorActiveKey = "models/dog-detector/best.onnx";
+    private const string DetectorActiveVersionKey = "models/dog-detector/active.json";
+
+    private (string Prefix, string ActiveKey, string ActiveVersionKey) GetModelPaths(string type) => type switch
+    {
+        "detector" => (DetectorPrefix, DetectorActiveKey, DetectorActiveVersionKey),
+        _ => (ClassifierPrefix, ClassifierActiveKey, ClassifierActiveVersionKey),
+    };
+
     public LabelsController(
         ILabelService labelService,
         IClipService clipService,
@@ -218,7 +228,10 @@ public class LabelsController : ControllerBase
             var exportId = await _exportService.TriggerExportAsync(
                 request?.MaxPerClass,
                 request?.IncludeBackground ?? true,
-                request?.BackgroundRatio ?? 1.0f);
+                request?.BackgroundRatio ?? 1.0f,
+                request?.ExportType ?? "detection",
+                request?.CropPadding ?? 0.1f,
+                request?.MergeClasses ?? false);
             return Ok(new { exportId, message = "Export started" });
         }
         catch (Exception ex)
@@ -230,7 +243,10 @@ public class LabelsController : ControllerBase
     public record TriggerExportRequest(
         int? MaxPerClass = null,
         bool IncludeBackground = true,
-        float BackgroundRatio = 1.0f);
+        float BackgroundRatio = 1.0f,
+        string ExportType = "detection",
+        float CropPadding = 0.1f,
+        bool MergeClasses = false);
 
     [HttpGet("exports")]
     public async Task<ActionResult> ListExports()
@@ -256,13 +272,15 @@ public class LabelsController : ControllerBase
     }
 
     [HttpGet("models")]
-    public async Task<ActionResult> ListModels()
+    public async Task<ActionResult> ListModels([FromQuery] string type = "classifier")
     {
+        var (prefix, _, activeVersionKey) = GetModelPaths(type);
+
         // Get active version
         string? activeVersion = null;
         try
         {
-            var activeObj = await _s3.GetObjectAsync(_bucketName, ClassifierActiveVersionKey);
+            var activeObj = await _s3.GetObjectAsync(_bucketName, activeVersionKey);
             using var reader = new StreamReader(activeObj.ResponseStream);
             var json = await reader.ReadToEndAsync();
             var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -275,12 +293,12 @@ public class LabelsController : ControllerBase
         var listResponse = await _s3.ListObjectsV2Async(new ListObjectsV2Request
         {
             BucketName = _bucketName,
-            Prefix = ClassifierPrefix
+            Prefix = prefix
         });
 
         foreach (var obj in listResponse.S3Objects)
         {
-            var fileName = obj.Key[ClassifierPrefix.Length..];
+            var fileName = obj.Key[prefix.Length..];
             if (!fileName.EndsWith(".onnx")) continue;
             var version = fileName[..^5]; // strip .onnx
 
@@ -298,24 +316,26 @@ public class LabelsController : ControllerBase
     }
 
     [HttpPost("models/upload-url")]
-    public ActionResult GetModelUploadUrl([FromQuery] string version)
+    public ActionResult GetModelUploadUrl([FromQuery] string version, [FromQuery] string type = "classifier")
     {
         if (string.IsNullOrWhiteSpace(version))
             return BadRequest(new { error = "version is required" });
 
-        var s3Key = $"{ClassifierPrefix}{version}.onnx";
+        var (prefix, _, _) = GetModelPaths(type);
+        var s3Key = $"{prefix}{version}.onnx";
         var uploadUrl = _presignService.GeneratePresignedPutUrl(s3Key, "application/octet-stream");
 
         return Ok(new { uploadUrl, s3Key, version, expiresIn = 3600 });
     }
 
     [HttpPost("models/activate")]
-    public async Task<ActionResult> ActivateModel([FromQuery] string version)
+    public async Task<ActionResult> ActivateModel([FromQuery] string version, [FromQuery] string type = "classifier")
     {
         if (string.IsNullOrWhiteSpace(version))
             return BadRequest(new { error = "version is required" });
 
-        var sourceKey = $"{ClassifierPrefix}{version}.onnx";
+        var (prefix, activeKey, activeVersionKey) = GetModelPaths(type);
+        var sourceKey = $"{prefix}{version}.onnx";
 
         // Verify the version exists
         try
@@ -327,19 +347,19 @@ public class LabelsController : ControllerBase
             return NotFound(new { error = $"Version '{version}' not found" });
         }
 
-        // Copy version to best.onnx
-        await _s3.CopyObjectAsync(_bucketName, sourceKey, _bucketName, ClassifierActiveKey);
+        // Copy version to active key
+        await _s3.CopyObjectAsync(_bucketName, sourceKey, _bucketName, activeKey);
 
         // Write active.json
         await _s3.PutObjectAsync(new PutObjectRequest
         {
             BucketName = _bucketName,
-            Key = ClassifierActiveVersionKey,
+            Key = activeVersionKey,
             ContentBody = System.Text.Json.JsonSerializer.Serialize(new { version }),
             ContentType = "application/json"
         });
 
-        return Ok(new { message = $"Activated version '{version}'", version });
+        return Ok(new { message = $"Activated {type} version '{version}'", version });
     }
 
     [HttpPost("rerun-inference")]

@@ -17,16 +17,23 @@ namespace SnoutSpotter.Lambda.RunInference;
 
 public class Function
 {
-    private static readonly string[] ClassNames = ["my_dog", "other_dog"];
+    private static readonly string[] SingleStageClassNames = ["my_dog", "other_dog"];
+    private static readonly string[] ClassifierClassNames = ["my_dog", "other_dog"];
+    private const int CocoClassDog = 16;
 
     private readonly IAmazonS3 _s3Client;
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly string _bucketName;
     private readonly string _tableName;
-    private readonly string _modelKey;
+    private readonly string _singleStageModelKey;
+    private readonly string _detectorModelKey;
+    private readonly string _classifierModelKey;
     private readonly SettingsReader _settings;
 
-    private InferenceSession? _session;
+    private InferenceSession? _detectorSession;
+    private InferenceSession? _classifierSession;
+    private string? _loadedDetectorKey;
+    private string? _loadedClassifierKey;
 
     public Function()
     {
@@ -34,7 +41,9 @@ public class Function
         _dynamoClient = new AmazonDynamoDBClient();
         _bucketName = Environment.GetEnvironmentVariable("BUCKET_NAME")!;
         _tableName = Environment.GetEnvironmentVariable("TABLE_NAME")!;
-        _modelKey = Environment.GetEnvironmentVariable("MODEL_KEY")!;
+        _singleStageModelKey = Environment.GetEnvironmentVariable("MODEL_KEY") ?? "models/dog-classifier/best.onnx";
+        _detectorModelKey = Environment.GetEnvironmentVariable("DETECTOR_MODEL_KEY") ?? "models/yolov8m.onnx";
+        _classifierModelKey = Environment.GetEnvironmentVariable("CLASSIFIER_MODEL_KEY") ?? "models/dog-classifier/best.onnx";
         _settings = new SettingsReader(_dynamoClient);
     }
 
@@ -57,10 +66,31 @@ public class Function
             return;
         }
 
-        await EnsureModelLoaded(context);
-
+        var pipelineMode = await _settings.GetStringAsync(ServerSettings.InferencePipelineMode);
         var confidenceThreshold = await _settings.GetFloatAsync(ServerSettings.InferenceConfidenceThreshold);
         var inputSize = await _settings.GetIntAsync(ServerSettings.InferenceInputSize);
+
+        var isTwoStage = pipelineMode == "two_stage";
+
+        if (isTwoStage)
+        {
+            await EnsureDetectorLoaded(_detectorModelKey, context);
+            await EnsureClassifierLoaded(context);
+        }
+        else
+        {
+            await EnsureDetectorLoaded(_singleStageModelKey, context);
+        }
+
+        var classifierConfidence = isTwoStage
+            ? await _settings.GetFloatAsync(ServerSettings.InferenceClassifierConfidenceThreshold)
+            : 0f;
+        var classifierInputSize = isTwoStage
+            ? await _settings.GetIntAsync(ServerSettings.InferenceClassifierInputSize)
+            : 0;
+        var cropPadding = isTwoStage
+            ? await _settings.GetFloatAsync(ServerSettings.InferenceCropPaddingRatio)
+            : 0f;
 
         var keyframeResults = new List<KeyframeResult>();
         var totalDetections = 0;
@@ -71,7 +101,13 @@ public class Function
             {
                 var response = await _s3Client.GetObjectAsync(_bucketName, keyframeKey);
                 using var image = await Image.LoadAsync<Rgb24>(response.ResponseStream);
-                var result = RunDetector(image, keyframeKey, inputSize, confidenceThreshold);
+
+                KeyframeResult result;
+                if (isTwoStage)
+                    result = RunTwoStage(image, keyframeKey, inputSize, confidenceThreshold, classifierInputSize, classifierConfidence, cropPadding);
+                else
+                    result = RunSingleStage(image, keyframeKey, inputSize, confidenceThreshold);
+
                 keyframeResults.Add(result);
                 totalDetections += result.Detections.Count;
             }
@@ -209,13 +245,36 @@ public class Function
             : current;
     }
 
-    private async Task EnsureModelLoaded(ILambdaContext context)
+    private async Task EnsureDetectorLoaded(string modelKey, ILambdaContext context)
     {
-        if (_session != null) return;
+        if (_detectorSession != null && _loadedDetectorKey == modelKey) return;
+        if (_detectorSession != null && _loadedDetectorKey != modelKey)
+        {
+            context.Logger.LogInformation($"Detector model changed from {_loadedDetectorKey} to {modelKey} — reloading");
+            _detectorSession.Dispose();
+            _detectorSession = null;
+        }
 
-        context.Logger.LogInformation("Loading YOLO model...");
-        var modelPath = await DownloadModel(_modelKey);
-        _session = new InferenceSession(modelPath);
+        context.Logger.LogInformation($"Loading detector model: {modelKey}");
+        var modelPath = await DownloadModel(modelKey);
+        _detectorSession = new InferenceSession(modelPath);
+        _loadedDetectorKey = modelKey;
+    }
+
+    private async Task EnsureClassifierLoaded(ILambdaContext context)
+    {
+        if (_classifierSession != null && _loadedClassifierKey == _classifierModelKey) return;
+        if (_classifierSession != null && _loadedClassifierKey != _classifierModelKey)
+        {
+            context.Logger.LogInformation($"Classifier model changed — reloading");
+            _classifierSession.Dispose();
+            _classifierSession = null;
+        }
+
+        context.Logger.LogInformation($"Loading classifier model: {_classifierModelKey}");
+        var modelPath = await DownloadModel(_classifierModelKey);
+        _classifierSession = new InferenceSession(modelPath);
+        _loadedClassifierKey = _classifierModelKey;
     }
 
     private async Task<string> DownloadModel(string modelKey)
@@ -229,15 +288,150 @@ public class Function
         return localPath;
     }
 
-    private KeyframeResult RunDetector(Image<Rgb24> image, string keyframeKey, int inputSize, float confidenceThreshold)
+    /// <summary>Single-stage: existing two-class YOLO (my_dog, other_dog)</summary>
+    private KeyframeResult RunSingleStage(Image<Rgb24> image, string keyframeKey, int inputSize, float confidenceThreshold)
     {
         var result = new KeyframeResult { KeyframeKey = keyframeKey };
 
-        if (_session == null)
+        if (_detectorSession == null)
         {
             result.Label = "no_dog";
             return result;
         }
+
+        var detections = RunYolo(_detectorSession, image, inputSize, confidenceThreshold);
+
+        foreach (var (classIdx, confidence, box) in detections)
+        {
+            var label = classIdx < SingleStageClassNames.Length ? SingleStageClassNames[classIdx] : $"class_{classIdx}";
+            result.Detections.Add(new DetectionBox { Label = label, Confidence = confidence, BoundingBox = box });
+        }
+
+        result.Label = "no_dog";
+        foreach (var d in result.Detections)
+            result.Label = UpgradeDetectionType(result.Label, d.Label);
+
+        return result;
+    }
+
+    /// <summary>Two-stage: COCO YOLO detects dogs, classifier identifies my_dog vs other_dog</summary>
+    private KeyframeResult RunTwoStage(Image<Rgb24> image, string keyframeKey,
+        int detectorInputSize, float detectorConfidence,
+        int classifierInputSize, float classifierConfidence, float cropPadding)
+    {
+        var result = new KeyframeResult { KeyframeKey = keyframeKey };
+
+        if (_detectorSession == null)
+        {
+            result.Label = "no_dog";
+            return result;
+        }
+
+        // Stage 1: COCO YOLO — find all dogs
+        var allDetections = RunYolo(_detectorSession, image, detectorInputSize, detectorConfidence);
+        var dogDetections = allDetections.Where(d => d.ClassIdx == CocoClassDog).ToList();
+
+        if (dogDetections.Count == 0)
+        {
+            result.Label = "no_dog";
+            return result;
+        }
+
+        // Stage 2: classify each dog crop
+        foreach (var (_, detConf, box) in dogDetections)
+        {
+            var (classLabel, classConf) = ClassifyCrop(image, box, classifierInputSize, classifierConfidence, cropPadding);
+            var combinedConfidence = detConf * classConf;
+
+            result.Detections.Add(new DetectionBox
+            {
+                Label = classLabel,
+                Confidence = combinedConfidence,
+                BoundingBox = box
+            });
+        }
+
+        result.Label = "no_dog";
+        foreach (var d in result.Detections)
+            result.Label = UpgradeDetectionType(result.Label, d.Label);
+
+        return result;
+    }
+
+    private (string Label, float Confidence) ClassifyCrop(Image<Rgb24> image, BoundingBoxData box,
+        int inputSize, float confidenceThreshold, float padding)
+    {
+        if (_classifierSession == null)
+            return ("other_dog", 0f);
+
+        // Compute padded crop region
+        var padW = box.Width * padding;
+        var padH = box.Height * padding;
+        var cropX = (int)Math.Max(0, box.X - padW);
+        var cropY = (int)Math.Max(0, box.Y - padH);
+        var cropW = (int)Math.Min(image.Width - cropX, box.Width + 2 * padW);
+        var cropH = (int)Math.Min(image.Height - cropY, box.Height + 2 * padH);
+
+        if (cropW <= 0 || cropH <= 0)
+            return ("other_dog", 0f);
+
+        using var crop = image.Clone(ctx => ctx.Crop(new Rectangle(cropX, cropY, cropW, cropH))
+                                                .Resize(inputSize, inputSize));
+
+        // Build tensor [1, 3, inputSize, inputSize]
+        var tensor = new DenseTensor<float>(new[] { 1, 3, inputSize, inputSize });
+        crop.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < inputSize; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (var x = 0; x < inputSize; x++)
+                {
+                    var pixel = row[x];
+                    tensor[0, 0, y, x] = pixel.R / 255f;
+                    tensor[0, 1, y, x] = pixel.G / 255f;
+                    tensor[0, 2, y, x] = pixel.B / 255f;
+                }
+            }
+        });
+
+        var inputName = _classifierSession.InputNames[0];
+        using var results = _classifierSession.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, tensor) });
+        var output = results.First().AsTensor<float>();
+
+        // Output: [1, 2] — logits for [my_dog, other_dog]
+        var numClasses = output.Dimensions[1];
+        var bestIdx = 0;
+        var bestConf = output[0, 0];
+        for (var c = 1; c < numClasses; c++)
+        {
+            if (output[0, c] > bestConf)
+            {
+                bestIdx = c;
+                bestConf = output[0, c];
+            }
+        }
+
+        // Apply softmax to get probability
+        var maxVal = Math.Max(output[0, 0], output[0, 1]);
+        var exp0 = MathF.Exp(output[0, 0] - maxVal);
+        var exp1 = MathF.Exp(output[0, 1] - maxVal);
+        var softmaxConf = bestIdx == 0 ? exp0 / (exp0 + exp1) : exp1 / (exp0 + exp1);
+
+        var label = bestIdx < ClassifierClassNames.Length ? ClassifierClassNames[bestIdx] : "other_dog";
+
+        // If classifier confidence is below threshold, default to other_dog
+        if (softmaxConf < confidenceThreshold)
+            return ("other_dog", softmaxConf);
+
+        return (label, softmaxConf);
+    }
+
+    /// <summary>Run YOLOv8 and return raw detections with class index, confidence, and bounding box</summary>
+    private static List<(int ClassIdx, float Confidence, BoundingBoxData Box)> RunYolo(
+        InferenceSession session, Image<Rgb24> image, int inputSize, float confidenceThreshold)
+    {
+        var detections = new List<(int, float, BoundingBoxData)>();
 
         using var resized = image.Clone(ctx => ctx.Resize(inputSize, inputSize));
 
@@ -257,20 +451,18 @@ public class Function
             }
         });
 
-        var inputName = _session.InputNames[0];
-        using var results = _session.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, tensor) });
+        var inputName = session.InputNames[0];
+        using var results = session.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, tensor) });
         var output = results.First().AsTensor<float>();
 
         var scaleX = (float)image.Width / inputSize;
         var scaleY = (float)image.Height / inputSize;
 
-        // YOLOv8 output: [1, 4+num_classes, 8400]
         var numClasses = output.Dimensions[1] - 4;
-        var numDetections = output.Dimensions[2];
+        var numAnchors = output.Dimensions[2];
 
-        for (var i = 0; i < numDetections; i++)
+        for (var i = 0; i < numAnchors; i++)
         {
-            // Find best class and its confidence
             var bestClassIdx = 0;
             var bestConfidence = output[0, 4, i];
             for (var c = 1; c < numClasses; c++)
@@ -290,27 +482,15 @@ public class Function
             var w = output[0, 2, i] * scaleX;
             var h = output[0, 3, i] * scaleY;
 
-            var label = bestClassIdx < ClassNames.Length ? ClassNames[bestClassIdx] : $"class_{bestClassIdx}";
-
-            result.Detections.Add(new DetectionBox
+            detections.Add((bestClassIdx, bestConfidence, new BoundingBoxData
             {
-                Label = label,
-                Confidence = bestConfidence,
-                BoundingBox = new BoundingBoxData
-                {
-                    X = Math.Max(0, cx - w / 2),
-                    Y = Math.Max(0, cy - h / 2),
-                    Width = w,
-                    Height = h
-                }
-            });
+                X = Math.Max(0, cx - w / 2),
+                Y = Math.Max(0, cy - h / 2),
+                Width = w,
+                Height = h
+            }));
         }
 
-        // Overall keyframe label: highest priority detection, or no_dog
-        result.Label = "no_dog";
-        foreach (var d in result.Detections)
-            result.Label = UpgradeDetectionType(result.Label, d.Label);
-
-        return result;
+        return detections;
     }
 }

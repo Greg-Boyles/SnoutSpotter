@@ -20,6 +20,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default function Models() {
+  const [modelType, setModelType] = useState<"detector" | "classifier">("detector");
   const [versions, setVersions] = useState<ModelVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,9 +39,9 @@ export default function Models() {
   const [rerunning, setRerunning] = useState(false);
   const [showRerunPrompt, setShowRerunPrompt] = useState(false);
 
-  const loadModels = async () => {
+  const loadModels = async (type?: string) => {
     try {
-      const data = await api.listModels();
+      const data = await api.listModels(type ?? modelType);
       setVersions(data.versions);
       setError(null);
     } catch (err) {
@@ -51,8 +52,9 @@ export default function Models() {
   };
 
   useEffect(() => {
-    loadModels();
-  }, []);
+    setLoading(true);
+    loadModels(modelType);
+  }, [modelType]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -74,7 +76,7 @@ export default function Models() {
     setUploadProgress(0);
 
     try {
-      const { uploadUrl } = await api.getModelUploadUrl(uploadVersion.trim());
+      const { uploadUrl } = await api.getModelUploadUrl(uploadVersion.trim(), modelType);
 
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -113,7 +115,7 @@ export default function Models() {
     setSuccess(null);
 
     try {
-      await api.activateModel(version);
+      await api.activateModel(version, modelType);
       setSuccess(`Version "${version}" is now active`);
       setShowRerunPrompt(true);
       loadModels();
@@ -133,9 +135,27 @@ export default function Models() {
         >
           <ArrowLeft className="w-4 h-4" /> Training Exports
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">Detection Models</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          YOLOv8 ONNX models for the inference pipeline. Upload new versions and choose which one is active.
+        <h1 className="text-2xl font-bold text-gray-900">
+          {modelType === "detector" ? "Dog Detector Models" : "Dog Classifier Models"}
+        </h1>
+        <div className="flex gap-2 mt-2">
+          <button
+            onClick={() => setModelType("detector")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg ${modelType === "detector" ? "bg-amber-100 text-amber-800 ring-1 ring-amber-300" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+          >
+            Dog Detector
+          </button>
+          <button
+            onClick={() => setModelType("classifier")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg ${modelType === "classifier" ? "bg-purple-100 text-purple-800 ring-1 ring-purple-300" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+          >
+            Dog Classifier
+          </button>
+        </div>
+        <p className="text-sm text-gray-500 mt-2">
+          {modelType === "detector"
+            ? "YOLO ONNX models for detecting dogs in keyframes. Stage 1 of the two-stage pipeline."
+            : "MobileNetV3 ONNX models for classifying my_dog vs other_dog on detected crops. Stage 2 of the two-stage pipeline."}
         </p>
       </div>
 

@@ -39,4 +39,12 @@ public class TrainingResult
     [JsonPropertyName("recall")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? Recall { get; init; }
+
+    [JsonPropertyName("accuracy")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? Accuracy { get; init; }
+
+    [JsonPropertyName("f1_score")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? F1Score { get; init; }
 }

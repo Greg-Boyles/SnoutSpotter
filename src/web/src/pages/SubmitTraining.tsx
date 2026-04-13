@@ -37,6 +37,9 @@ export default function SubmitTraining() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [jobType, setJobType] = useState<"detector" | "classifier">(
+    (prefill?.config?.jobType as "detector" | "classifier") || "detector"
+  );
   const [selectedExport, setSelectedExport] = useState("");
   const [epochs, setEpochs] = useState(prefill?.config?.epochs ? Number(prefill.config.epochs) : 100);
   const [batchSize, setBatchSize] = useState(prefill?.config?.batchSize ? Number(prefill.config.batchSize) : 64);
@@ -45,6 +48,28 @@ export default function SubmitTraining() {
   const [workers, setWorkers] = useState(prefill?.config?.workers ? Number(prefill.config.workers) : 8);
   const [modelBase, setModelBase] = useState(prefill?.config?.modelBase ? String(prefill.config.modelBase) : "yolov8n.pt");
   const [notes, setNotes] = useState("");
+
+  const handleJobTypeChange = (type: "detector" | "classifier") => {
+    setJobType(type);
+    if (type === "classifier") {
+      setEpochs(50);
+      setBatchSize(32);
+      setImageSize(224);
+      setLearningRate(0.001);
+      setModelBase("mobilenet_v3_small");
+    } else {
+      setEpochs(100);
+      setBatchSize(64);
+      setImageSize(640);
+      setLearningRate(0.01);
+      setModelBase("yolov8n.pt");
+    }
+  };
+
+  const filteredExports = exports.filter((e) => {
+    const format = e.export_type || e.format || "detection";
+    return jobType === "classifier" ? format === "classification" : format !== "classification";
+  });
 
   useEffect(() => {
     api.listExports()
@@ -60,6 +85,14 @@ export default function SubmitTraining() {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (filteredExports.length > 0 && !filteredExports.some((e) => e.export_id === selectedExport)) {
+      setSelectedExport(filteredExports[0].export_id);
+    } else if (filteredExports.length === 0) {
+      setSelectedExport("");
+    }
+  }, [jobType, exports]);
 
   const handleSubmit = async () => {
     const exp = exports.find((e) => e.export_id === selectedExport);
@@ -78,6 +111,7 @@ export default function SubmitTraining() {
         workers,
         modelBase,
         notes: notes || undefined,
+        jobType,
       });
       navigate(`/training/${result.jobId}`);
     } catch (e) {
@@ -86,7 +120,7 @@ export default function SubmitTraining() {
     }
   };
 
-  const selectedExp = exports.find((e) => e.export_id === selectedExport);
+  const selectedExp = filteredExports.find((e) => e.export_id === selectedExport);
 
   if (loading) {
     return (
@@ -104,6 +138,35 @@ export default function SubmitTraining() {
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">New Training Job</h1>
 
+      {/* Job type toggle */}
+      <div className="mb-4 flex gap-2">
+        <button
+          onClick={() => handleJobTypeChange("detector")}
+          className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
+            jobType === "detector"
+              ? "bg-amber-50 border-amber-300 text-amber-800"
+              : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
+          }`}
+        >
+          Dog Detector (YOLO)
+        </button>
+        <button
+          onClick={() => handleJobTypeChange("classifier")}
+          className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
+            jobType === "classifier"
+              ? "bg-purple-50 border-purple-300 text-purple-800"
+              : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
+          }`}
+        >
+          Dog Classifier (MobileNet)
+        </button>
+      </div>
+      <p className="text-xs text-gray-500 mb-4">
+        {jobType === "detector"
+          ? "Trains a YOLO model to detect dogs in images. Uses detection-format exports."
+          : "Trains a MobileNetV3 classifier to identify my_dog vs other_dog on cropped patches. Uses classification-format exports."}
+      </p>
+
       {error && (
         <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">{error}</div>
       )}
@@ -118,9 +181,9 @@ export default function SubmitTraining() {
         {/* Dataset */}
         <div>
           <FieldLabel tooltip="The labelled image export to train on. Only completed exports are shown. Larger datasets generally produce better models.">Dataset</FieldLabel>
-          {exports.length === 0 ? (
+          {filteredExports.length === 0 ? (
             <p className="text-sm text-gray-400">
-              No exports available.{" "}
+              No {jobType === "classifier" ? "classification" : "detection"} exports available.{" "}
               <Link to="/exports" className="text-blue-600 hover:text-blue-700">Create an export</Link> first.
             </p>
           ) : (
@@ -130,7 +193,7 @@ export default function SubmitTraining() {
                 onChange={(e) => setSelectedExport(e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
               >
-                {exports.map((exp) => (
+                {filteredExports.map((exp) => (
                   <option key={exp.export_id} value={exp.export_id}>
                     {exp.export_id.slice(0, 8)}… — {exp.total_images} images, {exp.size_mb} MB
                   </option>
@@ -192,13 +255,16 @@ export default function SubmitTraining() {
             </select>
           </div>
           <div>
-            <FieldLabel tooltip="Images are resized to this square resolution before training. 640px is the YOLO default and matches what RunInference uses at inference time — only change this if you also update the Lambda.">Image size</FieldLabel>
+            <FieldLabel tooltip={jobType === "classifier"
+              ? "Classifier input resolution. 224px is the MobileNet default. Higher values may improve accuracy but increase training time and memory."
+              : "Images are resized to this square resolution before training. 640px is the YOLO default and matches what RunInference uses at inference time — only change this if you also update the Lambda."
+            }>Image size</FieldLabel>
             <select
               value={imageSize}
               onChange={(e) => setImageSize(Number(e.target.value))}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
             >
-              {[416, 640, 800].map((v) => <option key={v} value={v}>{v}px</option>)}
+              {(jobType === "classifier" ? [128, 160, 192, 224, 256] : [416, 640, 800]).map((v) => <option key={v} value={v}>{v}px</option>)}
             </select>
           </div>
           <div>
@@ -225,14 +291,23 @@ export default function SubmitTraining() {
             />
           </div>
           <div>
-            <FieldLabel tooltip="The pre-trained YOLO checkpoint to fine-tune from. Nano (yolov8n) is faster to train and deploy — recommended. Small (yolov8s) is more accurate but larger and slower at inference.">Base model</FieldLabel>
+            <FieldLabel tooltip={jobType === "classifier"
+              ? "The pre-trained classifier backbone. MobileNetV3-Small is lightweight and fast — ideal for inference on cropped patches."
+              : "The pre-trained YOLO checkpoint to fine-tune from. Nano (yolov8n) is faster to train and deploy — recommended. Small (yolov8s) is more accurate but larger and slower at inference."
+            }>Base model</FieldLabel>
             <select
               value={modelBase}
               onChange={(e) => setModelBase(e.target.value)}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
             >
-              <option value="yolov8n.pt">YOLOv8n (nano)</option>
-              <option value="yolov8s.pt">YOLOv8s (small)</option>
+              {jobType === "classifier" ? (
+                <option value="mobilenet_v3_small">MobileNetV3-Small</option>
+              ) : (
+                <>
+                  <option value="yolov8n.pt">YOLOv8n (nano)</option>
+                  <option value="yolov8s.pt">YOLOv8s (small)</option>
+                </>
+              )}
             </select>
           </div>
         </div>
@@ -252,7 +327,7 @@ export default function SubmitTraining() {
         {/* Submit */}
         <button
           onClick={handleSubmit}
-          disabled={submitting || exports.length === 0}
+          disabled={submitting || filteredExports.length === 0}
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
         >
           {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}

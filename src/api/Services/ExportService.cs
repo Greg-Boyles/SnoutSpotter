@@ -22,7 +22,9 @@ public class ExportService : IExportService
         _config = config.Value;
     }
 
-    public async Task<string> TriggerExportAsync(int? maxPerClass = null, bool includeBackground = true, float backgroundRatio = 1.0f)
+    public async Task<string> TriggerExportAsync(int? maxPerClass = null, bool includeBackground = true,
+        float backgroundRatio = 1.0f, string exportType = "detection", float cropPadding = 0.1f,
+        bool mergeClasses = false)
     {
         var exportId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow.ToString("O");
@@ -32,9 +34,14 @@ public class ExportService : IExportService
         {
             ["include_background"] = new() { BOOL = includeBackground },
             ["background_ratio"] = new() { N = backgroundRatio.ToString("F2") },
+            ["export_type"] = new() { S = exportType },
         };
         if (maxPerClass.HasValue)
             configMap["max_per_class"] = new() { N = maxPerClass.Value.ToString() };
+        if (exportType == "classification")
+            configMap["crop_padding"] = new() { N = cropPadding.ToString("F2") };
+        if (mergeClasses)
+            configMap["merge_classes"] = new() { BOOL = true };
 
         // Create export row with status "running"
         await _dynamoDb.PutItemAsync(_config.ExportsTable, new Dictionary<string, AttributeValue>
@@ -56,7 +63,10 @@ public class ExportService : IExportService
                 ExportId = exportId,
                 MaxPerClass = maxPerClass,
                 IncludeBackground = includeBackground,
-                BackgroundRatio = backgroundRatio
+                BackgroundRatio = backgroundRatio,
+                ExportType = exportType,
+                CropPadding = cropPadding,
+                MergeClasses = mergeClasses,
             })
         });
 

@@ -8,6 +8,8 @@ using Amazon.Lambda.Core;
 using Amazon.S3;
 using Amazon.S3.Model;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.SystemTextJson.DefaultLambdaJsonSerializer))]
 
@@ -19,6 +21,9 @@ public class ExportRequest
     public int? MaxPerClass { get; set; }
     public bool IncludeBackground { get; set; } = true;
     public float BackgroundRatio { get; set; } = 1.0f;
+    public string ExportType { get; set; } = "detection";  // "detection" or "classification"
+    public float CropPadding { get; set; } = 0.1f;
+    public bool MergeClasses { get; set; } = false;  // When true, all dogs → single "dog" class
 }
 
 public class Function
@@ -48,10 +53,16 @@ public class Function
     public async Task FunctionHandler(ExportRequest request, ILambdaContext context)
     {
         var exportId = request.ExportId;
-        context.Logger.LogInformation($"Starting export {exportId}");
+        context.Logger.LogInformation($"Starting export {exportId} (type={request.ExportType})");
 
         _trainSplitRatio = await _settings.GetFloatAsync(ServerSettings.ExportTrainSplitRatio);
         _maxParallelDownloads = await _settings.GetIntAsync(ServerSettings.ExportMaxParallelDownloads);
+
+        if (request.ExportType == "classification")
+        {
+            await RunClassificationExport(request, context);
+            return;
+        }
 
         try
         {
@@ -135,11 +146,20 @@ public class Function
             await using (var zipStream = File.Create(zipPath))
             using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false))
             {
-                await WriteImageSplit(archive, "train", trainSet, context);
-                await WriteImageSplit(archive, "val", valSet, context);
+                await WriteImageSplit(archive, "train", trainSet, request.MergeClasses, context);
+                await WriteImageSplit(archive, "val", valSet, request.MergeClasses, context);
 
                 // Write dataset.yaml
-                var datasetYaml = """
+                var datasetYaml = request.MergeClasses
+                    ? """
+                    path: .
+                    train: images/train
+                    val: images/val
+
+                    names:
+                      0: dog
+                    """
+                    : """
                     path: .
                     train: images/train
                     val: images/val
@@ -166,7 +186,7 @@ public class Function
                 {
                     export_id = exportId,
                     created_at = DateTime.UtcNow.ToString("O"),
-                    format = "yolo_detection",
+                    format = request.MergeClasses ? "yolo_detection_single_class" : "yolo_detection",
                     total = dogLabelsWithBoxes.Count + noDogLabels.Count,
                     my_dog = myDogCount,
                     other_dog = otherDogCount,
@@ -250,7 +270,197 @@ public class Function
         }
     }
 
-    private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, ILambdaContext context)
+    private async Task RunClassificationExport(ExportRequest request, ILambdaContext context)
+    {
+        var exportId = request.ExportId;
+        try
+        {
+            var labels = await GetAllReviewedLabels(context);
+            var dogLabels = labels
+                .Where(l => l.ConfirmedLabel is "my_dog" or "other_dog" && HasBoundingBoxes(l.BoundingBoxes))
+                .ToList();
+
+            if (dogLabels.Count == 0)
+            {
+                await UpdateExportStatus(exportId, "failed", error: "No dog labels with bounding boxes for classification export");
+                return;
+            }
+
+            var rng = new Random();
+
+            // Balance classes if configured
+            if (request.MaxPerClass is > 0)
+            {
+                var target = request.MaxPerClass.Value;
+                var myDog = dogLabels.Where(l => l.ConfirmedLabel == "my_dog").ToList();
+                var otherDog = dogLabels.Where(l => l.ConfirmedLabel == "other_dog").ToList();
+                context.Logger.LogInformation($"Balancing to {target}/class — before: my_dog={myDog.Count}, other_dog={otherDog.Count}");
+                myDog = BalanceClass(myDog, target, rng);
+                otherDog = BalanceClass(otherDog, target, rng);
+                dogLabels = myDog.Concat(otherDog).ToList();
+            }
+
+            // Shuffle and split
+            dogLabels = dogLabels.OrderBy(_ => rng.Next()).ToList();
+            var trainCount = (int)(dogLabels.Count * _trainSplitRatio);
+            var trainSet = dogLabels.Take(trainCount).ToList();
+            var valSet = dogLabels.Skip(trainCount).ToList();
+
+            context.Logger.LogInformation($"Classification export: {dogLabels.Count} labels, train={trainSet.Count}, val={valSet.Count}");
+
+            var zipPath = $"/tmp/{exportId}.zip";
+            if (File.Exists(zipPath)) File.Delete(zipPath);
+
+            await using (var zipStream = File.Create(zipPath))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false))
+            {
+                await WriteClassificationSplit(archive, "train", trainSet, request.CropPadding, context);
+                await WriteClassificationSplit(archive, "val", valSet, request.CropPadding, context);
+
+                // Manifest
+                var myDogCount = dogLabels.Count(l => l.ConfirmedLabel == "my_dog");
+                var otherDogCount = dogLabels.Count(l => l.ConfirmedLabel == "other_dog");
+                var manifest = new
+                {
+                    export_id = exportId,
+                    created_at = DateTime.UtcNow.ToString("O"),
+                    format = "classification",
+                    total = dogLabels.Count,
+                    my_dog = myDogCount,
+                    other_dog = otherDogCount,
+                    train_count = trainSet.Count,
+                    val_count = valSet.Count,
+                    config = new
+                    {
+                        export_type = "classification",
+                        max_per_class = request.MaxPerClass,
+                        crop_padding = request.CropPadding,
+                    },
+                };
+                var manifestEntry = archive.CreateEntry("manifest.json");
+                await using (var ms = manifestEntry.Open())
+                    await JsonSerializer.SerializeAsync(ms, manifest, new JsonSerializerOptions { WriteIndented = true });
+            }
+
+            var zipSize = new FileInfo(zipPath).Length;
+            var sizeMb = Math.Round(zipSize / (1024.0 * 1024.0), 1);
+            var s3Key = $"training-exports/{exportId}.zip";
+
+            context.Logger.LogInformation($"Uploading {sizeMb}MB classification zip to s3://{_bucketName}/{s3Key}");
+            await _s3.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = _bucketName, Key = s3Key, FilePath = zipPath, ContentType = "application/zip"
+            });
+
+            var myDogFinal = dogLabels.Count(l => l.ConfirmedLabel == "my_dog");
+            var otherDogFinal = dogLabels.Count(l => l.ConfirmedLabel == "other_dog");
+
+            await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
+            {
+                TableName = _exportsTable,
+                Key = new Dictionary<string, AttributeValue> { ["export_id"] = new() { S = exportId } },
+                UpdateExpression = "SET #s = :status, completed_at = :completed, s3_key = :key, " +
+                                   "total_images = :total, my_dog_count = :mydog, not_my_dog_count = :notmydog, " +
+                                   "no_dog_count = :nodog, train_count = :train, val_count = :val, size_mb = :size",
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#s"] = "status" },
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":status"] = new() { S = "complete" },
+                    [":completed"] = new() { S = DateTime.UtcNow.ToString("O") },
+                    [":key"] = new() { S = s3Key },
+                    [":total"] = new() { N = dogLabels.Count.ToString() },
+                    [":mydog"] = new() { N = myDogFinal.ToString() },
+                    [":notmydog"] = new() { N = otherDogFinal.ToString() },
+                    [":nodog"] = new() { N = "0" },
+                    [":train"] = new() { N = trainSet.Count.ToString() },
+                    [":val"] = new() { N = valSet.Count.ToString() },
+                    [":size"] = new() { N = sizeMb.ToString() },
+                }
+            });
+
+            context.Logger.LogInformation($"Classification export {exportId} complete: {dogLabels.Count} crops");
+            File.Delete(zipPath);
+        }
+        catch (Exception ex)
+        {
+            context.Logger.LogError($"Classification export {exportId} failed: {ex.Message}");
+            await UpdateExportStatus(exportId, "failed", error: ex.Message);
+        }
+    }
+
+    private async Task WriteClassificationSplit(ZipArchive archive, string split, List<LabelRecord> items,
+        float cropPadding, ILambdaContext context)
+    {
+        // Download images in parallel
+        var downloaded = new (byte[] data, int width, int height)[items.Count];
+        await Parallel.ForEachAsync(
+            items.Select((item, i) => (item, i)),
+            new ParallelOptions { MaxDegreeOfParallelism = _maxParallelDownloads },
+            async ((LabelRecord item, int i) entry, CancellationToken _) =>
+            {
+                try
+                {
+                    var response = await _s3.GetObjectAsync(_bucketName, entry.item.KeyframeKey);
+                    using var ms = new MemoryStream();
+                    await response.ResponseStream.CopyToAsync(ms);
+                    ms.Position = 0;
+                    var info = await Image.IdentifyAsync(ms);
+                    downloaded[entry.i] = (ms.ToArray(), info?.Width ?? 1920, info?.Height ?? 1080);
+                }
+                catch (Exception ex)
+                {
+                    context.Logger.LogWarning($"Failed to download {entry.item.KeyframeKey}: {ex.Message}");
+                    downloaded[entry.i] = (Array.Empty<byte>(), 0, 0);
+                }
+            });
+
+        // Crop each bounding box and write as classification image
+        var cropIdx = 0;
+        for (var i = 0; i < items.Count; i++)
+        {
+            var (data, imgWidth, imgHeight) = downloaded[i];
+            if (data.Length == 0) continue;
+
+            var boxes = ParseBoundingBoxes(items[i].BoundingBoxes);
+            var label = items[i].ConfirmedLabel; // "my_dog" or "other_dog"
+
+            using var image = Image.Load<Rgb24>(data);
+
+            foreach (var box in boxes)
+            {
+                if (box.Length < 4) continue;
+
+                var xMin = box[0];
+                var yMin = box[1];
+                var w = box[2];
+                var h = box[3];
+
+                // Apply padding
+                var padW = w * cropPadding;
+                var padH = h * cropPadding;
+                var cropX = (int)Math.Max(0, xMin - padW);
+                var cropY = (int)Math.Max(0, yMin - padH);
+                var cropW = (int)Math.Min(imgWidth - cropX, w + 2 * padW);
+                var cropH = (int)Math.Min(imgHeight - cropY, h + 2 * padH);
+
+                if (cropW <= 0 || cropH <= 0) continue;
+
+                using var crop = image.Clone(ctx => ctx.Crop(new Rectangle(cropX, cropY, cropW, cropH)));
+                using var ms = new MemoryStream();
+                await crop.SaveAsJpegAsync(ms);
+
+                var entry = archive.CreateEntry($"{split}/{label}/crop_{cropIdx:D5}.jpg");
+                await using var entryStream = entry.Open();
+                ms.Position = 0;
+                await ms.CopyToAsync(entryStream);
+                cropIdx++;
+            }
+        }
+
+        context.Logger.LogInformation($"Classification {split}: {cropIdx} crops written");
+    }
+
+    private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, bool mergeClasses, ILambdaContext context)
     {
         // Parallel-download all images
         var downloaded = new (byte[] data, string ext, int imgWidth, int imgHeight)[items.Count];
@@ -291,7 +501,7 @@ public class Function
                 await entryStream.WriteAsync(data);
 
             // Write YOLO label file
-            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight);
+            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight, mergeClasses);
             var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
             await using (var labelStream = labelEntry.Open())
             await using (var writer = new StreamWriter(labelStream, new UTF8Encoding(false)))
@@ -299,13 +509,13 @@ public class Function
         }
     }
 
-    private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight)
+    private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight, bool mergeClasses = false)
     {
         // no_dog = background image, empty label file
         if (label.ConfirmedLabel == "no_dog")
             return "";
 
-        var classId = label.ConfirmedLabel == "my_dog" ? 0 : 1;
+        var classId = mergeClasses ? 0 : (label.ConfirmedLabel == "my_dog" ? 0 : 1);
         var boxes = ParseBoundingBoxes(label.BoundingBoxes);
 
         if (boxes.Count == 0)

@@ -179,7 +179,7 @@ export const api = {
   },
 
   // Training exports
-  triggerExport: (config?: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number }) =>
+  triggerExport: (config?: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number; exportType?: string; cropPadding?: number; mergeClasses?: boolean }) =>
     postJson<{ exportId: string; message: string }>("/ml/export", config),
 
   listExports: () =>
@@ -195,14 +195,14 @@ export const api = {
     deleteJson<null>(`/clips/${id}`),
 
   // Models
-  listModels: () =>
-    fetchJson<{ activeVersion: string | null; versions: { version: string; s3Key: string; sizeBytes: number; lastModified: string; active: boolean }[] }>("/ml/models"),
+  listModels: (type?: string) =>
+    fetchJson<{ activeVersion: string | null; versions: { version: string; s3Key: string; sizeBytes: number; lastModified: string; active: boolean }[] }>(`/ml/models${type ? `?type=${type}` : ""}`),
 
-  getModelUploadUrl: (version: string) =>
-    postJson<{ uploadUrl: string; s3Key: string; version: string; expiresIn: number }>(`/ml/models/upload-url?version=${encodeURIComponent(version)}`),
+  getModelUploadUrl: (version: string, type?: string) =>
+    postJson<{ uploadUrl: string; s3Key: string; version: string; expiresIn: number }>(`/ml/models/upload-url?version=${encodeURIComponent(version)}${type ? `&type=${type}` : ""}`),
 
-  activateModel: (version: string) =>
-    postJson<{ message: string; version: string }>(`/ml/models/activate?version=${encodeURIComponent(version)}`),
+  activateModel: (version: string, type?: string) =>
+    postJson<{ message: string; version: string }>(`/ml/models/activate?version=${encodeURIComponent(version)}${type ? `&type=${type}` : ""}`),
 
   rerunInference: (dateFrom?: string, dateTo?: string, clipIds?: string[]) =>
     postJson<{ total: number; queued: number }>("/ml/rerun-inference", { dateFrom, dateTo, clipIds }),
@@ -244,21 +244,22 @@ export const api = {
   triggerAgentUpdate: (thingName: string, version: string) =>
     postJson<{ message: string }>(`/training/agents/${thingName}/update`, { version }),
 
-  submitTrainingJob: (config: { exportId: string; exportS3Key: string; epochs?: number; batchSize?: number; imageSize?: number; learningRate?: number; workers?: number; modelBase?: string; resumeFrom?: string | null; notes?: string }) =>
+  submitTrainingJob: (config: { exportId: string; exportS3Key: string; epochs?: number; batchSize?: number; imageSize?: number; learningRate?: number; workers?: number; modelBase?: string; resumeFrom?: string | null; notes?: string; jobType?: string }) =>
     postJson<{ jobId: string }>("/training/jobs", config),
 
   listTrainingJobs: (status?: string, limit = 50) =>
-    fetchJson<{ jobs: { jobId: string; status: string; agentThingName: string | null; exportId: string | null; epochs: number | null; createdAt: string | null; startedAt: string | null; completedAt: string | null; finalMAP50: number | null }[] }>(`/training/jobs?${status ? `status=${status}&` : ""}limit=${limit}`),
+    fetchJson<{ jobs: { jobId: string; status: string; agentThingName: string | null; exportId: string | null; epochs: number | null; createdAt: string | null; startedAt: string | null; completedAt: string | null; finalMAP50: number | null; jobType: string }[] }>(`/training/jobs?${status ? `status=${status}&` : ""}limit=${limit}`),
 
   getTrainingJob: (jobId: string) =>
     fetchJson<{
       jobId: string; status: string; agentThingName: string | null;
       exportId: string | null; exportS3Key: string | null;
       config: { epochs: number; batch_size: number; image_size: number; learning_rate: number; workers: number; model_base: string; resume_from: string | null } | null;
-      progress: { epoch: number; total_epochs: number; epoch_progress?: number; train_loss?: number; val_loss?: number; mAP50?: number; mAP50_95?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number } | null;
-      result: { model_s3_key: string; model_size_mb: number; final_mAP50: number; final_mAP50_95?: number; total_epochs: number; best_epoch: number; training_time_seconds: number; dataset_images: number; classes: string[]; precision?: number; recall?: number } | null;
+      progress: { epoch: number; total_epochs: number; epoch_progress?: number; train_loss?: number; val_loss?: number; mAP50?: number; mAP50_95?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number; accuracy?: number; f1_score?: number } | null;
+      result: { model_s3_key: string; model_size_mb: number; final_mAP50: number; final_mAP50_95?: number; total_epochs: number; best_epoch: number; training_time_seconds: number; dataset_images: number; classes: string[]; precision?: number; recall?: number; accuracy?: number; f1_score?: number } | null;
       checkpointS3Key: string | null; error: string | null; failedStage: string | null;
       createdAt: string | null; startedAt: string | null; completedAt: string | null;
+      jobType: string;
     }>(`/training/jobs/${jobId}`),
 
   cancelTrainingJob: (jobId: string) =>
