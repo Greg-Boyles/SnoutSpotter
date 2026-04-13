@@ -196,7 +196,7 @@ export const api = {
 
   // Models
   listModels: (type?: string) =>
-    fetchJson<{ activeVersion: string | null; versions: { version: string; s3Key: string; sizeBytes: number; lastModified: string; active: boolean }[] }>(`/ml/models${type ? `?type=${type}` : ""}`),
+    fetchJson<{ activeVersion: string | null; versions: { version: string; s3Key: string; sizeBytes: number; lastModified: string; active: boolean; source?: string; trainingJobId?: string; notes?: string; metrics?: Record<string, number> }[] }>(`/ml/models${type ? `?type=${type}` : ""}`),
 
   getModelUploadUrl: (version: string, type?: string) =>
     postJson<{ uploadUrl: string; s3Key: string; version: string; expiresIn: number }>(`/ml/models/upload-url?version=${encodeURIComponent(version)}${type ? `&type=${type}` : ""}`),

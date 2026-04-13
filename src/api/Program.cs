@@ -31,6 +31,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.SettingsTable = Environment.GetEnvironmentVariable("SETTINGS_TABLE") ?? "snout-spotter-settings";
     cfg.BackfillQueueUrl = Environment.GetEnvironmentVariable("BACKFILL_QUEUE_URL") ?? "";
     cfg.RerunInferenceQueueUrl = Environment.GetEnvironmentVariable("RERUN_INFERENCE_QUEUE_URL") ?? "";
+    cfg.ModelsTable = Environment.GetEnvironmentVariable("MODELS_TABLE") ?? "snout-spotter-models";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });
@@ -69,6 +70,7 @@ builder.Services.AddSingleton<ILabelService, LabelService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ITrainingService, TrainingService>();
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
+builder.Services.AddSingleton<IModelService, ModelService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

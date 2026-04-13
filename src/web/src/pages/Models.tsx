@@ -10,6 +10,10 @@ interface ModelVersion {
   sizeBytes: number;
   lastModified: string;
   active: boolean;
+  source?: string;
+  trainingJobId?: string;
+  notes?: string;
+  metrics?: Record<string, number>;
 }
 
 function formatBytes(bytes: number): string {
@@ -245,7 +249,9 @@ export default function Models() {
             <thead>
               <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 <th className="px-5 py-3">Version</th>
+                <th className="px-5 py-3">Source</th>
                 <th className="px-5 py-3">Size</th>
+                <th className="px-5 py-3">Metrics</th>
                 <th className="px-5 py-3">Uploaded</th>
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3"></th>
@@ -255,9 +261,40 @@ export default function Models() {
               {versions.map((v) => (
                 <tr key={v.version} className={v.active ? "bg-green-50/50" : ""}>
                   <td className="px-5 py-3">
-                    <span className="text-sm font-medium text-gray-900">{v.version}</span>
+                    <div>
+                      <span className="text-sm font-medium text-gray-900">{v.version}</span>
+                      {v.notes && (
+                        <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[200px]" title={v.notes}>{v.notes}</p>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3">
+                    {v.source === "training" ? (
+                      v.trainingJobId ? (
+                        <Link to={`/training/${v.trainingJobId}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200">
+                          Training
+                        </Link>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                          Training
+                        </span>
+                      )
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                        Upload
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3 text-sm text-gray-500">{formatBytes(v.sizeBytes)}</td>
+                  <td className="px-5 py-3 text-sm text-gray-500">
+                    {v.metrics && (
+                      <span className="text-xs">
+                        {modelType === "detector"
+                          ? v.metrics.final_mAP50 != null && `mAP50: ${(v.metrics.final_mAP50 * 100).toFixed(1)}%`
+                          : v.metrics.accuracy != null && `Acc: ${(v.metrics.accuracy * 100).toFixed(1)}%`}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-5 py-3 text-sm text-gray-500">
                     {formatDistanceToNow(new Date(v.lastModified), { addSuffix: true })}
                   </td>

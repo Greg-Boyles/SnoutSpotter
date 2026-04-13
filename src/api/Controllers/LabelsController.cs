@@ -1,5 +1,3 @@
-using Amazon.S3;
-using Amazon.S3.Model;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -16,40 +14,21 @@ public class LabelsController : ControllerBase
     private readonly ILabelService _labelService;
     private readonly IClipService _clipService;
     private readonly IExportService _exportService;
-    private readonly IS3PresignService _presignService;
-    private readonly IAmazonS3 _s3;
+    private readonly IModelService _modelService;
     private readonly AppConfig _config;
-    private readonly string _bucketName;
-
-    private const string ClassifierPrefix = "models/dog-classifier/versions/";
-    private const string ClassifierActiveKey = "models/dog-classifier/best.onnx";
-    private const string ClassifierActiveVersionKey = "models/dog-classifier/active.json";
-
-    private const string DetectorPrefix = "models/dog-detector/versions/";
-    private const string DetectorActiveKey = "models/dog-detector/best.onnx";
-    private const string DetectorActiveVersionKey = "models/dog-detector/active.json";
-
-    private (string Prefix, string ActiveKey, string ActiveVersionKey) GetModelPaths(string type) => type switch
-    {
-        "detector" => (DetectorPrefix, DetectorActiveKey, DetectorActiveVersionKey),
-        _ => (ClassifierPrefix, ClassifierActiveKey, ClassifierActiveVersionKey),
-    };
 
     public LabelsController(
         ILabelService labelService,
         IClipService clipService,
         IExportService exportService,
-        IS3PresignService presignService,
-        IAmazonS3 s3,
+        IModelService modelService,
         IOptions<AppConfig> config)
     {
         _exportService = exportService;
         _labelService = labelService;
         _clipService = clipService;
-        _presignService = presignService;
-        _s3 = s3;
+        _modelService = modelService;
         _config = config.Value;
-        _bucketName = config.Value.BucketName;
     }
 
     [HttpPost("auto-label")]
@@ -274,56 +253,33 @@ public class LabelsController : ControllerBase
     [HttpGet("models")]
     public async Task<ActionResult> ListModels([FromQuery] string type = "classifier")
     {
-        var (prefix, _, activeVersionKey) = GetModelPaths(type);
+        var (activeVersion, versions) = await _modelService.ListModelsAsync(type);
 
-        // Get active version
-        string? activeVersion = null;
-        try
+        return Ok(new
         {
-            var activeObj = await _s3.GetObjectAsync(_bucketName, activeVersionKey);
-            using var reader = new StreamReader(activeObj.ResponseStream);
-            var json = await reader.ReadToEndAsync();
-            var doc = System.Text.Json.JsonDocument.Parse(json);
-            activeVersion = doc.RootElement.GetProperty("version").GetString();
-        }
-        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) { }
-
-        // List all versions
-        var versions = new List<object>();
-        var listResponse = await _s3.ListObjectsV2Async(new ListObjectsV2Request
-        {
-            BucketName = _bucketName,
-            Prefix = prefix
-        });
-
-        foreach (var obj in listResponse.S3Objects)
-        {
-            var fileName = obj.Key[prefix.Length..];
-            if (!fileName.EndsWith(".onnx")) continue;
-            var version = fileName[..^5]; // strip .onnx
-
-            versions.Add(new
+            activeVersion,
+            versions = versions.Select(v => new
             {
-                version,
-                s3Key = obj.Key,
-                sizeBytes = obj.Size,
-                lastModified = obj.LastModified.ToString("O"),
-                active = version == activeVersion
-            });
-        }
-
-        return Ok(new { activeVersion, versions });
+                version = v.Version,
+                s3Key = v.S3Key,
+                sizeBytes = v.SizeBytes,
+                lastModified = v.CreatedAt,
+                active = v.Status == "active",
+                source = v.Source,
+                trainingJobId = v.TrainingJobId,
+                notes = v.Notes,
+                metrics = v.Metrics
+            })
+        });
     }
 
     [HttpPost("models/upload-url")]
-    public ActionResult GetModelUploadUrl([FromQuery] string version, [FromQuery] string type = "classifier")
+    public async Task<ActionResult> GetModelUploadUrl([FromQuery] string version, [FromQuery] string type = "classifier")
     {
         if (string.IsNullOrWhiteSpace(version))
             return BadRequest(new { error = "version is required" });
 
-        var (prefix, _, _) = GetModelPaths(type);
-        var s3Key = $"{prefix}{version}.onnx";
-        var uploadUrl = _presignService.GeneratePresignedPutUrl(s3Key, "application/octet-stream");
+        var (uploadUrl, s3Key) = await _modelService.GetUploadUrlAsync(type, version);
 
         return Ok(new { uploadUrl, s3Key, version, expiresIn = 3600 });
     }
@@ -334,32 +290,31 @@ public class LabelsController : ControllerBase
         if (string.IsNullOrWhiteSpace(version))
             return BadRequest(new { error = "version is required" });
 
-        var (prefix, activeKey, activeVersionKey) = GetModelPaths(type);
-        var sourceKey = $"{prefix}{version}.onnx";
-
-        // Verify the version exists
         try
         {
-            await _s3.GetObjectMetadataAsync(_bucketName, sourceKey);
+            await _modelService.ActivateModelAsync(type, version);
         }
-        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        catch (InvalidOperationException ex)
         {
-            return NotFound(new { error = $"Version '{version}' not found" });
+            return NotFound(new { error = ex.Message });
         }
-
-        // Copy version to active key
-        await _s3.CopyObjectAsync(_bucketName, sourceKey, _bucketName, activeKey);
-
-        // Write active.json
-        await _s3.PutObjectAsync(new PutObjectRequest
-        {
-            BucketName = _bucketName,
-            Key = activeVersionKey,
-            ContentBody = System.Text.Json.JsonSerializer.Serialize(new { version }),
-            ContentType = "application/json"
-        });
 
         return Ok(new { message = $"Activated {type} version '{version}'", version });
+    }
+
+    [HttpDelete("models/{type}/{version}")]
+    public async Task<ActionResult> DeleteModel(string type, string version)
+    {
+        try
+        {
+            await _modelService.DeleteModelAsync(type, version);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+
+        return Ok(new { message = $"Deleted {type} version '{version}'" });
     }
 
     [HttpPost("rerun-inference")]

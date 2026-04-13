@@ -349,10 +349,11 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/ml/exports/{exportId}/download` — presigned download URL
 - `DELETE /api/ml/exports/{exportId}` — delete export
 
-**ML Models:**
-- `GET /api/ml/models` — list classifier model versions (from S3 `models/dog-classifier/versions/`) with active status
-- `POST /api/ml/models/upload-url?version=v2.0` — presigned PUT URL for uploading a new `.onnx` classifier version
-- `POST /api/ml/models/activate?version=v2.0` — activate a version (copies to `models/dog-classifier/best.onnx`, writes `active.json`)
+**ML Models (DynamoDB-backed registry):**
+- `GET /api/ml/models?type=detector` — list model versions from `snout-spotter-models` table (includes source, metrics, training job link)
+- `POST /api/ml/models/upload-url?version=v2.0&type=classifier` — presigned PUT URL + pre-registers model in DynamoDB with `source: "upload"`
+- `POST /api/ml/models/activate?version=v2.0&type=detector` — sets model as active in DDB, deactivates previous, copies S3 to `best.onnx`
+- `DELETE /api/ml/models/{type}/{version}` — delete a model (rejects active models)
 - `POST /api/ml/rerun-inference` — bulk re-run inference on clips (optional `dateFrom`/`dateTo`), queues to SQS
 
 **Training Agents & Jobs:**
@@ -505,6 +506,29 @@ All main API endpoints require a valid Okta JWT Bearer token.
 
 **Important:** `config`, `progress`, and `result` are stored as native DynamoDB Maps (not JSON strings). The API deserialises these directly — no JSON-in-JSON. `TrainingService.cs` has `ToMap`/`FromConfigMap`/`FromProgressMap`/`FromResultMap` helpers.
 
+### Models Table
+
+**Table:** `snout-spotter-models` | **Billing:** Pay-per-request
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `model_id` (PK) | String | `{type}#{version}` e.g. `detector#v20250413-120345` |
+| `model_type` | String | `"detector"` or `"classifier"` |
+| `version` | String | e.g. `v20250413-120345` or `v2.0` |
+| `s3_key` | String | Full S3 key to the `.onnx` file |
+| `size_bytes` | Number | File size in bytes |
+| `status` | String | `"uploaded"`, `"active"`, `"inactive"` |
+| `created_at` | String | ISO 8601 timestamp |
+| `source` | String | `"training"` (from training agent) or `"upload"` (manual via UI) |
+| `training_job_id` | String | (optional) Link to the training job that produced this model |
+| `export_id` | String | (optional) Link to the dataset export used for training |
+| `notes` | String | (optional) User-provided or auto-generated description |
+| `metrics` | Map (M) | (optional) Final metrics: `final_mAP50`, `precision`, `recall` (detector) or `accuracy`, `f1_score`, `precision`, `recall` (classifier) |
+
+**GSI:** `by-type` — PK: `model_type`, SK: `created_at` (list all detector/classifier models sorted by date)
+
+**Service:** `ModelService.cs` manages CRUD. Activation deactivates the previous active model, sets new status to `"active"`, and copies S3 object to `best.onnx` for RunInference compatibility. Training agent auto-registers models after upload with `source: "training"` and backfilled metrics.
+
 ---
 
 ## Pi Software
@@ -633,7 +657,7 @@ docker compose pull && docker compose up -d
 ```
 On first start the agent calls `POST /api/trainers/register`, saves certs + `config.yaml` to the `trainer-state` Docker volume, and connects. Subsequent starts skip registration.
 
-**Dispatch a job:** Submit via the dashboard (Training page) → select job type (detector or classifier) → API dispatches via SQS with `jobType` → agent downloads ML scripts + dataset from S3, runs `train_detector.py` or `train_classifier.py` based on job type, uploads `best.onnx` to `models/dog-detector/versions/` or `models/dog-classifier/versions/`.
+**Dispatch a job:** Submit via the dashboard (Training page) → select job type (detector or classifier) → API dispatches via SQS with `jobType` → agent downloads ML scripts + dataset from S3, runs `train_detector.py` or `train_classifier.py` based on job type, uploads `best.onnx` to `models/dog-detector/versions/` or `models/dog-classifier/versions/`, then registers the model in the `snout-spotter-models` DynamoDB table with `source: "training"`, linked `training_job_id`, and final metrics.
 
 **Job stages (in order):**
 

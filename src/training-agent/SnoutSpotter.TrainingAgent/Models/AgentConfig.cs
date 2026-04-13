@@ -13,4 +13,5 @@ public class TrainingConfig
 {
     public string JobQueueUrl { get; set; } = "";
     public string JobsTable { get; set; } = "snout-spotter-training-jobs";
+    public string ModelsTable { get; set; } = "snout-spotter-models";
 }
