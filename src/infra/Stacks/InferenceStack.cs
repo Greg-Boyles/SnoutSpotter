@@ -40,6 +40,8 @@ public class InferenceStack : Stack
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
                 ["MODEL_KEY"] = "models/dog-classifier/best.onnx",
+                ["DETECTOR_MODEL_KEY"] = "models/yolov8m.onnx",
+                ["CLASSIFIER_MODEL_KEY"] = "models/dog-classifier/best.onnx",
                 ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
             }
         });
