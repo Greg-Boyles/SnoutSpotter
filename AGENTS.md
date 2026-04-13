@@ -69,13 +69,13 @@ SnoutSpotter/
 │   │   │   ├── Function.cs                    # Extracts keyframes via FFmpeg, writes DynamoDB
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload OR SQS rerun queue
-│   │   │   ├── Function.cs                    # Custom YOLOv8 inference (my_dog/other_dog detection + bounding boxes)
+│   │   │   ├── Function.cs                    # Two-stage inference: COCO YOLO dog detector + MobileNetV3 classifier (or single-stage legacy mode)
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.AutoLabel/     # COCO-pretrained YOLOv8 dog detection on keyframes
 │   │   │   ├── Function.cs                    # ONNX inference (model key from server settings), writes labels to DynamoDB
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.ExportDataset/ # Training dataset packaging
-│   │   │   ├── Function.cs                    # Queries labels, balances classes (oversample/undersample), downloads images, creates zip + labels.csv
+│   │   │   ├── Function.cs                    # Queries labels, balances classes; detection (YOLO) or classification (crops) export; mergeClasses for single-class detector
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.UpdateTrainingProgress/ # IoT Rule target for trainer MQTT progress
 │   │   │   └── Function.cs                    # Deserialises TrainingProgressMessage, patches snout-spotter-training-jobs DynamoDB table
@@ -144,8 +144,10 @@ SnoutSpotter/
 │   │   ├── requirements.txt           # Python deps: boto3, opencv, awsiotsdk, pyyaml
 │   │   └── version.json               # Current Pi software version (written by OTA agent)
 │   │
-│   ├── ml/                            # ML training and verification scripts (run locally)
+│   ├── ml/                            # ML training and verification scripts (run locally or via training agent)
 │   │   ├── train_detector.py          # Fine-tune YOLOv8n on exported dataset → best.onnx
+│   │   ├── train_classifier.py        # Train MobileNetV3-Small classifier on classification exports → best.onnx
+│   │   ├── verify_classifier.py       # Verify classifier ONNX: input [1,3,224,224], output [1,2]
 │   │   ├── test_detector.py           # Test the deployed detection model against S3 keyframes or local images
 │   │   └── verify_onnx.py             # Verify ONNX model is compatible with RunInference/Function.cs
 │   │
@@ -172,6 +174,7 @@ SnoutSpotter/
 │           ├── MqttManager.cs         # AWS IoT Core MQTT client (TLS, auto-reconnect, QoS 1)
 │           ├── GpuInfo.cs             # Calls nvidia-smi, returns GpuStatus
 │           ├── ProgressParser.cs      # Regex parser for YOLO training stdout → TrainingProgress (strips ANSI escapes)
+│           ├── ClassifierProgressParser.cs # Parser for classifier training output (EPOCH N/M accuracy/f1 format)
 │           └── Models/                # Agent-only config models (AgentConfig, IoTConfig, S3Config, etc.)
 │
 └── .github/workflows/
@@ -603,7 +606,16 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 
 ## ML Training Workflow
 
-**Model architecture:** YOLOv8n fine-tuned on SnoutSpotter data. 2 classes: `my_dog` (0), `other_dog` (1). Output `[1, 6, 8400]`. AutoLabel Lambda uses a COCO-pretrained YOLOv8 model (class 16 = dog) for generic dog detection to generate labels — the model variant (n/s/m) is configurable via the `autolabel.model_key` server setting (default: `yolov8m.onnx`).
+**Inference pipeline:** Two modes controlled by `inference.pipeline_mode` server setting:
+- **Single-stage (legacy):** Fine-tuned YOLOv8n with 2 classes (`my_dog`=0, `other_dog`=1). Output `[1, 6, 8400]`.
+- **Two-stage (recommended):** COCO-pretrained YOLO detects all dogs (class 16), then a MobileNetV3-Small classifier identifies `my_dog` vs `other_dog` on each cropped patch. Combined confidence = detector × classifier. Classifier input: `[1,3,224,224]`, output: `[1,2]` (softmax).
+
+**S3 model paths:**
+- Detector: `models/dog-detector/best.onnx` (active), `models/dog-detector/versions/{version}/best.onnx`
+- Classifier: `models/dog-classifier/best.onnx` (active), `models/dog-classifier/versions/{version}/best.onnx`
+- Model type is parameterized via `?type=detector|classifier` on model API endpoints and Models page tabs.
+
+**AutoLabel** uses COCO-pretrained YOLOv8 models (`models/yolov8{n,s,m}.onnx`) selected via the `autolabel.model_key` server setting (default: `yolov8m.onnx`) for generic dog detection to generate labels.
 
 ### Training Agent (recommended)
 
@@ -621,7 +633,7 @@ docker compose pull && docker compose up -d
 ```
 On first start the agent calls `POST /api/trainers/register`, saves certs + `config.yaml` to the `trainer-state` Docker volume, and connects. Subsequent starts skip registration.
 
-**Dispatch a job:** Submit via the dashboard (Training page) → API dispatches via SQS → agent downloads ML scripts + dataset from S3, runs `train_detector.py`, uploads `best.onnx` to `models/dog-classifier/versions/`.
+**Dispatch a job:** Submit via the dashboard (Training page) → select job type (detector or classifier) → API dispatches via SQS with `jobType` → agent downloads ML scripts + dataset from S3, runs `train_detector.py` or `train_classifier.py` based on job type, uploads `best.onnx` to `models/dog-detector/versions/` or `models/dog-classifier/versions/`.
 
 **Job stages (in order):**
 
@@ -636,7 +648,7 @@ On first start the agent calls `POST /api/trainers/register`, saves certs + `con
 | `failed` | Failed — `error` and `failed_stage` fields indicate where |
 | `cancelled` | Cancelled by user request |
 
-**Progress:** Published to `snoutspotter/trainer/{thingName}/progress` → IoT Rule → `UpdateTrainingProgress` Lambda → DynamoDB → dashboard. `ProgressParser` publishes on each new epoch number (not waiting for validation metrics), then a second update with mAP50 when the `all` metrics line arrives. The Python process is launched with `python3 -u` to disable stdout buffering.
+**Progress:** Published to `snoutspotter/trainer/{thingName}/progress` → IoT Rule → `UpdateTrainingProgress` Lambda → DynamoDB → dashboard. For detector jobs, `ProgressParser` publishes on each new epoch number, then updates with mAP50 when the `all` metrics line arrives. For classifier jobs, `ClassifierProgressParser` parses `EPOCH N/M accuracy=X f1=X` lines. The Python process is launched with `python3 -u` to disable stdout buffering.
 
 **Failed stage tracking:** `JobRunner` tracks `currentStage` and calls `PublishError(jobId, error, stage)` with the stage name. The `UpdateTrainingProgress` Lambda stores it as `failed_stage` in DynamoDB. The UI timeline highlights the failed node in red.
 
@@ -658,30 +670,45 @@ Training scripts in `src/ml/` can be run directly if preferred.
 **End-to-end flow:**
 1. Pi records clips → keyframes extracted → AutoLabel Lambda detects dogs + bounding boxes
 2. Human reviews labels in dashboard (Labels page) — confirms `my_dog`/`other_dog`/`no_dog` + breed
-3. Export dataset from dashboard (Training Exports page) → configure class balancing options → YOLO detection format zip in S3
-4. `python src/ml/train_detector.py` — pulls latest export from S3, trains, outputs `detector_<id>.onnx`
-5. `python src/ml/verify_onnx.py --model-path src/ml/detector_<id>.onnx --sample-count 5`
-6. Upload via Models page → lands at `models/dog-classifier/best.onnx` → RunInference picks up on next cold start
+3. Export dataset from dashboard (Training Exports page):
+   - **Detection export:** YOLO format with bounding box labels. Use `mergeClasses=true` for single-class dog detector.
+   - **Classification export:** Crops bounding boxes into `train/my_dog/`, `train/other_dog/` folders for classifier training.
+4. Train via dashboard (submit training job) or manually:
+   - Detector: `python src/ml/train_detector.py --data <dir>` → outputs `best.onnx`
+   - Classifier: `python src/ml/train_classifier.py --data <dir>` → outputs `best.onnx`
+5. Verify: `python src/ml/verify_onnx.py` (detector) or `python src/ml/verify_classifier.py` (classifier)
+6. Upload via Models page (select Detector or Classifier tab) → activate → RunInference picks up on next cold start
 
-**Training script flags:** `--data <dir>`, `--zip <file>`, `--resume <last.pt>`, `--epochs`, `--batch`, `--imgsz`, `--workers`
+**Training script flags:**
+- `train_detector.py`: `--data <dir>`, `--zip <file>`, `--resume <last.pt>`, `--epochs`, `--batch`, `--imgsz`, `--workers`
+- `train_classifier.py`: `--data <dir>`, `--zip <file>`, `--epochs` (50), `--batch` (32), `--imgsz` (224), `--lr` (0.001), `--workers`, `--patience` (10)
 
-**Export class balancing options** (configured per-export via the UI or `POST /api/ml/export` body):
+**Export options** (configured per-export via the UI or `POST /api/ml/export` body):
+- `exportType` — `"detection"` (YOLO format) or `"classification"` (cropped image folders)
 - `maxPerClass` — target count per class; oversamples minority (duplicates), undersamples majority (random pick)
-- `includeBackground` — whether to include `no_dog` images (default true)
+- `includeBackground` — whether to include `no_dog` images in detection exports (default true)
 - `backgroundRatio` — max no_dog images as fraction of total dog images (default 1.0)
+- `cropPadding` — extra padding around bounding box as fraction of box size for classification exports (default 0.1)
+- `mergeClasses` — when true, all dog labels use class 0 ("dog") for training a single-class detector (default false)
 
-**Known limitation — single-stage YOLO for fine-grained classification:**
-YOLOv8 detection achieves high precision (0.84) but low recall (~0.14) for `my_dog` vs `other_dog`, even with balanced datasets (2000/class). The problem is architectural: both classes are visually "dogs" and single-stage detection conflates localisation with fine-grained identity. Balanced data alone does not fix this. Future direction: two-stage pipeline — YOLO for dog detection + lightweight classifier (MobileNetV3 / EfficientNet) on cropped patches for my_dog vs other_dog.
-
-**Dataset format** (from ExportDataset Lambda):
+**Detection dataset format** (from ExportDataset Lambda):
 ```
-dataset.yaml          ← path fixed to absolute by train_detector.py
+dataset.yaml          ← names: { 0: my_dog, 1: other_dog } or { 0: dog } when mergeClasses=true
 images/train/
 images/val/
 labels/train/         ← YOLO format: class cx cy w h (normalised)
 labels/val/
 manifest.json
 labels.csv
+```
+
+**Classification dataset format:**
+```
+train/my_dog/*.jpg
+train/other_dog/*.jpg
+val/my_dog/*.jpg
+val/other_dog/*.jpg
+manifest.json
 ```
 
 ### Shared types (`src/shared/SnoutSpotter.Shared.Training`)
@@ -769,15 +796,15 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 14. **DynamoDB `FilterExpression` with `Limit`** — `Limit` applies *before* `FilterExpression`. A query with `Limit=30` and a filter may return 0 results even when matching items exist. Use the `by-confirmed-label` GSI for direct queries instead of filtering on the `by-review` GSI.
 
-15. **Training label types** — Three confirmed labels: `my_dog`, `other_dog`, `no_dog`. The `auto_label` field uses `dog`/`no_dog` (binary). `my_dog` and `other_dog` both map to `auto_label=dog`. The detector trains on 2 YOLO classes: `my_dog` (class 0) and `other_dog` (class 1). No_dog is inferred by the absence of detections. The training export produces YOLO detection format with bounding box labels.
+15. **Training label types** — Three confirmed labels: `my_dog`, `other_dog`, `no_dog`. The `auto_label` field uses `dog`/`no_dog` (binary). `my_dog` and `other_dog` both map to `auto_label=dog`. In single-stage mode, the detector trains on 2 YOLO classes: `my_dog` (class 0) and `other_dog` (class 1). In two-stage mode, the detector trains on 1 class: `dog` (class 0, merged), and the classifier trains on 2 classes: `my_dog`, `other_dog` from cropped patches. Training exports support both detection format (YOLO labels) and classification format (cropped image folders).
 
 16. **Breed data on labels** — Breed is required when confirming dog labels (my_dog/other_dog). My dog defaults to "Labrador Retriever". 120 breeds from ImageNet/Stanford Dogs dataset are supported. Breed is stored in DynamoDB and included in training exports via `labels.csv`.
 
 17. **System Health is split across two pages** — `/health` is a clean landing page with device summary table. `/device/:thingName` is the full device detail page. Sub-pages (config, logs, commands, shadow) link back to the detail page, not `/health`.
 
-18. **Model deployment** — RunInference uses `models/dog-classifier/best.onnx` (custom fine-tuned, managed via Models page with versioned uploads and activate). AutoLabel uses COCO-pretrained YOLOv8 models (`models/yolov8{n,s,m}.onnx`) selected via the `autolabel.model_key` server setting — a warm Lambda reloads the model if the setting changes.
+18. **Model deployment** — RunInference supports two pipeline modes: **single-stage** uses `models/dog-classifier/best.onnx` (fine-tuned 2-class YOLO), **two-stage** uses `models/dog-detector/best.onnx` (COCO YOLO or single-class fine-tuned) + `models/dog-classifier/best.onnx` (MobileNetV3 classifier). Models are managed via the Models page with Detector/Classifier tabs, versioned uploads, and activate. AutoLabel uses COCO-pretrained YOLOv8 models (`models/yolov8{n,s,m}.onnx`) selected via the `autolabel.model_key` server setting — a warm Lambda reloads the model if the setting changes.
 
-19. **Custom YOLOv8 output format** — A fine-tuned YOLOv8 with 2 classes outputs tensor shape `[1, 6, 8400]` (4 bbox coords + 2 class scores). This differs from the pre-trained YOLOv8n which outputs `[1, 84, 8400]` (80 COCO classes). The RunInference Lambda dynamically reads the number of classes from the output tensor dimensions.
+19. **Custom YOLOv8 output format** — A fine-tuned YOLOv8 with 2 classes outputs tensor shape `[1, 6, 8400]` (4 bbox coords + 2 class scores). COCO-pretrained outputs `[1, 84, 8400]` (80 classes). In two-stage mode, the detector uses COCO class 16 (dog) for detection, then the classifier (`[1,3,224,224]` → `[1,2]` softmax) identifies my_dog vs other_dog. The RunInference Lambda dynamically reads the number of classes from the output tensor dimensions.
 
 20. **Keyframe detections are DynamoDB native** — Detection results are stored as a DynamoDB List of Maps (`keyframe_detections`) on the clips table, not as a JSON string. Each entry contains the keyframe key, overall label, and a list of detection boxes with bounding coordinates. The API parses these directly into typed DTOs.
 
@@ -787,7 +814,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 23. **streaming.resolution config is stored as a string** — `config_schema.py` stores `streaming.resolution` as a string (`"640x480"`) but `defaults.yaml` stores it as a list `[640, 480]`. `stream_manager.py` handles both formats. Do not change one without the other.
 
-24. **RunInference model is a fine-tuned YOLOv8 detector, not a classifier** — The `dog-classifier/best.onnx` name is a misnomer. It is a YOLOv8n fine-tuned on the SnoutSpotter dataset with 2 detection classes (my_dog=0, other_dog=1). Output shape `[1, 6, 8400]`. Preprocessing is 640×640 resize, RGB /255 — no ImageNet normalisation. The old MobileNetV3 classifier approach (224×224, ImageNet norm, softmax logits) was abandoned. `src/ml/train_classifier.py` has been deleted.
+24. **RunInference supports two pipeline modes** — Controlled by `inference.pipeline_mode` server setting. **Single-stage** (default): uses the fine-tuned 2-class YOLO model at `models/dog-classifier/best.onnx` (640×640 resize, RGB /255, output `[1, 6, 8400]`). **Two-stage**: uses a COCO YOLO detector (`models/dog-detector/best.onnx`) for dog detection (class 16), then a MobileNetV3-Small classifier (`models/dog-classifier/best.onnx`, 224×224, ImageNet-style normalisation, output `[1, 2]` softmax) on each cropped dog patch. Two-stage was added to address the low recall (~0.14) of single-stage YOLO for fine-grained my_dog vs other_dog classification. Related settings: `inference.classifier_confidence_threshold` (0.5), `inference.classifier_input_size` (224), `inference.crop_padding_ratio` (0.1).
 
 25. **ONNX export must use simplify=False** — Exporting YOLOv8 with `simplify=True` changes the output tensor layout and breaks RunInference's `[1, 4+num_classes, 8400]` parsing. Always export with `opset=12, simplify=False`.
 
