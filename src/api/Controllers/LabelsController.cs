@@ -230,7 +230,8 @@ public class LabelsController : ControllerBase
                 request?.IncludeBackground ?? true,
                 request?.BackgroundRatio ?? 1.0f,
                 request?.ExportType ?? "detection",
-                request?.CropPadding ?? 0.1f);
+                request?.CropPadding ?? 0.1f,
+                request?.MergeClasses ?? false);
             return Ok(new { exportId, message = "Export started" });
         }
         catch (Exception ex)
@@ -244,7 +245,8 @@ public class LabelsController : ControllerBase
         bool IncludeBackground = true,
         float BackgroundRatio = 1.0f,
         string ExportType = "detection",
-        float CropPadding = 0.1f);
+        float CropPadding = 0.1f,
+        bool MergeClasses = false);
 
     [HttpGet("exports")]
     public async Task<ActionResult> ListExports()

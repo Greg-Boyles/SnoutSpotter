@@ -67,6 +67,7 @@ export default function TrainingExports() {
   const [includeBackground, setIncludeBackground] = useState(true);
   const [backgroundRatio, setBackgroundRatio] = useState("1.0");
   const [cropPadding, setCropPadding] = useState("0.1");
+  const [mergeClasses, setMergeClasses] = useState(false);
 
   const loadExports = () => {
     api.listExports()
@@ -193,17 +194,30 @@ export default function TrainingExports() {
               </div>
             )}
           </div>
+          {exportType === "detection" && (
+            <label className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-4">
+              <input
+                type="checkbox"
+                checked={mergeClasses}
+                onChange={(e) => setMergeClasses(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              Merge classes (single "dog" class)
+              <span className="text-gray-400 font-normal">— for training a general dog detector</span>
+            </label>
+          )}
           <div className="flex items-center gap-3">
             <button
               onClick={async () => {
                 setExporting(true);
                 try {
-                  const config: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number; exportType?: string; cropPadding?: number } = {};
+                  const config: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number; exportType?: string; cropPadding?: number; mergeClasses?: boolean } = {};
                   if (maxPerClass) config.maxPerClass = parseInt(maxPerClass);
                   config.exportType = exportType;
                   if (exportType === "detection") {
                     config.includeBackground = includeBackground;
                     if (includeBackground) config.backgroundRatio = parseFloat(backgroundRatio);
+                    if (mergeClasses) config.mergeClasses = true;
                   } else {
                     config.cropPadding = parseFloat(cropPadding);
                   }

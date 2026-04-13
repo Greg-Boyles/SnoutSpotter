@@ -179,7 +179,7 @@ export const api = {
   },
 
   // Training exports
-  triggerExport: (config?: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number; exportType?: string; cropPadding?: number }) =>
+  triggerExport: (config?: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number; exportType?: string; cropPadding?: number; mergeClasses?: boolean }) =>
     postJson<{ exportId: string; message: string }>("/ml/export", config),
 
   listExports: () =>

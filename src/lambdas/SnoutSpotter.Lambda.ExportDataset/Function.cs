@@ -23,6 +23,7 @@ public class ExportRequest
     public float BackgroundRatio { get; set; } = 1.0f;
     public string ExportType { get; set; } = "detection";  // "detection" or "classification"
     public float CropPadding { get; set; } = 0.1f;
+    public bool MergeClasses { get; set; } = false;  // When true, all dogs → single "dog" class
 }
 
 public class Function
@@ -145,11 +146,20 @@ public class Function
             await using (var zipStream = File.Create(zipPath))
             using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false))
             {
-                await WriteImageSplit(archive, "train", trainSet, context);
-                await WriteImageSplit(archive, "val", valSet, context);
+                await WriteImageSplit(archive, "train", trainSet, request.MergeClasses, context);
+                await WriteImageSplit(archive, "val", valSet, request.MergeClasses, context);
 
                 // Write dataset.yaml
-                var datasetYaml = """
+                var datasetYaml = request.MergeClasses
+                    ? """
+                    path: .
+                    train: images/train
+                    val: images/val
+
+                    names:
+                      0: dog
+                    """
+                    : """
                     path: .
                     train: images/train
                     val: images/val
@@ -176,7 +186,7 @@ public class Function
                 {
                     export_id = exportId,
                     created_at = DateTime.UtcNow.ToString("O"),
-                    format = "yolo_detection",
+                    format = request.MergeClasses ? "yolo_detection_single_class" : "yolo_detection",
                     total = dogLabelsWithBoxes.Count + noDogLabels.Count,
                     my_dog = myDogCount,
                     other_dog = otherDogCount,
@@ -450,7 +460,7 @@ public class Function
         context.Logger.LogInformation($"Classification {split}: {cropIdx} crops written");
     }
 
-    private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, ILambdaContext context)
+    private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, bool mergeClasses, ILambdaContext context)
     {
         // Parallel-download all images
         var downloaded = new (byte[] data, string ext, int imgWidth, int imgHeight)[items.Count];
@@ -491,7 +501,7 @@ public class Function
                 await entryStream.WriteAsync(data);
 
             // Write YOLO label file
-            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight);
+            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight, mergeClasses);
             var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
             await using (var labelStream = labelEntry.Open())
             await using (var writer = new StreamWriter(labelStream, new UTF8Encoding(false)))
@@ -499,13 +509,13 @@ public class Function
         }
     }
 
-    private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight)
+    private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight, bool mergeClasses = false)
     {
         // no_dog = background image, empty label file
         if (label.ConfirmedLabel == "no_dog")
             return "";
 
-        var classId = label.ConfirmedLabel == "my_dog" ? 0 : 1;
+        var classId = mergeClasses ? 0 : (label.ConfirmedLabel == "my_dog" ? 0 : 1);
         var boxes = ParseBoundingBoxes(label.BoundingBoxes);
 
         if (boxes.Count == 0)
