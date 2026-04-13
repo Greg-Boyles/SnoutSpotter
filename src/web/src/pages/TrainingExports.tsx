@@ -62,9 +62,11 @@ export default function TrainingExports() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [labelStats, setLabelStats] = useState<{ myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
   const [showExportForm, setShowExportForm] = useState(false);
+  const [exportType, setExportType] = useState<"detection" | "classification">("detection");
   const [maxPerClass, setMaxPerClass] = useState("");
   const [includeBackground, setIncludeBackground] = useState(true);
   const [backgroundRatio, setBackgroundRatio] = useState("1.0");
+  const [cropPadding, setCropPadding] = useState("0.1");
 
   const loadExports = () => {
     api.listExports()
@@ -117,7 +119,24 @@ export default function TrainingExports() {
 
       {showExportForm && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Export Options</h2>
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Export Options</h2>
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => setExportType("detection")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg ${exportType === "detection" ? "bg-amber-100 text-amber-800 ring-1 ring-amber-300" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            >
+              Detection (YOLO)
+            </button>
+            <button
+              onClick={() => setExportType("classification")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg ${exportType === "classification" ? "bg-purple-100 text-purple-800 ring-1 ring-purple-300" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            >
+              Classification (Crops)
+            </button>
+          </div>
+          {exportType === "classification" && (
+            <p className="text-xs text-gray-500 mb-4">Crops dog bounding boxes from keyframes into my_dog/other_dog folders for classifier training.</p>
+          )}
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Max per class</label>
@@ -131,42 +150,63 @@ export default function TrainingExports() {
               />
               <p className="text-xs text-gray-400 mt-1">Oversample minority, undersample majority to this target</p>
             </div>
-            <div>
-              <label className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-1">
-                <input
-                  type="checkbox"
-                  checked={includeBackground}
-                  onChange={(e) => setIncludeBackground(e.target.checked)}
-                  className="rounded border-gray-300"
-                />
-                Include background images
-              </label>
-              {includeBackground && (
-                <div className="mt-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Background ratio</label>
+            {exportType === "detection" ? (
+              <div>
+                <label className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-1">
                   <input
-                    type="number"
-                    step={0.1}
-                    min={0.1}
-                    max={2.0}
-                    value={backgroundRatio}
-                    onChange={(e) => setBackgroundRatio(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    type="checkbox"
+                    checked={includeBackground}
+                    onChange={(e) => setIncludeBackground(e.target.checked)}
+                    className="rounded border-gray-300"
                   />
-                  <p className="text-xs text-gray-400 mt-1">No-dog count as fraction of total dog images</p>
-                </div>
-              )}
-            </div>
+                  Include background images
+                </label>
+                {includeBackground && (
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Background ratio</label>
+                    <input
+                      type="number"
+                      step={0.1}
+                      min={0.1}
+                      max={2.0}
+                      value={backgroundRatio}
+                      onChange={(e) => setBackgroundRatio(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">No-dog count as fraction of total dog images</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Crop padding</label>
+                <input
+                  type="number"
+                  step={0.05}
+                  min={0}
+                  max={0.5}
+                  value={cropPadding}
+                  onChange={(e) => setCropPadding(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">Extra padding around bounding box as fraction of box size</p>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={async () => {
                 setExporting(true);
                 try {
-                  const config: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number } = {};
+                  const config: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number; exportType?: string; cropPadding?: number } = {};
                   if (maxPerClass) config.maxPerClass = parseInt(maxPerClass);
-                  config.includeBackground = includeBackground;
-                  if (includeBackground) config.backgroundRatio = parseFloat(backgroundRatio);
+                  config.exportType = exportType;
+                  if (exportType === "detection") {
+                    config.includeBackground = includeBackground;
+                    if (includeBackground) config.backgroundRatio = parseFloat(backgroundRatio);
+                  } else {
+                    config.cropPadding = parseFloat(cropPadding);
+                  }
                   await api.triggerExport(config);
                   loadExports();
                   setShowExportForm(false);
@@ -343,11 +383,15 @@ export default function TrainingExports() {
                       try {
                         const cfg = JSON.parse(exp.config);
                         const parts: string[] = [];
+                        if (cfg.export_type === "classification") parts.push("Classification (crops)");
                         if (cfg.max_per_class) parts.push(`Balanced to ${cfg.max_per_class}/class`);
-                        if (cfg.include_background === false) parts.push("No backgrounds");
-                        else if (cfg.background_ratio != null && cfg.background_ratio !== 1) parts.push(`BG ratio: ${cfg.background_ratio}`);
+                        if (cfg.export_type !== "classification") {
+                          if (cfg.include_background === false) parts.push("No backgrounds");
+                          else if (cfg.background_ratio != null && cfg.background_ratio !== 1) parts.push(`BG ratio: ${cfg.background_ratio}`);
+                        }
+                        if (cfg.crop_padding != null && cfg.crop_padding !== 0.1) parts.push(`Padding: ${cfg.crop_padding}`);
                         if (parts.length === 0) return null;
-                        return <p className="text-xs text-indigo-600 mb-3">{parts.join(" · ")}</p>;
+                        return <p className={`text-xs mb-3 ${cfg.export_type === "classification" ? "text-purple-600" : "text-indigo-600"}`}>{parts.join(" · ")}</p>;
                       } catch { return null; }
                     })()}
                   </>

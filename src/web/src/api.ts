@@ -179,7 +179,7 @@ export const api = {
   },
 
   // Training exports
-  triggerExport: (config?: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number }) =>
+  triggerExport: (config?: { maxPerClass?: number; includeBackground?: boolean; backgroundRatio?: number; exportType?: string; cropPadding?: number }) =>
     postJson<{ exportId: string; message: string }>("/ml/export", config),
 
   listExports: () =>
@@ -195,14 +195,14 @@ export const api = {
     deleteJson<null>(`/clips/${id}`),
 
   // Models
-  listModels: () =>
-    fetchJson<{ activeVersion: string | null; versions: { version: string; s3Key: string; sizeBytes: number; lastModified: string; active: boolean }[] }>("/ml/models"),
+  listModels: (type?: string) =>
+    fetchJson<{ activeVersion: string | null; versions: { version: string; s3Key: string; sizeBytes: number; lastModified: string; active: boolean }[] }>(`/ml/models${type ? `?type=${type}` : ""}`),
 
-  getModelUploadUrl: (version: string) =>
-    postJson<{ uploadUrl: string; s3Key: string; version: string; expiresIn: number }>(`/ml/models/upload-url?version=${encodeURIComponent(version)}`),
+  getModelUploadUrl: (version: string, type?: string) =>
+    postJson<{ uploadUrl: string; s3Key: string; version: string; expiresIn: number }>(`/ml/models/upload-url?version=${encodeURIComponent(version)}${type ? `&type=${type}` : ""}`),
 
-  activateModel: (version: string) =>
-    postJson<{ message: string; version: string }>(`/ml/models/activate?version=${encodeURIComponent(version)}`),
+  activateModel: (version: string, type?: string) =>
+    postJson<{ message: string; version: string }>(`/ml/models/activate?version=${encodeURIComponent(version)}${type ? `&type=${type}` : ""}`),
 
   rerunInference: (dateFrom?: string, dateTo?: string, clipIds?: string[]) =>
     postJson<{ total: number; queued: number }>("/ml/rerun-inference", { dateFrom, dateTo, clipIds }),
