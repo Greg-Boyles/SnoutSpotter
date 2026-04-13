@@ -122,7 +122,8 @@ public class TrainingService : ITrainingService
             ["export_s3_key"]= new() { S = request.ExportS3Key },
             ["config"]       = new() { M = ToMap(jobParams) },
             ["created_at"]   = new() { S = now },
-            ["notes"]        = new() { S = request.Notes ?? "" }
+            ["notes"]        = new() { S = request.Notes ?? "" },
+            ["job_type"]     = new() { S = request.JobType }
         };
 
         await _dynamoDb.PutItemAsync(_config.TrainingJobsTable, item);
@@ -142,7 +143,8 @@ public class TrainingService : ITrainingService
                 LearningRate: request.LearningRate,
                 Workers: request.Workers,
                 ModelBase: request.ModelBase,
-                ResumeFrom: request.ResumeFrom));
+                ResumeFrom: request.ResumeFrom),
+            JobType: request.JobType);
 
         await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
         {
@@ -203,7 +205,8 @@ public class TrainingService : ITrainingService
                 CreatedAt: item.GetValueOrDefault("created_at")?.S,
                 StartedAt: item.GetValueOrDefault("started_at")?.S,
                 CompletedAt: item.GetValueOrDefault("completed_at")?.S,
-                FinalMAP50: finalMAP50);
+                FinalMAP50: finalMAP50,
+                JobType: item.GetValueOrDefault("job_type")?.S ?? "detector");
         })
         .OrderByDescending(j => j.CreatedAt)
         .ToList();
@@ -235,7 +238,8 @@ public class TrainingService : ITrainingService
             FailedStage: item.GetValueOrDefault("failed_stage")?.S,
             CreatedAt: item.GetValueOrDefault("created_at")?.S,
             StartedAt: item.GetValueOrDefault("started_at")?.S,
-            CompletedAt: item.GetValueOrDefault("completed_at")?.S);
+            CompletedAt: item.GetValueOrDefault("completed_at")?.S,
+            JobType: item.GetValueOrDefault("job_type")?.S ?? "detector");
     }
 
     public async Task DeleteJobAsync(string jobId)
@@ -323,13 +327,15 @@ public class TrainingService : ITrainingService
         DownloadBytes     = m.TryGetValue("download_bytes", out var db)   ? long.Parse(db.N)  : null,
         DownloadTotalBytes = m.TryGetValue("download_total_bytes", out var dtb) ? long.Parse(dtb.N) : null,
         DownloadSpeedMbps = m.TryGetValue("download_speed_mbps", out var ds) ? double.Parse(ds.N, CultureInfo.InvariantCulture) : null,
+        Accuracy          = m.TryGetValue("accuracy", out var ac)  ? double.Parse(ac.N, CultureInfo.InvariantCulture) : null,
+        F1Score           = m.TryGetValue("f1_score", out var f1)  ? double.Parse(f1.N, CultureInfo.InvariantCulture) : null,
     };
 
     private static TrainingResult FromResultMap(Dictionary<string, AttributeValue> m) => new()
     {
         ModelS3Key          = m["model_s3_key"].S,
         ModelSizeMb         = double.Parse(m["model_size_mb"].N, CultureInfo.InvariantCulture),
-        FinalMAP50          = double.Parse(m["final_mAP50"].N,   CultureInfo.InvariantCulture),
+        FinalMAP50          = m.TryGetValue("final_mAP50", out var fmv) ? double.Parse(fmv.N, CultureInfo.InvariantCulture) : 0,
         TotalEpochs         = int.Parse(m["total_epochs"].N),
         BestEpoch           = int.Parse(m["best_epoch"].N),
         TrainingTimeSeconds = long.Parse(m["training_time_seconds"].N),
@@ -338,6 +344,8 @@ public class TrainingService : ITrainingService
         FinalMAP50_95       = m.TryGetValue("final_mAP50_95", out var f95) ? double.Parse(f95.N, CultureInfo.InvariantCulture) : null,
         Precision           = m.TryGetValue("precision", out var pr) ? double.Parse(pr.N, CultureInfo.InvariantCulture) : null,
         Recall              = m.TryGetValue("recall", out var rc)    ? double.Parse(rc.N, CultureInfo.InvariantCulture) : null,
+        Accuracy            = m.TryGetValue("accuracy", out var ac)  ? double.Parse(ac.N, CultureInfo.InvariantCulture) : null,
+        F1Score             = m.TryGetValue("f1_score", out var f1)  ? double.Parse(f1.N, CultureInfo.InvariantCulture) : null,
     };
 
     private async Task<AgentReportedState?> GetShadowReportedAsync(string thingName)

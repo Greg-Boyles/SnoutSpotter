@@ -10,7 +10,8 @@ namespace SnoutSpotter.Contracts;
 public record TrainingJobMessage(
     [property: JsonPropertyName("jobId")] string JobId,
     [property: JsonPropertyName("exportS3Key")] string ExportS3Key,
-    [property: JsonPropertyName("config")] TrainingJobParamsMessage Config);
+    [property: JsonPropertyName("config")] TrainingJobParamsMessage Config,
+    [property: JsonPropertyName("jobType")] string JobType = "detector");
 
 /// <summary>Training configuration included in the SQS message.</summary>
 public record TrainingJobParamsMessage(

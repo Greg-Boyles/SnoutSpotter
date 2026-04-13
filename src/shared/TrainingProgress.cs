@@ -61,4 +61,12 @@ public class TrainingProgress
     [JsonPropertyName("download_speed_mbps")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? DownloadSpeedMbps { get; init; }
+
+    [JsonPropertyName("accuracy")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? Accuracy { get; init; }
+
+    [JsonPropertyName("f1_score")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? F1Score { get; init; }
 }

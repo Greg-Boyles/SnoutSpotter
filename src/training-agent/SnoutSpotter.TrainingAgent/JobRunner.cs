@@ -51,12 +51,18 @@ public class JobRunner
                 ResumeFrom = msg.Config.ResumeFrom
             }
         };
-        return RunAsync(job, ct);
+        return RunAsync(job, msg.JobType ?? "detector", ct);
     }
 
     /// <summary>Run from shadow desired state (legacy).</summary>
-    public async Task RunAsync(TrainingJobDesired job, CancellationToken ct)
+    public Task RunAsync(TrainingJobDesired job, CancellationToken ct) => RunAsync(job, "detector", ct);
+
+    public async Task RunAsync(TrainingJobDesired job, string jobType, CancellationToken ct)
     {
+        var isClassifier = jobType == "classifier";
+        var scriptName = isClassifier ? "train_classifier.py" : "train_detector.py";
+        var modelS3Prefix = isClassifier ? "models/dog-classifier" : "models/dog-detector";
+
         var datasetDir = Path.Combine(DataDir, job.JobId);
         var currentStage = "preparing";
 
@@ -112,11 +118,25 @@ public class JobRunner
             // 5. Run training
             currentStage = "training";
             var args = BuildTrainingArgs(job, datasetDir);
-            _logger.LogInformation("Starting training: python3 {Script} {Args}",
-                Path.Combine(MlScriptsDir, "train_detector.py"), args);
+            var scriptPath = Path.Combine(MlScriptsDir, scriptName);
+            _logger.LogInformation("Starting training: python3 {Script} {Args}", scriptPath, args);
 
-            var parser = new ProgressParser();
-            var exitCode = await RunTrainingProcessAsync(args, parser, job.JobId, ct);
+            ProgressParser? detectorParser = null;
+            ClassifierProgressParser? classifierParser = null;
+            Func<string, TrainingProgress?> parseLine;
+
+            if (isClassifier)
+            {
+                classifierParser = new ClassifierProgressParser();
+                parseLine = classifierParser.ParseLine;
+            }
+            else
+            {
+                detectorParser = new ProgressParser();
+                parseLine = detectorParser.ParseLine;
+            }
+
+            var exitCode = await RunTrainingProcessAsync(scriptPath, args, parseLine, job.JobId, ct);
 
             if (ct.IsCancellationRequested)
             {
@@ -144,29 +164,51 @@ public class JobRunner
             }
 
             var version = $"v{DateTime.UtcNow:yyyyMMdd-HHmmss}";
-            var modelS3Key = $"models/dog-classifier/versions/{version}/best.onnx";
+            var modelS3Key = $"{modelS3Prefix}/versions/{version}/best.onnx";
             var transfer = new TransferUtility(_s3);
             await transfer.UploadAsync(modelPath, _bucket, modelS3Key, ct);
             _logger.LogInformation("Model uploaded to s3://{Bucket}/{Key}", _bucket, modelS3Key);
 
             // 6. Report final result
-            var metrics = parser.GetFinalMetrics();
             var modelSize = new FileInfo(modelPath).Length / (1024.0 * 1024.0);
+            var datasetImages = CountDatasetImages(datasetDir);
 
-            await PublishResult(job.JobId, new TrainingResult
+            if (isClassifier && classifierParser != null)
             {
-                ModelS3Key          = modelS3Key,
-                ModelSizeMb         = Math.Round(modelSize, 1),
-                FinalMAP50          = metrics.MAP50,
-                FinalMAP50_95       = metrics.MAP50_95,
-                Precision           = metrics.Precision,
-                Recall              = metrics.Recall,
-                Classes             = ["my_dog", "other_dog"],
-                TotalEpochs         = job.Config.Epochs,
-                BestEpoch           = metrics.BestEpoch,
-                TrainingTimeSeconds = parser.ElapsedSeconds,
-                DatasetImages       = CountDatasetImages(datasetDir)
-            });
+                var metrics = classifierParser.GetFinalMetrics();
+                await PublishResult(job.JobId, new TrainingResult
+                {
+                    ModelS3Key          = modelS3Key,
+                    ModelSizeMb         = Math.Round(modelSize, 1),
+                    Accuracy            = metrics.Accuracy,
+                    F1Score             = metrics.F1,
+                    Precision           = metrics.Precision,
+                    Recall              = metrics.Recall,
+                    Classes             = ["my_dog", "other_dog"],
+                    TotalEpochs         = job.Config.Epochs,
+                    BestEpoch           = metrics.BestEpoch,
+                    TrainingTimeSeconds = classifierParser.ElapsedSeconds,
+                    DatasetImages       = datasetImages
+                });
+            }
+            else if (detectorParser != null)
+            {
+                var metrics = detectorParser.GetFinalMetrics();
+                await PublishResult(job.JobId, new TrainingResult
+                {
+                    ModelS3Key          = modelS3Key,
+                    ModelSizeMb         = Math.Round(modelSize, 1),
+                    FinalMAP50          = metrics.MAP50,
+                    FinalMAP50_95       = metrics.MAP50_95,
+                    Precision           = metrics.Precision,
+                    Recall              = metrics.Recall,
+                    Classes             = ["my_dog", "other_dog"],
+                    TotalEpochs         = job.Config.Epochs,
+                    BestEpoch           = metrics.BestEpoch,
+                    TrainingTimeSeconds = detectorParser.ElapsedSeconds,
+                    DatasetImages       = datasetImages
+                });
+            }
         }
         catch (OperationCanceledException)
         {
@@ -206,12 +248,12 @@ public class JobRunner
         return args;
     }
 
-    private async Task<int> RunTrainingProcessAsync(string args, ProgressParser parser, string jobId, CancellationToken ct)
+    private async Task<int> RunTrainingProcessAsync(string scriptPath, string args, Func<string, TrainingProgress?> parseLine, string jobId, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
             FileName = "python3",
-            Arguments = $"-u {Path.Combine(MlScriptsDir, "train_detector.py")} {args}",
+            Arguments = $"-u {scriptPath} {args}",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -228,7 +270,7 @@ public class JobRunner
             while (await _trainingProcess.StandardOutput.ReadLineAsync(ct) is { } line)
             {
                 _logger.LogInformation("[TRAIN] {Line}", line);
-                var progress = parser.ParseLine(line);
+                var progress = parseLine(line);
                 if (progress != null)
                 {
                     try { await PublishProgress(jobId, "training", progress); }
@@ -245,7 +287,7 @@ public class JobRunner
                 if (!string.IsNullOrWhiteSpace(line))
                 {
                     _logger.LogWarning("[TRAIN-ERR] {Line}", line);
-                    var progress = parser.ParseLine(line);
+                    var progress = parseLine(line);
                     if (progress != null)
                     {
                         try { await PublishProgress(jobId, "training", progress); }
@@ -358,8 +400,8 @@ public class JobRunner
         }
 
         // Verify scripts are actually present
-        var scriptPath = Path.Combine(MlScriptsDir, "train_detector.py");
-        if (!File.Exists(scriptPath))
+        var detectorScript = Path.Combine(MlScriptsDir, "train_detector.py");
+        if (!File.Exists(detectorScript))
             throw new InvalidOperationException(
                 "train_detector.py not found — ML scripts have never been downloaded. " +
                 "Ensure the ml-training pipeline has run and published to S3.");
@@ -388,10 +430,20 @@ public class JobRunner
 
     private static int CountDatasetImages(string dir)
     {
+        // YOLO detection format: images/train/*.jpg + images/val/*.jpg
         var imagesDir = Path.Combine(dir, "images");
-        return Directory.Exists(imagesDir)
-            ? Directory.GetFiles(imagesDir, "*", SearchOption.AllDirectories).Length
-            : 0;
+        if (Directory.Exists(imagesDir))
+            return Directory.GetFiles(imagesDir, "*", SearchOption.AllDirectories).Length;
+
+        // Classification format: train/my_dog/*.jpg + val/other_dog/*.jpg
+        var trainDir = Path.Combine(dir, "train");
+        var valDir = Path.Combine(dir, "val");
+        var count = 0;
+        if (Directory.Exists(trainDir))
+            count += Directory.GetFiles(trainDir, "*", SearchOption.AllDirectories).Length;
+        if (Directory.Exists(valDir))
+            count += Directory.GetFiles(valDir, "*", SearchOption.AllDirectories).Length;
+        return count;
     }
 
     private async Task PublishProgress(string jobId, string status, TrainingProgress? progress)

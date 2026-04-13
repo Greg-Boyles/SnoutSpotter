@@ -5,8 +5,8 @@ import { formatDistanceToNow, format } from "date-fns";
 import { api } from "../api";
 
 type JobConfig = { epochs: number; batch_size: number; image_size: number; learning_rate: number; workers: number; model_base: string; resume_from: string | null };
-type JobProgress = { epoch: number; total_epochs: number; epoch_progress?: number; train_loss?: number; val_loss?: number; mAP50?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number };
-type JobResult = { model_s3_key: string; model_size_mb: number; final_mAP50: number; final_mAP50_95?: number; total_epochs: number; best_epoch: number; training_time_seconds: number; dataset_images: number; classes: string[]; precision?: number; recall?: number };
+type JobProgress = { epoch: number; total_epochs: number; epoch_progress?: number; train_loss?: number; val_loss?: number; mAP50?: number; best_mAP50?: number; elapsed_seconds?: number; eta_seconds?: number; gpu_util_percent?: number; gpu_temp_c?: number; download_bytes?: number; download_total_bytes?: number; download_speed_mbps?: number; accuracy?: number; f1_score?: number };
+type JobResult = { model_s3_key: string; model_size_mb: number; final_mAP50: number; final_mAP50_95?: number; total_epochs: number; best_epoch: number; training_time_seconds: number; dataset_images: number; classes: string[]; precision?: number; recall?: number; accuracy?: number; f1_score?: number };
 
 type JobDetail = {
   jobId: string;
@@ -21,6 +21,7 @@ type JobDetail = {
   createdAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  jobType?: string;
 };
 
 function formatDuration(seconds: number): string {
@@ -31,10 +32,11 @@ function formatDuration(seconds: number): string {
   return `${m}m ${seconds % 60}s`;
 }
 
-function MAP50Value({ value, label }: { value: number; label: string }) {
-  const color = value >= 0.8 ? "text-green-600" : value >= 0.6 ? "text-amber-600" : "text-red-600";
-  const bg = value >= 0.8 ? "bg-green-50" : value >= 0.6 ? "bg-amber-50" : "bg-red-50";
-  const hint = value >= 0.8 ? "Good" : value >= 0.6 ? "Moderate" : "Low";
+function MetricHero({ value, label, thresholds }: { value: number; label: string; thresholds?: { good: number; moderate: number } }) {
+  const t = thresholds ?? { good: 0.8, moderate: 0.6 };
+  const color = value >= t.good ? "text-green-600" : value >= t.moderate ? "text-amber-600" : "text-red-600";
+  const bg = value >= t.good ? "bg-green-50" : value >= t.moderate ? "bg-amber-50" : "bg-red-50";
+  const hint = value >= t.good ? "Good" : value >= t.moderate ? "Moderate" : "Low";
   return (
     <div className={`rounded-xl p-4 ${bg} text-center`}>
       <p className={`text-2xl font-bold ${color}`}>{value.toFixed(3)}</p>
@@ -168,8 +170,9 @@ export default function TrainingJobDetail() {
     const version = modelKey.match(/versions\/(v[\d.]+)\//)?.[1];
     if (!version) return;
     setActivating(true);
+    const modelType = job?.jobType === "classifier" ? "classifier" : "detector";
     try {
-      await api.activateModel(version);
+      await api.activateModel(version, modelType);
       loadJob();
     } catch (e) {
       setError((e as Error).message);
@@ -193,7 +196,7 @@ export default function TrainingJobDetail() {
     navigate("/training/new", {
       state: {
         exportId: job?.exportId,
-        config: job?.config,
+        config: { ...job?.config, jobType: job?.jobType },
       },
     });
   };
@@ -222,6 +225,7 @@ export default function TrainingJobDetail() {
   const config = job.config;
   const progress = job.progress;
   const result = job.result;
+  const isClassifier = job.jobType === "classifier";
   const isRunning = ["pending", "downloading", "scanning", "training", "uploading", "cancelling"].includes(job.status);
   const isComplete = job.status === "complete";
   const epoch = progress?.epoch ?? 0;
@@ -249,7 +253,14 @@ export default function TrainingJobDetail() {
               ? <>Export <span className="font-mono">{job.exportId.slice(0, 8)}</span></>
               : "Training Job"}
           </h1>
-          <p className="text-xs font-mono text-gray-400 mt-0.5">{job.jobId}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs font-mono text-gray-400">{job.jobId}</p>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+              isClassifier ? "bg-purple-100 text-purple-700" : "bg-amber-100 text-amber-700"
+            }`}>
+              {isClassifier ? "Classifier" : "Detector"}
+            </span>
+          </div>
           <p className="text-sm text-gray-500 mt-1">
             {createdLabel}
             {agentDisplayName && ` · ${agentDisplayName}`}
@@ -349,17 +360,36 @@ export default function TrainingJobDetail() {
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h3 className="text-sm font-semibold text-gray-900 mb-3">Live Metrics</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {progress.mAP50 != null && (
-                <div>
-                  <p className="text-lg font-bold text-gray-900">{progress.mAP50.toFixed(3)}</p>
-                  <p className="text-xs text-gray-500">mAP50</p>
-                </div>
-              )}
-              {progress.best_mAP50 != null && (
-                <div>
-                  <p className="text-lg font-bold text-green-600">{progress.best_mAP50.toFixed(3)}</p>
-                  <p className="text-xs text-gray-500">Best mAP50</p>
-                </div>
+              {isClassifier ? (
+                <>
+                  {progress.accuracy != null && (
+                    <div>
+                      <p className="text-lg font-bold text-gray-900">{(progress.accuracy * 100).toFixed(1)}%</p>
+                      <p className="text-xs text-gray-500">Accuracy</p>
+                    </div>
+                  )}
+                  {progress.f1_score != null && (
+                    <div>
+                      <p className="text-lg font-bold text-gray-900">{progress.f1_score.toFixed(3)}</p>
+                      <p className="text-xs text-gray-500">F1 Score</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {progress.mAP50 != null && (
+                    <div>
+                      <p className="text-lg font-bold text-gray-900">{progress.mAP50.toFixed(3)}</p>
+                      <p className="text-xs text-gray-500">mAP50</p>
+                    </div>
+                  )}
+                  {progress.best_mAP50 != null && (
+                    <div>
+                      <p className="text-lg font-bold text-green-600">{progress.best_mAP50.toFixed(3)}</p>
+                      <p className="text-xs text-gray-500">Best mAP50</p>
+                    </div>
+                  )}
+                </>
               )}
               {progress.train_loss != null && (
                 <div>
@@ -401,15 +431,26 @@ export default function TrainingJobDetail() {
               )}
             </div>
 
-            {/* mAP50 hero metric */}
-            {result.final_mAP50 != null && (
-              <div className="mb-4">
-                <MAP50Value value={result.final_mAP50} label="Final mAP50" />
-              </div>
+            {/* Hero metric — accuracy for classifier, mAP50 for detector */}
+            {isClassifier ? (
+              result.accuracy != null && (
+                <div className="mb-4 grid grid-cols-2 gap-3">
+                  <MetricHero value={result.accuracy} label="Accuracy" thresholds={{ good: 0.9, moderate: 0.75 }} />
+                  {result.f1_score != null && (
+                    <MetricHero value={result.f1_score} label="F1 Score" thresholds={{ good: 0.85, moderate: 0.7 }} />
+                  )}
+                </div>
+              )
+            ) : (
+              result.final_mAP50 != null && (
+                <div className="mb-4">
+                  <MetricHero value={result.final_mAP50} label="Final mAP50" />
+                </div>
+              )
             )}
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-              {result.final_mAP50_95 != null && (
+              {!isClassifier && result.final_mAP50_95 != null && (
                 <div>
                   <p className="text-lg font-bold text-gray-900">{result.final_mAP50_95.toFixed(3)}</p>
                   <p className="text-xs text-gray-500">mAP50-95</p>

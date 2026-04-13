@@ -40,7 +40,8 @@ public record TrainingJobRequest(
     int Workers = 8,
     string ModelBase = "yolov8n.pt",
     string? ResumeFrom = null,
-    string? Notes = null);
+    string? Notes = null,
+    string JobType = "detector");
 
 public record TrainingJobSummary(
     string JobId,
@@ -51,7 +52,8 @@ public record TrainingJobSummary(
     string? CreatedAt,
     string? StartedAt,
     string? CompletedAt,
-    double? FinalMAP50);
+    double? FinalMAP50,
+    string JobType = "detector");
 
 public record TrainingJobDetail(
     string JobId,
@@ -67,4 +69,5 @@ public record TrainingJobDetail(
     string? FailedStage,
     string? CreatedAt,
     string? StartedAt,
-    string? CompletedAt);
+    string? CompletedAt,
+    string JobType = "detector");
