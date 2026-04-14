@@ -14,15 +14,18 @@ public class LabelsController : ControllerBase
 {
     private readonly ILabelService _labelService;
     private readonly IClipService _clipService;
+    private readonly IStatsRefreshService _statsCache;
     private readonly AppConfig _config;
 
     public LabelsController(
         ILabelService labelService,
         IClipService clipService,
+        IStatsRefreshService statsCache,
         IOptions<AppConfig> config)
     {
         _labelService = labelService;
         _clipService = clipService;
+        _statsCache = statsCache;
         _config = config.Value;
     }
 
@@ -43,6 +46,9 @@ public class LabelsController : ControllerBase
     [HttpGet("labels/stats")]
     public async Task<ActionResult> GetStats()
     {
+        var cached = await _statsCache.GetCachedLabelStatsAsync();
+        if (cached != null) return Ok(cached);
+
         var stats = await _labelService.GetStatsAsync();
         return Ok(stats);
     }

@@ -15,18 +15,23 @@ public class StatsController : ControllerBase
 {
     private readonly IClipService _clipService;
     private readonly IPiUpdateService _piUpdateService;
+    private readonly IStatsRefreshService _statsCache;
     private readonly AppConfig _config;
 
-    public StatsController(IClipService clipService, IPiUpdateService piUpdateService, IOptions<AppConfig> config)
+    public StatsController(IClipService clipService, IPiUpdateService piUpdateService, IStatsRefreshService statsCache, IOptions<AppConfig> config)
     {
         _clipService = clipService;
         _piUpdateService = piUpdateService;
+        _statsCache = statsCache;
         _config = config.Value;
     }
 
     [HttpGet]
     public async Task<ActionResult<DashboardStats>> GetStats()
     {
+        var cached = await _statsCache.GetCachedDashboardStatsAsync();
+        if (cached != null) return Ok(cached);
+
         var today = DateTime.UtcNow.ToString("yyyy/MM/dd");
 
         var allClips = await _clipService.GetClipsAsync(limit: 1000);
@@ -71,6 +76,12 @@ public class StatsController : ControllerBase
     [HttpGet("activity")]
     public async Task<ActionResult<object>> GetActivity([FromQuery] int days = 14)
     {
+        if (days == 14)
+        {
+            var cached = await _statsCache.GetCachedActivityAsync();
+            if (cached != null) return Ok(cached);
+        }
+
         var tasks = Enumerable.Range(0, days)
             .Select(i => DateTime.UtcNow.AddDays(-(days - 1 - i)))
             .Select(async d => new

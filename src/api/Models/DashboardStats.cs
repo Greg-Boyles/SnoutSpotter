@@ -7,4 +7,5 @@ public record DashboardStats(
     int MyDogDetections,
     string? LastUploadTime,
     int PiOnlineCount,
-    int PiTotalCount);
+    int PiTotalCount,
+    string? RefreshedAt = null);

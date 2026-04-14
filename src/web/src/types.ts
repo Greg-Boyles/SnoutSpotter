@@ -47,6 +47,7 @@ export interface StatsOverview {
   lastUploadTime: string | null;
   piOnlineCount: number;
   piTotalCount: number;
+  refreshedAt?: string | null;
 }
 
 export interface CameraStatus {

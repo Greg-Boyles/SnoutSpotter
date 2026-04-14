@@ -20,6 +20,7 @@ public class ApiStackProps : StackProps
     public required Table TrainingJobsTable { get; init; }
     public required Table ModelsTable { get; init; }
     public string TrainerThingGroupName { get; init; } = "snoutspotter-trainers";
+    public required Table StatsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
@@ -74,7 +75,9 @@ public class ApiStack : Stack
                 ["TRAINER_THING_GROUP"] = props.TrainerThingGroupName,
                 ["TRAINING_JOB_QUEUE_URL"] = trainingJobQueueUrl,
                 ["SETTINGS_TABLE"] = settingsTableName,
-                ["MODELS_TABLE"] = props.ModelsTable.TableName
+                ["MODELS_TABLE"] = props.ModelsTable.TableName,
+                ["STATS_TABLE"] = props.StatsTable.TableName,
+                ["STATS_REFRESH_FUNCTION"] = "snout-spotter-stats-refresh"
             }
         });
 
@@ -207,6 +210,56 @@ public class ApiStack : Stack
                 "kinesisvideo:GetHLSStreamingSessionURL",
             },
             Resources = new[] { $"arn:aws:kinesisvideo:{Region}:{Account}:stream/snoutspotter-*" }
+        }));
+
+        // Stats-refresh Lambda — same image, APP_MODE=stats-refresh, triggered on-demand by the API
+        var statsRefreshFunction = new DockerImageFunction(this, "StatsRefreshFunction", new DockerImageFunctionProps
+        {
+            FunctionName = "snout-spotter-stats-refresh",
+            Description = "Pre-computes dashboard stats on demand (stale-while-revalidate)",
+            Code = DockerImageCode.FromEcr(ecrRepo, new EcrImageCodeProps { TagOrDigest = props.ImageTag }),
+            MemorySize = 512,
+            Timeout = Duration.Minutes(3),
+            Environment = new Dictionary<string, string>
+            {
+                ["APP_MODE"] = "stats-refresh",
+                ["TABLE_NAME"] = props.ClipsTable.TableName,
+                ["LABELS_TABLE"] = props.LabelsTable.TableName,
+                ["STATS_TABLE"] = props.StatsTable.TableName,
+                ["IOT_THING_GROUP"] = props.IoTThingGroupName
+            }
+        });
+
+        props.ClipsTable.GrantReadData(statsRefreshFunction);
+        props.LabelsTable.GrantReadData(statsRefreshFunction);
+        props.StatsTable.GrantReadWriteData(statsRefreshFunction);
+        props.StatsTable.GrantReadWriteData(apiFunction);
+
+        statsRefreshFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot:DescribeEndpoint" },
+            Resources = new[] { "*" }
+        }));
+        statsRefreshFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot:GetThingShadow" },
+            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thing/snoutspotter-*" }
+        }));
+        statsRefreshFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "iot:ListThingsInThingGroup" },
+            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
+        }));
+
+        // Allow API Lambda to invoke the stats-refresh Lambda asynchronously
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "lambda:InvokeFunction" },
+            Resources = new[] { statsRefreshFunction.FunctionArn }
         }));
 
         // HTTP API Gateway
