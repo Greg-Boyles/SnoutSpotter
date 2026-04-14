@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Controllers;
@@ -44,5 +45,3 @@ public class SettingsController : ControllerBase
         return Ok(new { message = "All settings reset to defaults" });
     }
 }
-
-public record UpdateSettingRequest(string Value);

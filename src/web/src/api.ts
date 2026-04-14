@@ -94,42 +94,42 @@ export const api = {
 
   getHealth: () => fetchJson<SystemHealth>("/stats/health"),
 
-  getDevices: () => fetchJson<SystemHealth>("/pi/devices"),
+  getDevices: () => fetchJson<SystemHealth>("/device/devices"),
 
   getRawShadow: (thingName: string) =>
-    fetch(`${BASE}/pi/${thingName}/shadow`, { headers: { ...authHeaders() } })
+    fetch(`${BASE}/device/${thingName}/shadow`, { headers: { ...authHeaders() } })
       .then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); }),
 
   triggerPiUpdate: (thingName: string, version?: string) =>
-    postJson<{ message: string; version: string }>(`/pi/${thingName}/update`, version ? { version } : {}),
+    postJson<{ message: string; version: string }>(`/device/${thingName}/update`, version ? { version } : {}),
 
   triggerPiUpdateAll: (version?: string) =>
-    postJson<{ message: string; deviceCount: number; version: string }>("/pi/update-all", version ? { version } : {}),
+    postJson<{ message: string; deviceCount: number; version: string }>("/device/update-all", version ? { version } : {}),
 
   getPiConfig: (thingName: string) =>
-    fetchJson<{ config: Record<string, number | boolean | string> | null; configErrors: Record<string, string> | null }>(`/pi/${thingName}/config`),
+    fetchJson<{ config: Record<string, number | boolean | string> | null; configErrors: Record<string, string> | null }>(`/device/${thingName}/config`),
 
   updatePiConfig: (thingName: string, changes: Record<string, number | boolean | string>) =>
-    postJson<{ message: string; errors: Record<string, string> }>(`/pi/${thingName}/config`, changes),
+    postJson<{ message: string; errors: Record<string, string> }>(`/device/${thingName}/config`, changes),
 
   getDeviceLogs: (thingName: string, minutes = 60, level?: string, service?: string) => {
     const params = new URLSearchParams({ minutes: String(minutes) });
     if (level) params.set("level", level);
     if (service) params.set("service", service);
     return fetchJson<{ logs: LogEntry[]; thingName: string; queryMinutes: number }>(
-      `/pi/${thingName}/logs?${params}`,
+      `/device/${thingName}/logs?${params}`,
     );
   },
 
   // Commands
   sendCommand: (thingName: string, action: string) =>
-    postJson<{ commandId: string; message: string }>(`/pi/${thingName}/command`, { action }),
+    postJson<{ commandId: string; message: string }>(`/device/${thingName}/command`, { action }),
 
   getCommandResult: (thingName: string, commandId: string) =>
-    fetchJson<{ commandId: string; status: string; action?: string; message?: string; error?: string; requestedAt?: string; completedAt?: string }>(`/pi/${thingName}/command/${commandId}`),
+    fetchJson<{ commandId: string; status: string; action?: string; message?: string; error?: string; requestedAt?: string; completedAt?: string }>(`/device/${thingName}/command/${commandId}`),
 
   getCommandHistory: (thingName: string, limit = 50) =>
-    fetchJson<{ commands: Record<string, string>[]; thingName: string }>(`/pi/${thingName}/commands?limit=${limit}`),
+    fetchJson<{ commands: Record<string, string>[]; thingName: string }>(`/device/${thingName}/commands?limit=${limit}`),
 
   // ML Labels
   triggerAutoLabel: (date?: string) =>
@@ -270,10 +270,10 @@ export const api = {
 
   // Pi Releases
   listPiReleases: () =>
-    fetchJson<{ releases: { version: string; s3Key: string; sizeBytes: number; lastModified: string; isLatest: boolean }[]; latestVersion: string | null }>("/pi/releases"),
+    fetchJson<{ releases: { version: string; s3Key: string; sizeBytes: number; lastModified: string; isLatest: boolean }[]; latestVersion: string | null }>("/device/releases"),
 
   deletePiRelease: (version: string) =>
-    deleteJson<{ message: string }>(`/pi/releases/${encodeURIComponent(version)}`),
+    deleteJson<{ message: string }>(`/device/releases/${encodeURIComponent(version)}`),
 
 
   // Pi Management API (separate endpoint)
