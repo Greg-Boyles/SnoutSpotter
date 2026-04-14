@@ -1,4 +1,5 @@
 using Amazon.CDK;
+using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.Logs;
 using Amazon.CDK.AWS.S3;
@@ -11,6 +12,7 @@ namespace SnoutSpotter.Infra.Stacks;
 public class IoTStackProps : StackProps
 {
     public required Bucket DataBucket { get; init; }
+    public required Table ModelsTable { get; init; }
 }
 
 public class IoTStack : Stack
@@ -185,6 +187,9 @@ public class IoTStack : Stack
             Actions = new[] { "dynamodb:UpdateItem" },
             Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-training-jobs" }
         }));
+
+        // DynamoDB permissions for registering completed models
+        props.ModelsTable.GrantWriteData(trainerCredentialsRole);
 
         var trainerRoleAlias = new IoT.CfnRoleAlias(this, "TrainerRoleAlias", new IoT.CfnRoleAliasProps
         {

@@ -76,7 +76,7 @@ public class StatsRefreshService : IStatsRefreshService
         if (data == null) return null;
 
         var activity = JsonSerializer.Deserialize<object>(data);
-        return new { activity, refreshedAt };
+        return new { activity };
     }
 
     public async Task<object?> GetCachedLabelStatsAsync()
@@ -176,7 +176,7 @@ public class StatsRefreshService : IStatsRefreshService
             .Select(async d => new
             {
                 date = d.ToString("yyyy-MM-dd"),
-                clips = await _clipService.GetClipCountForDateAsync(d.ToString("yyyy/MM/dd"))
+                count = await _clipService.GetClipCountForDateAsync(d.ToString("yyyy/MM/dd"))
             });
         var activity = await Task.WhenAll(activityTasks);
 

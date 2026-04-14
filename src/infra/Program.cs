@@ -38,7 +38,8 @@ var allowedOrigin = (string?)app.Node.TryGetContext("allowedOrigin") ?? "https:/
 var iotStack = new IoTStack(app, "SnoutSpotter-IoT", new IoTStackProps
 {
     Env = env,
-    DataBucket = coreStack.DataBucket
+    DataBucket = coreStack.DataBucket,
+    ModelsTable = coreStack.ModelsTable
 });
 
 var logIngestionStack = new LogIngestionStack(app, "SnoutSpotter-LogIngestion", new LogIngestionStackProps
