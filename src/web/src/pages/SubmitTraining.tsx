@@ -67,7 +67,10 @@ export default function SubmitTraining() {
   };
 
   const filteredExports = exports.filter((e) => {
-    const format = e.export_type || e.format || "detection";
+    let format = e.export_type || e.format || "detection";
+    if (!e.export_type && !e.format && e.config) {
+      try { format = JSON.parse(e.config).export_type || "detection"; } catch { /* ignore */ }
+    }
     return jobType === "classifier" ? format === "classification" : format !== "classification";
   });
 
