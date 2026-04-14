@@ -5,19 +5,15 @@ using SnoutSpotter.Api.Services.Interfaces;
 namespace SnoutSpotter.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/device")]
 [Authorize]
-public class PiController : ControllerBase
+public class DevicesController : ControllerBase
 {
     private readonly IPiUpdateService _piUpdateService;
-    private readonly IHealthService _healthService;
-    private readonly ILogService _logService;
 
-    public PiController(IPiUpdateService piUpdateService, IHealthService healthService, ILogService logService)
+    public DevicesController(IPiUpdateService piUpdateService)
     {
         _piUpdateService = piUpdateService;
-        _healthService = healthService;
-        _logService = logService;
     }
 
     [HttpGet("devices")]
@@ -124,116 +120,4 @@ public class PiController : ControllerBase
 
         return Ok(new { message = "Config update queued", errors });
     }
-
-    [HttpPost("{thingName}/update")]
-    public async Task<ActionResult> TriggerUpdate(string thingName, [FromBody] UpdateRequest? request = null)
-    {
-        try
-        {
-            await _piUpdateService.TriggerUpdateAsync(thingName, request?.Version);
-            return Ok(new { message = "Update triggered", thingName, version = request?.Version ?? await _piUpdateService.GetLatestVersionAsync() });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-    }
-
-    [HttpPost("update-all")]
-    public async Task<ActionResult> TriggerUpdateAll([FromBody] UpdateRequest? request = null)
-    {
-        try
-        {
-            await _piUpdateService.TriggerUpdateAllAsync(request?.Version);
-            var devices = await _piUpdateService.ListPisAsync();
-            return Ok(new { message = "Update triggered for all devices", deviceCount = devices.Count, version = request?.Version ?? await _piUpdateService.GetLatestVersionAsync() });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-    }
-    [HttpGet("releases")]
-    public async Task<ActionResult> ListReleases()
-    {
-        var releases = await _piUpdateService.ListReleasesAsync();
-        var latest = await _piUpdateService.GetLatestVersionAsync();
-        return Ok(new { releases, latestVersion = latest });
-    }
-
-    [HttpDelete("releases/{version}")]
-    public async Task<ActionResult> DeleteRelease(string version)
-    {
-        try
-        {
-            await _piUpdateService.DeleteReleaseAsync(version);
-            return Ok(new { message = $"Release {version} deleted" });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-    }
-
-    [HttpGet("{thingName}/logs")]
-    public async Task<ActionResult> GetLogs(
-        string thingName,
-        [FromQuery] int minutes = 60,
-        [FromQuery] string? level = null,
-        [FromQuery] string? service = null,
-        [FromQuery] int limit = 200)
-    {
-        var logs = await _logService.GetLogsAsync(thingName, minutes, level, service, limit);
-        return Ok(new { logs, thingName, queryMinutes = minutes });
-    }
-
-    [HttpPost("{thingName}/command")]
-    public async Task<ActionResult> SendCommand(string thingName, [FromBody] CommandRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.Action))
-            return BadRequest(new { error = "Action is required" });
-
-        try
-        {
-            var commandId = await _piUpdateService.SendCommandAsync(thingName, request.Action);
-            return Ok(new { commandId, message = $"Command '{request.Action}' sent to {thingName}" });
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = ex.Message });
-        }
-    }
-
-    [HttpGet("{thingName}/command/{commandId}")]
-    public async Task<ActionResult> GetCommandResult(string thingName, string commandId)
-    {
-        var result = await _piUpdateService.GetCommandFromLedgerAsync(commandId);
-        if (result == null)
-            return NotFound(new { error = "Command not found" });
-
-        return Ok(new
-        {
-            commandId,
-            status = result.GetValueOrDefault("status", "sent"),
-            action = result.GetValueOrDefault("action"),
-            message = result.GetValueOrDefault("message"),
-            error = result.GetValueOrDefault("error"),
-            requestedAt = result.GetValueOrDefault("requested_at"),
-            completedAt = result.GetValueOrDefault("completed_at"),
-        });
-    }
-
-    [HttpGet("{thingName}/commands")]
-    public async Task<ActionResult> GetCommandHistory(string thingName, [FromQuery] int limit = 50)
-    {
-        var commands = await _piUpdateService.GetCommandHistoryAsync(thingName, limit);
-        return Ok(new { commands, thingName });
-    }
 }
-
-public record UpdateRequest(string? Version);
-public record CommandRequest(string Action);

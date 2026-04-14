@@ -5,40 +5,15 @@ using SnoutSpotter.Api.Services.Interfaces;
 namespace SnoutSpotter.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/training")]
 [Authorize]
-public class TrainingController : ControllerBase
+public class TrainingJobsController : ControllerBase
 {
     private readonly ITrainingService _trainingService;
 
-    public TrainingController(ITrainingService trainingService)
+    public TrainingJobsController(ITrainingService trainingService)
     {
         _trainingService = trainingService;
-    }
-
-    [HttpGet("agents")]
-    public async Task<ActionResult> ListAgents()
-    {
-        var agents = await _trainingService.ListAgentsAsync();
-        return Ok(new { agents });
-    }
-
-    [HttpGet("agents/{thingName}")]
-    public async Task<ActionResult> GetAgentStatus(string thingName)
-    {
-        var status = await _trainingService.GetAgentStatusAsync(thingName);
-        if (status == null) return NotFound(new { error = $"Agent '{thingName}' not found" });
-        return Ok(status);
-    }
-
-    [HttpPost("agents/{thingName}/update")]
-    public async Task<ActionResult> TriggerAgentUpdate(string thingName, [FromBody] AgentUpdateRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.Version))
-            return BadRequest(new { error = "Version is required" });
-
-        await _trainingService.TriggerAgentUpdateAsync(thingName, request.Version);
-        return Ok(new { message = $"Update to v{request.Version} triggered for {thingName}" });
     }
 
     [HttpPost("jobs")]
@@ -94,5 +69,3 @@ public class TrainingController : ControllerBase
         }
     }
 }
-
-public record AgentUpdateRequest(string Version);
