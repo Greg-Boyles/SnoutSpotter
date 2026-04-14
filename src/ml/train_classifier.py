@@ -41,6 +41,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, models, transforms
+from tqdm import tqdm
 
 
 CLASS_NAMES = ["my_dog", "other_dog"]
@@ -176,7 +177,9 @@ def train(args, data_dir: str):
         train_correct = 0
         train_total = 0
 
-        for images, labels in train_loader:
+        train_bar = tqdm(train_loader, desc=f"TRAIN {epoch}/{args.epochs}",
+                         leave=False, file=sys.stdout, bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}")
+        for images, labels in train_bar:
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(images)
@@ -201,8 +204,10 @@ def train(args, data_dir: str):
 
         my_dog_idx = class_to_idx.get("my_dog", 0)
 
+        val_bar = tqdm(val_loader, desc=f"VAL {epoch}/{args.epochs}",
+                       leave=False, file=sys.stdout, bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}")
         with torch.no_grad():
-            for images, labels in val_loader:
+            for images, labels in val_bar:
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
                 loss = criterion(outputs, labels)
