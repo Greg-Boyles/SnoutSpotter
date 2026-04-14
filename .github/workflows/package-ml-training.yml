@@ -43,7 +43,8 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           tar -czf ml-training-v${VERSION}.tar.gz \
             -C src/ml \
-            train_detector.py verify_onnx.py
+            train_detector.py verify_onnx.py \
+            train_classifier.py verify_classifier.py
 
       - name: Upload to S3
         run: |
