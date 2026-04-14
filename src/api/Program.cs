@@ -4,11 +4,18 @@ using Amazon.DynamoDBv2;
 using Amazon.IoT;
 using Amazon.IotData;
 using Amazon.KinesisVideo;
+using Amazon.Lambda;
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using SnoutSpotter.Api;
 using SnoutSpotter.Api.Services;
 using SnoutSpotter.Api.Services.Interfaces;
+
+if (Environment.GetEnvironmentVariable("APP_MODE") == "stats-refresh")
+{
+    await StatsRefreshRunner.RunAsync();
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +39,8 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.BackfillQueueUrl = Environment.GetEnvironmentVariable("BACKFILL_QUEUE_URL") ?? "";
     cfg.RerunInferenceQueueUrl = Environment.GetEnvironmentVariable("RERUN_INFERENCE_QUEUE_URL") ?? "";
     cfg.ModelsTable = Environment.GetEnvironmentVariable("MODELS_TABLE") ?? "snout-spotter-models";
+    cfg.StatsTable = Environment.GetEnvironmentVariable("STATS_TABLE") ?? "snout-spotter-stats";
+    cfg.StatsRefreshFunctionName = Environment.GetEnvironmentVariable("STATS_REFRESH_FUNCTION") ?? "snout-spotter-stats-refresh";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });
@@ -57,6 +66,7 @@ builder.Services.AddSingleton<IAmazonIotData>(sp =>
 });
 
 builder.Services.AddSingleton<IAmazonKinesisVideo, AmazonKinesisVideoClient>();
+builder.Services.AddSingleton<IAmazonLambda, AmazonLambdaClient>();
 
 // Application services
 builder.Services.AddSingleton<IStreamService, StreamService>();
@@ -71,6 +81,7 @@ builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ITrainingService, TrainingService>();
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
 builder.Services.AddSingleton<IModelService, ModelService>();
+builder.Services.AddSingleton<IStatsRefreshService, StatsRefreshService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
