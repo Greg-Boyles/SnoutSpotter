@@ -30,7 +30,7 @@ SnoutSpotter/
 │   │   │   ├── DetectionsController.cs# GET /api/detections
 │   │   │   ├── LabelsController.cs    # ML labeling: auto-label, review, bulk confirm, upload, export
 │   │   │   ├── PiController.cs        # GET /api/pi/devices, POST /api/pi/{thingName}/update
-│   │   │   └── StatsController.cs     # GET /api/stats, GET /api/stats/health
+│   │   │   └── StatsController.cs     # GET /api/stats, GET /api/stats/activity, GET /api/stats/health
 │   │   ├── Models/ClipModels.cs       # Record types for API responses
 │   │   ├── Services/
 │   │   │   ├── ClipService.cs         # DynamoDB queries for clips
@@ -40,7 +40,9 @@ SnoutSpotter/
 │   │   │   ├── SettingsService.cs     # Server settings CRUD + validation (int/float/select)
 │   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, config validation
 │   │   │   ├── S3PresignService.cs    # Presigned URL generation
-│   │   │   └── S3UrlService.cs        # S3 URL helpers
+│   │   │   ├── S3UrlService.cs        # S3 URL helpers
+│   │   │   └── StatsRefreshService.cs # Read/write pre-computed stats from snout-spotter-stats table; triggers async refresh when stale
+│   │   ├── StatsRefreshRunner.cs      # Minimal host entry point for stats-refresh Lambda (APP_MODE=stats-refresh)
 │   │   ├── Program.cs                 # DI setup, JWT Bearer auth, AWS client registration
 │   │   └── Dockerfile
 │   │
@@ -305,9 +307,9 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs`, ECR repos |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs` + `snout-spotter-stats`, ECR repos |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
-| ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars |
+| ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars; also hosts `snout-spotter-stats-refresh` Lambda (same image, `APP_MODE=stats-refresh`) invoked on-demand |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
 | InferenceStack | Docker Lambda triggered by S3 `keyframes/` events + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3) |
@@ -330,7 +332,8 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/clips/{id}` — get clip detail with presigned video/keyframe URLs
 
 **Stats:**
-- `GET /api/stats` — dashboard stats (total clips, today's clips, detections, Pi online status)
+- `GET /api/stats` — dashboard stats (total clips, today's clips, detections, Pi online status). Served from `snout-spotter-stats` cache; triggers async refresh via `snout-spotter-stats-refresh` Lambda when stale (>5 min). Falls back to live DynamoDB queries when cache is cold.
+- `GET /api/stats/activity?days=14` — 14-day clip histogram. Cached same as above (cache covers 14-day window only).
 - `GET /api/stats/health` — multi-device health (all Pi shadows with camera, system, upload stats)
 
 **Detections:**
@@ -338,7 +341,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 
 **ML Labels & Training:**
 - `POST /api/ml/auto-label` — trigger auto-labeling for keyframes
-- `GET /api/ml/labels/stats` — label counts + breed distribution
+- `GET /api/ml/labels/stats` — label counts + breed distribution (cached in `snout-spotter-stats`, same stale-while-revalidate pattern)
 - `GET /api/ml/labels?reviewed=false&confirmedLabel=my_dog&breed=Labrador+Retriever` — paginated labels (filterable)
 - `PUT /api/ml/labels/{keyframeKey}` — update label (`confirmedLabel`, optional `breed`)
 - `POST /api/ml/labels/bulk-confirm` — bulk confirm labels with breed
@@ -528,6 +531,20 @@ All main API endpoints require a valid Okta JWT Bearer token.
 **GSI:** `by-type` — PK: `model_type`, SK: `created_at` (list all detector/classifier models sorted by date)
 
 **Service:** `ModelService.cs` manages CRUD. Activation deactivates the previous active model, sets new status to `"active"`, and copies S3 object to `best.onnx` for RunInference compatibility. Training agent auto-registers models after upload with `source: "training"` and backfilled metrics.
+
+### Stats Table
+
+**Table:** `snout-spotter-stats` | **Billing:** Pay-per-request
+
+Holds pre-computed dashboard metrics. Written by `snout-spotter-stats-refresh` Lambda; read by `StatsRefreshService` in the API.
+
+| `stat_id` (PK) | Contents |
+|----------------|----------|
+| `"dashboard"` | `total_clips`, `clips_today`, `total_detections`, `my_dog_detections`, `last_upload_time`, `pi_online_count`, `pi_total_count`, `refreshed_at` (all Number or String) |
+| `"activity"` | `data` (JSON string: `[{date, count}]` for 14 days), `refreshed_at` |
+| `"label_stats"` | `data` (JSON string of label stats object from `LabelService.GetStatsAsync()`), `refreshed_at` |
+
+**Stale-while-revalidate:** When `refreshed_at` is older than 5 minutes, `StatsRefreshService.TriggerRefreshIfStale()` fires a `lambda:InvokeFunction` (Event type, async) to `snout-spotter-stats-refresh`. The API returns cached data immediately; the next request after the Lambda completes gets fresh data. A per-instance 4-minute cooldown prevents duplicate invocations.
 
 ---
 
