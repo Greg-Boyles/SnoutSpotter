@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 using SnoutSpotter.Contracts;
 
@@ -13,21 +14,15 @@ public class LabelsController : ControllerBase
 {
     private readonly ILabelService _labelService;
     private readonly IClipService _clipService;
-    private readonly IExportService _exportService;
-    private readonly IModelService _modelService;
     private readonly AppConfig _config;
 
     public LabelsController(
         ILabelService labelService,
         IClipService clipService,
-        IExportService exportService,
-        IModelService modelService,
         IOptions<AppConfig> config)
     {
-        _exportService = exportService;
         _labelService = labelService;
         _clipService = clipService;
-        _modelService = modelService;
         _config = config.Value;
     }
 
@@ -199,124 +194,6 @@ public class LabelsController : ControllerBase
         return Ok(new { uploaded = results.Count, errors, labels = results });
     }
 
-    [HttpPost("export")]
-    public async Task<ActionResult> TriggerExport([FromBody] TriggerExportRequest? request = null)
-    {
-        try
-        {
-            var exportId = await _exportService.TriggerExportAsync(
-                request?.MaxPerClass,
-                request?.IncludeBackground ?? true,
-                request?.BackgroundRatio ?? 1.0f,
-                request?.ExportType ?? "detection",
-                request?.CropPadding ?? 0.1f,
-                request?.MergeClasses ?? false);
-            return Ok(new { exportId, message = "Export started" });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = ex.Message });
-        }
-    }
-
-    public record TriggerExportRequest(
-        int? MaxPerClass = null,
-        bool IncludeBackground = true,
-        float BackgroundRatio = 1.0f,
-        string ExportType = "detection",
-        float CropPadding = 0.1f,
-        bool MergeClasses = false);
-
-    [HttpGet("exports")]
-    public async Task<ActionResult> ListExports()
-    {
-        var exports = await _exportService.ListExportsAsync();
-        return Ok(new { exports });
-    }
-
-    [HttpGet("exports/{exportId}/download")]
-    public async Task<ActionResult> GetExportDownload(string exportId)
-    {
-        var url = await _exportService.GetDownloadUrlAsync(exportId);
-        if (url == null)
-            return NotFound(new { error = "Export not found or not ready" });
-        return Ok(new { downloadUrl = url });
-    }
-
-    [HttpDelete("exports/{exportId}")]
-    public async Task<ActionResult> DeleteExport(string exportId)
-    {
-        await _exportService.DeleteExportAsync(exportId);
-        return Ok(new { message = "Export deleted" });
-    }
-
-    [HttpGet("models")]
-    public async Task<ActionResult> ListModels([FromQuery] string type = "classifier")
-    {
-        var (activeVersion, versions) = await _modelService.ListModelsAsync(type);
-
-        return Ok(new
-        {
-            activeVersion,
-            versions = versions.Select(v => new
-            {
-                version = v.Version,
-                s3Key = v.S3Key,
-                sizeBytes = v.SizeBytes,
-                lastModified = v.CreatedAt,
-                active = v.Status == "active",
-                source = v.Source,
-                trainingJobId = v.TrainingJobId,
-                notes = v.Notes,
-                metrics = v.Metrics
-            })
-        });
-    }
-
-    [HttpPost("models/upload-url")]
-    public async Task<ActionResult> GetModelUploadUrl([FromQuery] string version, [FromQuery] string type = "classifier")
-    {
-        if (string.IsNullOrWhiteSpace(version))
-            return BadRequest(new { error = "version is required" });
-
-        var (uploadUrl, s3Key) = await _modelService.GetUploadUrlAsync(type, version);
-
-        return Ok(new { uploadUrl, s3Key, version, expiresIn = 3600 });
-    }
-
-    [HttpPost("models/activate")]
-    public async Task<ActionResult> ActivateModel([FromQuery] string version, [FromQuery] string type = "classifier")
-    {
-        if (string.IsNullOrWhiteSpace(version))
-            return BadRequest(new { error = "version is required" });
-
-        try
-        {
-            await _modelService.ActivateModelAsync(type, version);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return NotFound(new { error = ex.Message });
-        }
-
-        return Ok(new { message = $"Activated {type} version '{version}'", version });
-    }
-
-    [HttpDelete("models/{type}/{version}")]
-    public async Task<ActionResult> DeleteModel(string type, string version)
-    {
-        try
-        {
-            await _modelService.DeleteModelAsync(type, version);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-
-        return Ok(new { message = $"Deleted {type} version '{version}'" });
-    }
-
     [HttpPost("rerun-inference")]
     public async Task<ActionResult> RerunInference([FromBody] RerunInferenceRequest? request = null)
     {
@@ -353,11 +230,3 @@ public class LabelsController : ControllerBase
         return Ok(new { total = clipIds.Count, queued });
     }
 }
-
-public record RerunInferenceRequest(string? DateFrom = null, string? DateTo = null, List<string>? ClipIds = null);
-
-public record UpdateLabelRequest(string ConfirmedLabel, string? Breed = null);
-public record BulkConfirmRequest(List<string> KeyframeKeys, string ConfirmedLabel, string? Breed = null);
-public record BackfillBreedRequest(string ConfirmedLabel, string Breed);
-public record BackfillBoxesRequest(string? ConfirmedLabel = null, List<string>? Keys = null);
-public record UpdateBoundingBoxesRequest(string KeyframeKey, List<float[]> Boxes);
