@@ -26,11 +26,17 @@ SnoutSpotter/
 ├── src/
 │   ├── api/                           # ASP.NET Core 8 API (runs on Lambda via Web Adapter)
 │   │   ├── Controllers/
-│   │   │   ├── ClipsController.cs     # GET /api/clips, GET /api/clips/{id}
-│   │   │   ├── DetectionsController.cs# GET /api/detections
-│   │   │   ├── LabelsController.cs    # ML labeling: auto-label, review, bulk confirm, upload, export
-│   │   │   ├── PiController.cs        # GET /api/pi/devices, POST /api/pi/{thingName}/update
-│   │   │   └── StatsController.cs     # GET /api/stats, GET /api/stats/health
+│   │   │   ├── ClipsController.cs          # GET /api/clips, GET /api/clips/{id}
+│   │   │   ├── DetectionsController.cs     # GET /api/detections
+│   │   │   ├── DevicesController.cs        # GET /api/device/devices, status, shadow, config
+│   │   │   ├── DeviceUpdatesController.cs  # POST /api/device/{thingName}/update, releases
+│   │   │   ├── DeviceCommandsController.cs # POST /api/device/{thingName}/command, logs
+│   │   │   ├── ExportsController.cs        # POST /api/ml/export, GET/DELETE /api/ml/exports
+│   │   │   ├── LabelsController.cs         # GET/PUT /api/ml/labels, auto-label, upload, rerun-inference
+│   │   │   ├── ModelsController.cs         # GET /api/ml/models, activate, upload-url
+│   │   │   ├── TrainingAgentsController.cs # GET /api/training/agents, trigger update
+│   │   │   ├── TrainingJobsController.cs   # POST/GET /api/training/jobs, cancel, delete
+│   │   │   └── StatsController.cs          # GET /api/stats, GET /api/stats/health
 │   │   ├── Models/ClipModels.cs       # Record types for API responses
 │   │   ├── Services/
 │   │   │   ├── ClipService.cs         # DynamoDB queries for clips
@@ -371,20 +377,20 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `PUT /api/settings/{key}` — update a setting (validates type, range, and select options)
 - `POST /api/settings/reset` — reset all settings to defaults
 
-**Pi Management (OTA + Config + Commands):**
-- `GET /api/pi/devices` — list all Pi devices with full shadow state
-- `GET /api/pi/{thingName}/status` — single device status
-- `GET /api/pi/{thingName}/shadow` — raw IoT device shadow JSON
-- `GET /api/pi/{thingName}/config` — current configurable settings
-- `POST /api/pi/{thingName}/config` — update device config (validated API-side + Pi-side)
-- `POST /api/pi/{thingName}/update` — trigger OTA update for one device (optional `version` body param for specific version)
-- `POST /api/pi/update-all` — trigger OTA update for all devices (optional `version` body param)
-- `GET /api/pi/releases` — list all Pi release versions from S3 with size, date, and isLatest flag
-- `DELETE /api/pi/releases/{version}` — delete a release tarball from S3 (cannot delete latest)
-- `POST /api/pi/{thingName}/command` — send command (reboot, restart-*, clear-clips, clear-backups)
-- `GET /api/pi/{thingName}/command/{commandId}` — poll command result
-- `GET /api/pi/{thingName}/commands` — command history
-- `GET /api/pi/{thingName}/logs?minutes=60&level=INFO&service=motion&limit=200` — query device logs from CloudWatch
+**Device Management (OTA + Config + Commands):**
+- `GET /api/device/devices` — list all Pi devices with full shadow state
+- `GET /api/device/{thingName}/status` — single device status
+- `GET /api/device/{thingName}/shadow` — raw IoT device shadow JSON
+- `GET /api/device/{thingName}/config` — current configurable settings
+- `POST /api/device/{thingName}/config` — update device config (validated API-side + Pi-side)
+- `POST /api/device/{thingName}/update` — trigger OTA update for one device (optional `version` body param for specific version)
+- `POST /api/device/update-all` — trigger OTA update for all devices (optional `version` body param)
+- `GET /api/device/releases` — list all Pi release versions from S3 with size, date, and isLatest flag
+- `DELETE /api/device/releases/{version}` — delete a release tarball from S3 (cannot delete latest)
+- `POST /api/device/{thingName}/command` — send command (reboot, restart-*, clear-clips, clear-backups)
+- `GET /api/device/{thingName}/command/{commandId}` — poll command result
+- `GET /api/device/{thingName}/commands` — command history
+- `GET /api/device/{thingName}/logs?minutes=60&level=INFO&service=motion&limit=200` — query device logs from CloudWatch
 
 ### Pi Management API (`snout-spotter-pi-mgmt` Lambda — no auth)
 
