@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PawPrint, Plus, Pencil, Trash2, Loader2, AlertCircle } from "lucide-react";
+import { PawPrint, Plus, Pencil, Trash2, Loader2, AlertCircle, ArrowRightCircle } from "lucide-react";
 import { api } from "../api";
 import type { Pet } from "../types";
 import { usePets } from "../hooks/usePets";
@@ -20,6 +20,10 @@ export default function Pets() {
   // Delete state
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const { invalidate: invalidatePetsCache } = usePets();
+
+  // Migration state
+  const [migrating, setMigrating] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<{ labelsUpdated: number; clipsUpdated: number } | null>(null);
 
   const loadPets = async () => {
     try {
@@ -70,6 +74,21 @@ export default function Pets() {
       setError(err instanceof Error ? err.message : "Failed to save pet");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleMigrate = async (petId: string) => {
+    setMigrating(true);
+    setError(null);
+    try {
+      const result = await api.migrateLegacyData(petId);
+      setMigrationResult(result);
+      setSuccess(`Migration complete: ${result.labelsUpdated} labels and ${result.clipsUpdated} clips updated`);
+      invalidatePetsCache();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Migration failed");
+    } finally {
+      setMigrating(false);
     }
   };
 
@@ -175,6 +194,9 @@ export default function Pets() {
         <div className="text-center py-12 bg-white border border-gray-200 rounded-lg">
           <PawPrint className="w-12 h-12 text-gray-300 mx-auto mb-3" />
           <p className="text-gray-500">No pets yet. Add your first pet to get started.</p>
+          <p className="text-xs text-gray-400 mt-2">
+            If you have existing "my_dog" labelled data, create a pet first then migrate the data.
+          </p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -217,10 +239,21 @@ export default function Pets() {
                   </button>
                 </div>
               </div>
-              <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
                 <p className="text-xs text-gray-400">
                   ID: <span className="font-mono">{pet.petId}</span>
                 </p>
+                {!migrationResult && (
+                  <button
+                    onClick={() => handleMigrate(pet.petId)}
+                    disabled={migrating}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md disabled:opacity-50"
+                    title="Migrate legacy 'my_dog' data to this pet"
+                  >
+                    {migrating ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />}
+                    Migrate my_dog data
+                  </button>
+                )}
               </div>
             </div>
           ))}

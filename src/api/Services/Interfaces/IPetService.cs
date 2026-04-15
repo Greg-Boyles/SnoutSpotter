@@ -10,4 +10,7 @@ public interface IPetService
     Task<PetProfile> UpdateAsync(string petId, UpdatePetRequest request, string householdId = "default");
     Task DeleteAsync(string petId, string householdId = "default");
     Task<bool> ExistsAsync(string petId, string householdId = "default");
+    Task<MigrationResult> MigrateLegacyLabelsAsync(string petId);
 }
+
+public record MigrationResult(int LabelsUpdated, int ClipsUpdated);

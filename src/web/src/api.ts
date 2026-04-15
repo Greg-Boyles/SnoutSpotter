@@ -282,6 +282,8 @@ export const api = {
   createPet: (name: string, breed?: string) => postJson<Pet>("/pets", { name, breed }),
   updatePet: (petId: string, name: string, breed?: string) => putJson<Pet>(`/pets/${petId}`, { name, breed }),
   deletePet: (petId: string) => deleteJson<null>(`/pets/${petId}`),
+  migrateLegacyData: (petId: string) =>
+    postJson<{ message: string; labelsUpdated: number; clipsUpdated: number }>("/pets/migrate", { petId }),
 
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>

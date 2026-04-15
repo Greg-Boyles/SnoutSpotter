@@ -59,6 +59,28 @@ public class PetsController : ControllerBase
         }
     }
 
+    [HttpPost("migrate")]
+    public async Task<IActionResult> Migrate([FromBody] MigratePetRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.PetId))
+            return BadRequest(new { error = "petId is required" });
+
+        try
+        {
+            var result = await _petService.MigrateLegacyLabelsAsync(request.PetId);
+            return Ok(new
+            {
+                message = $"Migration complete: {result.LabelsUpdated} labels, {result.ClipsUpdated} clips updated",
+                labelsUpdated = result.LabelsUpdated,
+                clipsUpdated = result.ClipsUpdated
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpDelete("{petId}")]
     public async Task<IActionResult> Delete(string petId)
     {

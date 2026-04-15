@@ -17,6 +17,8 @@ public partial class PetService : IPetService
     private readonly IAmazonS3 _s3;
     private readonly string _tableName;
     private readonly string _bucketName;
+    private readonly string _labelsTable;
+    private readonly string _clipsTable;
 
     public PetService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IOptions<AppConfig> config)
     {
@@ -24,6 +26,8 @@ public partial class PetService : IPetService
         _s3 = s3;
         _tableName = config.Value.PetsTable;
         _bucketName = config.Value.BucketName;
+        _labelsTable = config.Value.LabelsTable;
+        _clipsTable = config.Value.ClipsTable;
     }
 
     public async Task<List<PetProfile>> ListAsync(string householdId = "default")
@@ -156,6 +160,145 @@ public partial class PetService : IPetService
         });
 
         return response.Item?.Count > 0;
+    }
+
+    public async Task<MigrationResult> MigrateLegacyLabelsAsync(string petId)
+    {
+        // Verify pet exists
+        if (!await ExistsAsync(petId))
+            throw new InvalidOperationException($"Pet '{petId}' not found");
+
+        var labelsUpdated = 0;
+        var clipsUpdated = 0;
+
+        // 1. Migrate labels: query by-confirmed-label GSI where confirmed_label = "my_dog"
+        Dictionary<string, AttributeValue>? lastKey = null;
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _labelsTable,
+                IndexName = "by-confirmed-label",
+                KeyConditionExpression = "confirmed_label = :label",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":label"] = new() { S = "my_dog" }
+                },
+                ProjectionExpression = "keyframe_key",
+                ExclusiveStartKey = lastKey
+            });
+
+            // Batch update in groups of 25
+            var keys = response.Items.Select(i => i["keyframe_key"].S).ToList();
+            for (var i = 0; i < keys.Count; i += 25)
+            {
+                var batch = keys.Skip(i).Take(25).ToList();
+                var writeRequests = batch.Select(k => new WriteRequest
+                {
+                    PutRequest = null
+                }).ToList();
+
+                // Use individual updates for labels (need to preserve other attributes)
+                foreach (var key in batch)
+                {
+                    await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
+                    {
+                        TableName = _labelsTable,
+                        Key = new Dictionary<string, AttributeValue>
+                        {
+                            ["keyframe_key"] = new() { S = key }
+                        },
+                        UpdateExpression = "SET confirmed_label = :newLabel",
+                        ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                        {
+                            [":newLabel"] = new() { S = petId }
+                        }
+                    });
+                    labelsUpdated++;
+                }
+            }
+
+            lastKey = response.LastEvaluatedKey;
+        } while (lastKey is { Count: > 0 });
+
+        // 2. Migrate clips: query by-detection GSI where detection_type = "my_dog"
+        lastKey = null;
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _clipsTable,
+                IndexName = "by-detection",
+                KeyConditionExpression = "detection_type = :dt",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":dt"] = new() { S = "my_dog" }
+                },
+                ProjectionExpression = "clip_id"
+            });
+
+            foreach (var item in response.Items)
+            {
+                var clipId = item["clip_id"].S;
+
+                // Read full clip to update nested keyframe_detections
+                var clipResponse = await _dynamoDb.GetItemAsync(_clipsTable,
+                    new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
+
+                if (!clipResponse.IsItemSet) continue;
+
+                var updateExpr = "SET detection_type = :newDt";
+                var exprValues = new Dictionary<string, AttributeValue>
+                {
+                    [":newDt"] = new() { S = petId }
+                };
+
+                // Update nested keyframe_detections if present
+                if (clipResponse.Item.TryGetValue("keyframe_detections", out var kdAttr) && kdAttr.L?.Count > 0)
+                {
+                    var updated = false;
+                    foreach (var kd in kdAttr.L)
+                    {
+                        if (kd.M.TryGetValue("label", out var labelAttr) && labelAttr.S == "my_dog")
+                        {
+                            kd.M["label"] = new AttributeValue { S = petId };
+                            updated = true;
+                        }
+
+                        if (kd.M.TryGetValue("detections", out var detsAttr) && detsAttr.L?.Count > 0)
+                        {
+                            foreach (var det in detsAttr.L)
+                            {
+                                if (det.M.TryGetValue("label", out var detLabel) && detLabel.S == "my_dog")
+                                {
+                                    det.M["label"] = new AttributeValue { S = petId };
+                                    updated = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (updated)
+                    {
+                        updateExpr += ", keyframe_detections = :kd";
+                        exprValues[":kd"] = kdAttr;
+                    }
+                }
+
+                await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
+                {
+                    TableName = _clipsTable,
+                    Key = new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } },
+                    UpdateExpression = updateExpr,
+                    ExpressionAttributeValues = exprValues
+                });
+                clipsUpdated++;
+            }
+
+            lastKey = response.LastEvaluatedKey;
+        } while (lastKey is { Count: > 0 });
+
+        return new MigrationResult(labelsUpdated, clipsUpdated);
     }
 
     private async Task<bool> IsPetInActiveClassMap(string petId)
