@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban, ChevronDown, ChevronUp } from "lucide-react";
+import { Download, Trash2, Loader2, Package, CheckCircle, XCircle, Clock, Dog, Ban, ChevronDown, ChevronUp, PawPrint } from "lucide-react";
 
 function Skeleton({ className }: { className: string }) {
   return <div className={`animate-pulse bg-gray-200 rounded ${className}`} />;
 }
 import { api } from "../api";
+import { usePets } from "../hooks/usePets";
 
 interface ExportItem {
   export_id: string;
@@ -60,7 +61,8 @@ export default function TrainingExports() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [labelStats, setLabelStats] = useState<{ myDog: number; otherDog: number; confirmedNoDog: number; breeds: Record<string, number> } | null>(null);
+  const [labelStats, setLabelStats] = useState<{ myDog: number; otherDog: number; confirmedNoDog: number; petCounts: Record<string, number>; breeds: Record<string, number> } | null>(null);
+  const { petName } = usePets();
   const [showExportForm, setShowExportForm] = useState(false);
   const [exportType, setExportType] = useState<"detection" | "classification">("detection");
   const [maxPerClass, setMaxPerClass] = useState("");
@@ -136,7 +138,7 @@ export default function TrainingExports() {
             </button>
           </div>
           {exportType === "classification" && (
-            <p className="text-xs text-gray-500 mb-4">Crops dog bounding boxes from keyframes into my_dog/other_dog folders for classifier training.</p>
+            <p className="text-xs text-gray-500 mb-4">Crops dog bounding boxes from keyframes into per-pet/other_dog folders for classifier training.</p>
           )}
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
@@ -267,14 +269,27 @@ export default function TrainingExports() {
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
           <h2 className="text-sm font-semibold text-gray-900 mb-4">Training Data Summary</h2>
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <Dog className="w-4 h-4 text-green-500" />
-                <span className="text-xs text-gray-500">My Dog</span>
+          <div className="flex flex-wrap gap-4 mb-4">
+            {/* Per-pet counts */}
+            {Object.entries(labelStats.petCounts || {}).sort(([, a], [, b]) => b - a).map(([petId, count]) => (
+              <div key={petId} className="text-center">
+                <div className="flex items-center justify-center gap-1.5 mb-1">
+                  <PawPrint className="w-4 h-4 text-green-500" />
+                  <span className="text-xs text-gray-500">{petName(petId)}</span>
+                </div>
+                <p className="text-2xl font-bold text-green-600">{count}</p>
               </div>
-              <p className="text-2xl font-bold text-green-600">{labelStats.myDog}</p>
-            </div>
+            ))}
+            {/* Legacy my_dog (only show if no pet counts and my_dog > 0) */}
+            {(!labelStats.petCounts || Object.keys(labelStats.petCounts).length === 0) && labelStats.myDog > 0 && (
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-1.5 mb-1">
+                  <Dog className="w-4 h-4 text-green-500" />
+                  <span className="text-xs text-gray-500">My Dog</span>
+                </div>
+                <p className="text-2xl font-bold text-green-600">{labelStats.myDog}</p>
+              </div>
+            )}
             <div className="text-center">
               <div className="flex items-center justify-center gap-1.5 mb-1">
                 <Dog className="w-4 h-4 text-orange-500" />

@@ -44,6 +44,8 @@ export interface StatsOverview {
   clipsToday: number;
   totalDetections: number;
   myDogDetections: number;
+  knownPetDetections: number;
+  petDetectionCounts?: Record<string, number>;
   lastUploadTime: string | null;
   piOnlineCount: number;
   piTotalCount: number;

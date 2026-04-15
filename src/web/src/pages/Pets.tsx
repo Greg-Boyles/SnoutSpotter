@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { PawPrint, Plus, Pencil, Trash2, Loader2, AlertCircle } from "lucide-react";
 import { api } from "../api";
 import type { Pet } from "../types";
+import { usePets } from "../hooks/usePets";
 
 export default function Pets() {
   const [pets, setPets] = useState<Pet[]>([]);
@@ -18,6 +19,7 @@ export default function Pets() {
 
   // Delete state
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const { invalidate: invalidatePetsCache } = usePets();
 
   const loadPets = async () => {
     try {
@@ -62,6 +64,7 @@ export default function Pets() {
         setSuccess(`Created ${formName.trim()}`);
       }
       setShowForm(false);
+      invalidatePetsCache();
       await loadPets();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save pet");
@@ -77,6 +80,7 @@ export default function Pets() {
     try {
       await api.deletePet(pet.petId);
       setSuccess(`Deleted ${pet.name}`);
+      invalidatePetsCache();
       await loadPets();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete pet");

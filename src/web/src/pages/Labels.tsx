@@ -4,8 +4,9 @@ import { Dog, Ban, CheckCircle, Loader2, Play, ChevronRight, Upload, SlidersHori
 import { api } from "../api";
 import { DOG_BREEDS } from "../constants";
 import { LabelBadge } from "../components/LabelBadge";
+import { usePets } from "../hooks/usePets";
 
-type Filter = "all" | "dog" | "no_dog" | "unreviewed" | "confirmed_my_dog" | "confirmed_other_dog" | "confirmed_no_dog";
+type Filter = string; // "all" | "dog" | "no_dog" | "unreviewed" | "confirmed_<petId>" | "confirmed_other_dog" | "confirmed_no_dog"
 
 interface LabelItem {
   keyframe_key: string;
@@ -65,8 +66,9 @@ export default function Labels() {
   const [uploadProgress, setUploadProgress] = useState("");
   const [backfillingBoxes, setBackfillingBoxes] = useState(false);
   const [backfillResult, setBackfillResult] = useState("");
+  const { pets, petName } = usePets();
   const [showUploadPicker, setShowUploadPicker] = useState(false);
-  const [uploadLabel, setUploadLabel] = useState<"my_dog" | "other_dog" | "no_dog">("my_dog");
+  const [uploadLabel, setUploadLabel] = useState<string>("");
   const [uploadBreed, setUploadBreed] = useState("");
   const [uploadStep, setUploadStep] = useState<"label" | "breed">("label");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -124,9 +126,10 @@ export default function Labels() {
     if (filter === "unreviewed") params.reviewed = "false";
     else if (filter === "dog") params.label = "dog";
     else if (filter === "no_dog") params.label = "no_dog";
-    else if (filter === "confirmed_my_dog") params.confirmedLabel = "my_dog";
     else if (filter === "confirmed_other_dog") params.confirmedLabel = "other_dog";
     else if (filter === "confirmed_no_dog") params.confirmedLabel = "no_dog";
+    else if (filter.startsWith("confirmed_pet-")) params.confirmedLabel = filter.replace("confirmed_", "");
+    else if (filter === "confirmed_my_dog") params.confirmedLabel = "my_dog";
     if (breedFilter) params.breed = breedFilter;
     if (deviceFilter) params.device = deviceFilter;
     if (pageKey) params.nextPageKey = pageKey;
@@ -294,6 +297,7 @@ export default function Labels() {
     { key: "unreviewed", label: "Unreviewed" },
     { key: "dog", label: "Dogs" },
     { key: "no_dog", label: "No Dog" },
+    ...pets.map((p) => ({ key: `confirmed_${p.petId}` as Filter, label: p.name })),
     { key: "confirmed_my_dog", label: "My Dog" },
     { key: "confirmed_other_dog", label: "Other Dog" },
     { key: "confirmed_no_dog", label: "Confirmed No Dog" },
@@ -326,33 +330,43 @@ export default function Labels() {
               <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-2">
                 {uploadStep === "label" ? (
                   <>
-                    {([
-                      { value: "my_dog" as const, label: "My Dog", color: "text-green-700 hover:bg-green-50" },
-                      { value: "other_dog" as const, label: "Other Dog", color: "text-orange-700 hover:bg-orange-50" },
-                      { value: "no_dog" as const, label: "No Dog", color: "text-gray-700 hover:bg-gray-50" },
-                    ]).map(({ value, label, color }) => (
+                    {pets.map((pet) => (
                       <button
-                        key={value}
+                        key={pet.petId}
                         onClick={() => {
-                          setUploadLabel(value);
-                          if (value === "no_dog") {
-                            setUploadBreed("");
-                            setShowUploadPicker(false);
-                            setUploadStep("label");
-                            fileInputRef.current?.click();
-                          } else {
-                            setUploadStep("breed");
-                          }
+                          setUploadLabel(pet.petId);
+                          setUploadStep("breed");
                         }}
-                        className={`w-full text-left px-3 py-2 text-sm font-medium rounded ${color}`}
+                        className="w-full text-left px-3 py-2 text-sm font-medium rounded text-green-700 hover:bg-green-50"
                       >
-                        {label}
+                        {pet.name}
                       </button>
                     ))}
+                    <button
+                      onClick={() => {
+                        setUploadLabel("other_dog");
+                        setUploadStep("breed");
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm font-medium rounded text-orange-700 hover:bg-orange-50"
+                    >
+                      Other Dog
+                    </button>
+                    <button
+                      onClick={() => {
+                        setUploadLabel("no_dog");
+                        setUploadBreed("");
+                        setShowUploadPicker(false);
+                        setUploadStep("label");
+                        fileInputRef.current?.click();
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm font-medium rounded text-gray-700 hover:bg-gray-50"
+                    >
+                      No Dog
+                    </button>
                   </>
                 ) : (
                   <>
-                    <p className="text-xs text-gray-500 mb-1 px-1">Select breed for {uploadLabel === "my_dog" ? "My Dog" : "Other Dog"}:</p>
+                    <p className="text-xs text-gray-500 mb-1 px-1">Select breed for {petName(uploadLabel)}:</p>
                     <select
                       value={uploadBreed}
                       onChange={(e) => setUploadBreed(e.target.value)}
@@ -562,7 +576,7 @@ export default function Labels() {
           </select>
         </label>
 
-        {(filter === "confirmed_other_dog" || filter === "confirmed_my_dog") && (
+        {(filter === "confirmed_other_dog" || filter === "confirmed_my_dog" || filter.startsWith("confirmed_pet-")) && (
           <label className="flex items-center gap-2 text-gray-600">
             <span>Breed:</span>
             <select

@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { Video, Clock, Trash2, RefreshCw } from "lucide-react";
 import { api } from "../api";
 import type { Clip } from "../types";
+import { usePets } from "../hooks/usePets";
 
-const DETECTION_OPTIONS = [
+const FIXED_DETECTION_OPTIONS = [
   { value: "", label: "All detections" },
-  { value: "my_dog", label: "My Dog" },
   { value: "other_dog", label: "Other Dog" },
   { value: "no_dog", label: "No Dog" },
   { value: "pending", label: "Pending" },
@@ -15,6 +15,13 @@ const DETECTION_OPTIONS = [
 
 export default function ClipsBrowser() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { pets } = usePets();
+
+  const DETECTION_OPTIONS = useMemo(() => [
+    { value: "", label: "All detections" },
+    ...pets.map((p) => ({ value: p.petId, label: p.name })),
+    ...FIXED_DETECTION_OPTIONS.slice(1),
+  ], [pets]);
 
   const deviceFilter = searchParams.get("device") ?? "";
   const dateFilter = searchParams.get("date") ?? "";

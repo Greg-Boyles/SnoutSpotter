@@ -136,7 +136,7 @@ export const api = {
     postJson<{ message: string }>(`/ml/auto-label${date ? `?date=${date}` : ""}`),
 
   getLabelStats: () =>
-    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; breeds: Record<string, number> }>("/ml/labels/stats"),
+    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; petCounts: Record<string, number>; petWithBoxes: Record<string, number>; petWithoutBoxes: Record<string, number>; breeds: Record<string, number> }>("/ml/labels/stats"),
 
   getLabel: (keyframeKey: string) =>
     fetchJson<Record<string, string | null>>(`/ml/labels/${encodeURIComponent(keyframeKey)}`),
