@@ -32,6 +32,7 @@ jobs:
       auto-label: ${{ steps.filter.outputs.auto-label }}
       export-dataset: ${{ steps.filter.outputs.export-dataset }}
       update-training-progress: ${{ steps.filter.outputs.update-training-progress }}
+      stats-refresh: ${{ steps.filter.outputs.stats-refresh }}
       web: ${{ steps.filter.outputs.web }}
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +68,9 @@ jobs:
               - 'src/infra/**'
             update-training-progress:
               - 'src/lambdas/SnoutSpotter.Lambda.UpdateTrainingProgress/**'
+              - 'src/infra/**'
+            stats-refresh:
+              - 'src/lambdas/SnoutSpotter.Lambda.StatsRefresh/**'
               - 'src/infra/**'
             web:
               - 'src/web/**'
@@ -170,6 +174,16 @@ jobs:
     uses: ./.github/workflows/build-update-training-progress-image.yml
     secrets: inherit
 
+  build-stats-refresh-image:
+    name: Build stats-refresh image
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.stats-refresh == 'true' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-stats-refresh-image.yml
+    secrets: inherit
+
   # Stage 3: Deploy application stacks
   deploy-api:
     name: Deploy API
@@ -259,6 +273,16 @@ jobs:
       !failure() && !cancelled() &&
       needs.build-update-training-progress-image.result == 'success'
     uses: ./.github/workflows/deploy-update-training-progress.yml
+    secrets: inherit
+
+  deploy-stats-refresh:
+    name: Deploy stats-refresh Lambda
+    needs: build-stats-refresh-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-stats-refresh-image.result == 'success'
+    uses: ./.github/workflows/deploy-stats-refresh.yml
     secrets: inherit
 
   deploy-web:
