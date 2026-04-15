@@ -8,5 +8,4 @@ public interface IStatsRefreshService
     Task<object?> GetCachedActivityAsync();
     Task<object?> GetCachedLabelStatsAsync();
     void TriggerRefreshIfStale(string statId, string? refreshedAt);
-    Task RefreshAllAsync();
 }

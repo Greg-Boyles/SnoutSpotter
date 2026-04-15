@@ -27,6 +27,7 @@ public class CoreStack : Stack
     public Repository ExportDatasetEcrRepo { get; }
     public Repository TrainingAgentEcrRepo { get; }
     public Repository UpdateTrainingProgressEcrRepo { get; }
+    public Repository StatsRefreshEcrRepo { get; }
     public Table StatsTable { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
@@ -376,6 +377,21 @@ public class CoreStack : Stack
         UpdateTrainingProgressEcrRepo = new Repository(this, "UpdateTrainingProgressEcrRepo", new RepositoryProps
         {
             RepositoryName = "snout-spotter-update-training-progress",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        // ECR repository for StatsRefresh Lambda
+        StatsRefreshEcrRepo = new Repository(this, "StatsRefreshEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-stats-refresh",
             RemovalPolicy = RemovalPolicy.DESTROY,
             LifecycleRules = new[]
             {

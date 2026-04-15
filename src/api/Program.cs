@@ -12,12 +12,6 @@ using SnoutSpotter.Api;
 using SnoutSpotter.Api.Services;
 using SnoutSpotter.Api.Services.Interfaces;
 
-if (Environment.GetEnvironmentVariable("APP_MODE") == "stats-refresh")
-{
-    await StatsRefreshRunner.RunAsync();
-    return;
-}
-
 var builder = WebApplication.CreateBuilder(args);
 
 // Bind AppConfig from environment variables

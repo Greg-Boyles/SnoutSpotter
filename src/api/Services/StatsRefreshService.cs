@@ -14,16 +14,12 @@ namespace SnoutSpotter.Api.Services;
 public class StatsRefreshService : IStatsRefreshService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
-    private readonly IAmazonLambda? _lambda;
-    private readonly IClipService? _clipService;
-    private readonly ILabelService? _labelService;
-    private readonly IPiUpdateService? _piUpdateService;
+    private readonly IAmazonLambda _lambda;
     private readonly AppConfig _config;
 
     // Per-statId cooldown: don't trigger more than once per 4 minutes from this instance
     private static readonly ConcurrentDictionary<string, DateTime> _lastTriggered = new();
 
-    // Constructor for the API path (read + trigger only)
     [ActivatorUtilitiesConstructor]
     public StatsRefreshService(IAmazonDynamoDB dynamoDb, IAmazonLambda lambda, IOptions<AppConfig> config)
     {
@@ -32,28 +28,18 @@ public class StatsRefreshService : IStatsRefreshService
         _config = config.Value;
     }
 
-    // Constructor for the refresh runner path (full compute)
-    public StatsRefreshService(
-        IAmazonDynamoDB dynamoDb,
-        IClipService clipService,
-        ILabelService labelService,
-        IPiUpdateService piUpdateService,
-        IOptions<AppConfig> config)
-    {
-        _dynamoDb = dynamoDb;
-        _clipService = clipService;
-        _labelService = labelService;
-        _piUpdateService = piUpdateService;
-        _config = config.Value;
-    }
-
     public async Task<DashboardStats?> GetCachedDashboardStatsAsync()
     {
         var item = await GetItemAsync("dashboard");
-        if (item == null) return null;
+        if (item == null)
+        {
+            await InvokeRefreshAsync(waitForResult: true);
+            item = await GetItemAsync("dashboard");
+            if (item == null) return null;
+        }
 
         var refreshedAt = item.GetValueOrDefault("refreshed_at")?.S;
-        TriggerRefreshIfStale("dashboard", refreshedAt);
+        TriggerIfStale("dashboard", refreshedAt);
 
         return new DashboardStats(
             TotalClips: int.Parse(item.GetValueOrDefault("total_clips")?.N ?? "0"),
@@ -69,10 +55,15 @@ public class StatsRefreshService : IStatsRefreshService
     public async Task<object?> GetCachedActivityAsync()
     {
         var item = await GetItemAsync("activity");
-        if (item == null) return null;
+        if (item == null)
+        {
+            await InvokeRefreshAsync(waitForResult: true);
+            item = await GetItemAsync("activity");
+            if (item == null) return null;
+        }
 
         var refreshedAt = item.GetValueOrDefault("refreshed_at")?.S;
-        TriggerRefreshIfStale("activity", refreshedAt);
+        TriggerIfStale("activity", refreshedAt);
 
         var data = item.GetValueOrDefault("data")?.S;
         if (data == null) return null;
@@ -84,36 +75,42 @@ public class StatsRefreshService : IStatsRefreshService
     public async Task<object?> GetCachedLabelStatsAsync()
     {
         var item = await GetItemAsync("label_stats");
-        if (item == null) return null;
+        if (item == null)
+        {
+            await InvokeRefreshAsync(waitForResult: true);
+            item = await GetItemAsync("label_stats");
+            if (item == null) return null;
+        }
 
         var refreshedAt = item.GetValueOrDefault("refreshed_at")?.S;
-        TriggerRefreshIfStale("label_stats", refreshedAt);
+        TriggerIfStale("label_stats", refreshedAt);
 
         var data = item.GetValueOrDefault("data")?.S;
         if (data == null) return null;
 
-        var stats = JsonSerializer.Deserialize<object>(data);
-        return stats;
+        return JsonSerializer.Deserialize<object>(data);
     }
 
+    // Called on stale data — fire-and-forget, respects per-instance cooldown
     public void TriggerRefreshIfStale(string statId, string? refreshedAt)
-    {
-        if (_lambda == null) return;
+        => TriggerIfStale(statId, refreshedAt);
 
+    private void TriggerIfStale(string statId, string? refreshedAt)
+    {
         // Only trigger if stale (older than 5 minutes)
         if (refreshedAt != null &&
             DateTime.TryParse(refreshedAt, out var ts) &&
             (DateTime.UtcNow - ts).TotalMinutes < 5)
             return;
 
-        // Cooldown: don't fire again if we already triggered within the last 4 minutes from this instance
+        // Cooldown: don't fire again within 4 minutes from this instance
         var now = DateTime.UtcNow;
         if (_lastTriggered.TryGetValue(statId, out var lastFired) && (now - lastFired).TotalMinutes < 4)
             return;
 
         _lastTriggered[statId] = now;
 
-        // Fire-and-forget — don't await
+        // Fire-and-forget
         _ = _lambda.InvokeAsync(new InvokeRequest
         {
             FunctionName = _config.StatsRefreshFunctionName,
@@ -121,91 +118,21 @@ public class StatsRefreshService : IStatsRefreshService
         });
     }
 
-    public async Task RefreshAllAsync()
+    // Synchronous invocation — waits for the stats-refresh Lambda to complete
+    private async Task InvokeRefreshAsync(bool waitForResult)
     {
-        if (_clipService == null || _labelService == null || _piUpdateService == null)
-            throw new InvalidOperationException("StatsRefreshService not initialised with compute dependencies.");
-
-        var today = DateTime.UtcNow.ToString("yyyy/MM/dd");
-        var refreshedAt = DateTime.UtcNow.ToString("O");
-
-        // --- Dashboard stats ---
-        var allClips = await _clipService.GetClipsAsync(limit: 1000);
-        var todayClips = await _clipService.GetClipsAsync(date: today, limit: 1000);
-        var detections = await _clipService.GetDetectionsAsync(limit: 1000);
-
-        var thingNames = await _piUpdateService.ListPisAsync();
-        var piOnlineCount = 0;
-        string? lastUploadAcrossAll = null;
-
-        foreach (var thingName in thingNames)
+        try
         {
-            var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
-            if (shadow?.LastHeartbeat != null &&
-                DateTime.TryParse(shadow.LastHeartbeat, out var lastHb) &&
-                (DateTime.UtcNow - lastHb).TotalMinutes < 5)
-                piOnlineCount++;
-
-            if (shadow?.LastUploadAt != null &&
-                (lastUploadAcrossAll == null ||
-                 string.Compare(shadow.LastUploadAt, lastUploadAcrossAll, StringComparison.Ordinal) > 0))
-                lastUploadAcrossAll = shadow.LastUploadAt;
-        }
-
-        var lastUploadTime = lastUploadAcrossAll ?? allClips.Clips.MaxBy(c => c.Timestamp)?.CreatedAt;
-
-        await _dynamoDb.PutItemAsync(new PutItemRequest
-        {
-            TableName = _config.StatsTable,
-            Item = new Dictionary<string, AttributeValue>
+            await _lambda.InvokeAsync(new InvokeRequest
             {
-                ["stat_id"] = new AttributeValue { S = "dashboard" },
-                ["total_clips"] = new AttributeValue { N = allClips.TotalCount.ToString() },
-                ["clips_today"] = new AttributeValue { N = todayClips.TotalCount.ToString() },
-                ["total_detections"] = new AttributeValue { N = detections.Count.ToString() },
-                ["my_dog_detections"] = new AttributeValue { N = detections.Count(d => d.DetectionType == "my_dog").ToString() },
-                ["last_upload_time"] = new AttributeValue { S = lastUploadTime ?? "" },
-                ["pi_online_count"] = new AttributeValue { N = piOnlineCount.ToString() },
-                ["pi_total_count"] = new AttributeValue { N = thingNames.Count.ToString() },
-                ["refreshed_at"] = new AttributeValue { S = refreshedAt }
-            }
-        });
-
-        // --- Activity (14 days) ---
-        var days = 14;
-        var activityTasks = Enumerable.Range(0, days)
-            .Select(i => DateTime.UtcNow.AddDays(-(days - 1 - i)))
-            .Select(async d => new
-            {
-                date = d.ToString("yyyy-MM-dd"),
-                count = await _clipService.GetClipCountForDateAsync(d.ToString("yyyy/MM/dd"))
+                FunctionName = _config.StatsRefreshFunctionName,
+                InvocationType = waitForResult ? InvocationType.RequestResponse : InvocationType.Event
             });
-        var activity = await Task.WhenAll(activityTasks);
-
-        await _dynamoDb.PutItemAsync(new PutItemRequest
+        }
+        catch
         {
-            TableName = _config.StatsTable,
-            Item = new Dictionary<string, AttributeValue>
-            {
-                ["stat_id"] = new AttributeValue { S = "activity" },
-                ["data"] = new AttributeValue { S = JsonSerializer.Serialize(activity) },
-                ["refreshed_at"] = new AttributeValue { S = refreshedAt }
-            }
-        });
-
-        // --- Label stats ---
-        var labelStats = await _labelService.GetStatsAsync();
-
-        await _dynamoDb.PutItemAsync(new PutItemRequest
-        {
-            TableName = _config.StatsTable,
-            Item = new Dictionary<string, AttributeValue>
-            {
-                ["stat_id"] = new AttributeValue { S = "label_stats" },
-                ["data"] = new AttributeValue { S = JsonSerializer.Serialize(labelStats) },
-                ["refreshed_at"] = new AttributeValue { S = refreshedAt }
-            }
-        });
+            // Best-effort — callers fall back to live query or return null
+        }
     }
 
     private async Task<Dictionary<string, AttributeValue>?> GetItemAsync(string statId)

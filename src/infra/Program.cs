@@ -81,6 +81,17 @@ var autoLabelStack = new AutoLabelStack(app, "SnoutSpotter-AutoLabel", new AutoL
     LabelsTable = coreStack.LabelsTable
 });
 
+var statsRefreshStack = new StatsRefreshStack(app, "SnoutSpotter-StatsRefresh", new StatsRefreshStackProps
+{
+    Env = env,
+    StatsRefreshEcrRepo = coreStack.StatsRefreshEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    ClipsTable = coreStack.ClipsTable,
+    LabelsTable = coreStack.LabelsTable,
+    StatsTable = coreStack.StatsTable,
+    IoTThingGroupName = "snoutspotter-pis"
+});
+
 var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
 {
     Env = env,

@@ -146,7 +146,7 @@ public class ApiStack : Stack
             }
         }));
 
-        // Lambda invoke for auto-label trigger
+        // Lambda invoke for auto-label trigger and stats-refresh
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
@@ -155,7 +155,8 @@ public class ApiStack : Stack
             {
                 $"arn:aws:lambda:{Region}:{Account}:function:{props.AutoLabelFunctionName}",
                 $"arn:aws:lambda:{Region}:{Account}:function:{props.ExportDatasetFunctionName}",
-                $"arn:aws:lambda:{Region}:{Account}:function:{props.InferenceFunctionName}"
+                $"arn:aws:lambda:{Region}:{Account}:function:{props.InferenceFunctionName}",
+                $"arn:aws:lambda:{Region}:{Account}:function:snout-spotter-stats-refresh"
             }
         }));
 
@@ -212,55 +213,7 @@ public class ApiStack : Stack
             Resources = new[] { $"arn:aws:kinesisvideo:{Region}:{Account}:stream/snoutspotter-*" }
         }));
 
-        // Stats-refresh Lambda — same image, APP_MODE=stats-refresh, triggered on-demand by the API
-        var statsRefreshFunction = new DockerImageFunction(this, "StatsRefreshFunction", new DockerImageFunctionProps
-        {
-            FunctionName = "snout-spotter-stats-refresh",
-            Description = "Pre-computes dashboard stats on demand (stale-while-revalidate)",
-            Code = DockerImageCode.FromEcr(ecrRepo, new EcrImageCodeProps { TagOrDigest = props.ImageTag }),
-            MemorySize = 512,
-            Timeout = Duration.Minutes(3),
-            Environment = new Dictionary<string, string>
-            {
-                ["APP_MODE"] = "stats-refresh",
-                ["TABLE_NAME"] = props.ClipsTable.TableName,
-                ["LABELS_TABLE"] = props.LabelsTable.TableName,
-                ["STATS_TABLE"] = props.StatsTable.TableName,
-                ["IOT_THING_GROUP"] = props.IoTThingGroupName
-            }
-        });
-
-        props.ClipsTable.GrantReadData(statsRefreshFunction);
-        props.LabelsTable.GrantReadData(statsRefreshFunction);
-        props.StatsTable.GrantReadWriteData(statsRefreshFunction);
         props.StatsTable.GrantReadWriteData(apiFunction);
-
-        statsRefreshFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "iot:DescribeEndpoint" },
-            Resources = new[] { "*" }
-        }));
-        statsRefreshFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "iot:GetThingShadow" },
-            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thing/snoutspotter-*" }
-        }));
-        statsRefreshFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "iot:ListThingsInThingGroup" },
-            Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thinggroup/{props.IoTThingGroupName}" }
-        }));
-
-        // Allow API Lambda to invoke the stats-refresh Lambda asynchronously
-        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
-        {
-            Effect = Effect.ALLOW,
-            Actions = new[] { "lambda:InvokeFunction" },
-            Resources = new[] { statsRefreshFunction.FunctionArn }
-        }));
 
         // HTTP API Gateway
         var httpApi = new CfnApi(this, "ApiGateway", new CfnApiProps
