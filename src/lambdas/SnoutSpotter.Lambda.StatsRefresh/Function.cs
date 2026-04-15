@@ -19,6 +19,7 @@ public class Function
     private readonly string _clipsTable;
     private readonly string _labelsTable;
     private readonly string _statsTable;
+    private readonly string _petsTable;
     private readonly string _iotThingGroup;
 
     public Function()
@@ -39,6 +40,7 @@ public class Function
         _clipsTable = Environment.GetEnvironmentVariable("TABLE_NAME") ?? "snout-spotter-clips";
         _labelsTable = Environment.GetEnvironmentVariable("LABELS_TABLE") ?? "snout-spotter-labels";
         _statsTable = Environment.GetEnvironmentVariable("STATS_TABLE") ?? "snout-spotter-stats";
+        _petsTable = Environment.GetEnvironmentVariable("PETS_TABLE") ?? "snout-spotter-pets";
         _iotThingGroup = Environment.GetEnvironmentVariable("IOT_THING_GROUP") ?? "snoutspotter-pis";
     }
 
@@ -59,35 +61,80 @@ public class Function
     {
         var today = DateTime.UtcNow.ToString("yyyy/MM/dd");
 
+        // Get pet list for dynamic detection counting
+        var petIds = await GetPetIdsAsync();
+
         var totalClipsTask = CountClipsAsync();
         var todayClipsTask = CountClipsForDateAsync(today);
-        var myDogTask = CountDetectionsAsync("my_dog");
+        var myDogTask = CountDetectionsAsync("my_dog"); // legacy compat
         var otherDogTask = CountDetectionsAsync("other_dog");
+        var petDetectionTasks = petIds.Select(id => CountDetectionsAsync(id)).ToList();
         var piTask = GetPiStatsAsync();
 
-        await Task.WhenAll(totalClipsTask, todayClipsTask, myDogTask, otherDogTask, piTask);
+        await Task.WhenAll(
+            totalClipsTask, todayClipsTask, myDogTask, otherDogTask, piTask,
+            Task.WhenAll(petDetectionTasks));
 
         var (piOnlineCount, piTotalCount, lastUploadAt) = piTask.Result;
-        var totalDetections = myDogTask.Result + otherDogTask.Result;
+
+        // Build per-pet detection counts
+        var petDetectionCounts = new Dictionary<string, AttributeValue>();
+        var knownPetDetections = 0;
+        for (var i = 0; i < petIds.Count; i++)
+        {
+            var count = petDetectionTasks[i].Result;
+            petDetectionCounts[petIds[i]] = new() { N = count.ToString() };
+            knownPetDetections += count;
+        }
+
+        var totalDetections = myDogTask.Result + otherDogTask.Result + knownPetDetections;
+
+        var item = new Dictionary<string, AttributeValue>
+        {
+            ["stat_id"] = new() { S = "dashboard" },
+            ["total_clips"] = new() { N = totalClipsTask.Result.ToString() },
+            ["clips_today"] = new() { N = todayClipsTask.Result.ToString() },
+            ["total_detections"] = new() { N = totalDetections.ToString() },
+            ["my_dog_detections"] = new() { N = myDogTask.Result.ToString() },
+            ["known_pet_detections"] = new() { N = knownPetDetections.ToString() },
+            ["last_upload_time"] = new() { S = lastUploadAt ?? "" },
+            ["pi_online_count"] = new() { N = piOnlineCount.ToString() },
+            ["pi_total_count"] = new() { N = piTotalCount.ToString() },
+            ["refreshed_at"] = new() { S = refreshedAt }
+        };
+
+        if (petDetectionCounts.Count > 0)
+            item["pet_detection_counts"] = new() { M = petDetectionCounts };
 
         await _dynamoDb.PutItemAsync(new PutItemRequest
         {
             TableName = _statsTable,
-            Item = new Dictionary<string, AttributeValue>
-            {
-                ["stat_id"] = new() { S = "dashboard" },
-                ["total_clips"] = new() { N = totalClipsTask.Result.ToString() },
-                ["clips_today"] = new() { N = todayClipsTask.Result.ToString() },
-                ["total_detections"] = new() { N = totalDetections.ToString() },
-                ["my_dog_detections"] = new() { N = myDogTask.Result.ToString() },
-                ["last_upload_time"] = new() { S = lastUploadAt ?? "" },
-                ["pi_online_count"] = new() { N = piOnlineCount.ToString() },
-                ["pi_total_count"] = new() { N = piTotalCount.ToString() },
-                ["refreshed_at"] = new() { S = refreshedAt }
-            }
+            Item = item
         });
 
-        context.Logger.LogInformation($"Dashboard stats written: totalClips={totalClipsTask.Result}, today={todayClipsTask.Result}, detections={totalDetections}");
+        context.Logger.LogInformation($"Dashboard stats written: totalClips={totalClipsTask.Result}, today={todayClipsTask.Result}, detections={totalDetections}, knownPets={knownPetDetections}");
+    }
+
+    private async Task<List<string>> GetPetIdsAsync()
+    {
+        try
+        {
+            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _petsTable,
+                KeyConditionExpression = "household_id = :hid",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":hid"] = new() { S = "default" }
+                },
+                ProjectionExpression = "pet_id"
+            });
+            return response.Items.Select(i => i["pet_id"].S).ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 
     private async Task RefreshActivityAsync(string refreshedAt, ILambdaContext context)
@@ -128,6 +175,16 @@ public class Function
 
         var (confirmedCounts, breedCounts, withBoxes, withoutBoxes) = confirmedTask.Result;
 
+        var petCounts = confirmedCounts
+            .Where(kv => kv.Key.StartsWith("pet-"))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+        var petWithBoxes = withBoxes
+            .Where(kv => kv.Key.StartsWith("pet-"))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+        var petWithoutBoxes = withoutBoxes
+            .Where(kv => kv.Key.StartsWith("pet-"))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
         var stats = new
         {
             total = totalTask.Result,
@@ -140,6 +197,9 @@ public class Function
             myDogWithoutBoxes = withoutBoxes.GetValueOrDefault("my_dog"),
             otherDogWithBoxes = withBoxes.GetValueOrDefault("other_dog"),
             otherDogWithoutBoxes = withoutBoxes.GetValueOrDefault("other_dog"),
+            petCounts,
+            petWithBoxes,
+            petWithoutBoxes,
             breeds = breedCounts
         };
 
@@ -326,10 +386,10 @@ public class Function
 
     private async Task<(Dictionary<string, int> labels, Dictionary<string, int> breeds, Dictionary<string, int> withBoxes, Dictionary<string, int> withoutBoxes)> CountConfirmedLabelsAsync()
     {
-        var counts = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0, ["no_dog"] = 0 };
+        var counts = new Dictionary<string, int> { ["other_dog"] = 0, ["no_dog"] = 0 };
         var breedCounts = new Dictionary<string, int>();
-        var withBoxes = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0 };
-        var withoutBoxes = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0 };
+        var withBoxes = new Dictionary<string, int> { ["other_dog"] = 0 };
+        var withoutBoxes = new Dictionary<string, int> { ["other_dog"] = 0 };
         Dictionary<string, AttributeValue>? lastKey = null;
 
         do
@@ -350,16 +410,22 @@ public class Function
             foreach (var item in response.Items)
             {
                 var label = item.GetValueOrDefault("confirmed_label")?.S ?? "";
-                if (counts.ContainsKey(label))
-                    counts[label]++;
+                counts.TryGetValue(label, out var c);
+                counts[label] = c + 1;
 
-                if (label is "my_dog" or "other_dog")
+                if (label.StartsWith("pet-") || label is "my_dog" or "other_dog")
                 {
                     var boxes = item.GetValueOrDefault("bounding_boxes")?.S ?? "[]";
                     if (boxes != "[]" && !string.IsNullOrEmpty(boxes))
-                        withBoxes[label]++;
+                    {
+                        withBoxes.TryGetValue(label, out var wb);
+                        withBoxes[label] = wb + 1;
+                    }
                     else
-                        withoutBoxes[label]++;
+                    {
+                        withoutBoxes.TryGetValue(label, out var wob);
+                        withoutBoxes[label] = wob + 1;
+                    }
                 }
 
                 var breed = item.GetValueOrDefault("breed")?.S;

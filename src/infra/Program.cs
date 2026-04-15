@@ -89,6 +89,7 @@ var statsRefreshStack = new StatsRefreshStack(app, "SnoutSpotter-StatsRefresh", 
     ClipsTable = coreStack.ClipsTable,
     LabelsTable = coreStack.LabelsTable,
     StatsTable = coreStack.StatsTable,
+    PetsTable = coreStack.PetsTable,
     IoTThingGroupName = "snoutspotter-pis"
 });
 

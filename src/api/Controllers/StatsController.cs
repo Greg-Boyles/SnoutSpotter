@@ -61,11 +61,19 @@ public class StatsController : ControllerBase
 
         var lastUploadTime = lastUploadAcrossAll ?? allClips.Clips.MaxBy(c => c.Timestamp)?.CreatedAt;
 
+        var petDetectionCounts = detections
+            .Where(d => d.DetectionType.StartsWith("pet-"))
+            .GroupBy(d => d.DetectionType)
+            .ToDictionary(g => g.Key, g => g.Count());
+        var knownPetDetections = petDetectionCounts.Values.Sum();
+
         var stats = new DashboardStats(
             TotalClips: allClips.TotalCount,
             ClipsToday: todayClips.TotalCount,
             TotalDetections: detections.Count,
             MyDogDetections: detections.Count(d => d.DetectionType == "my_dog"),
+            KnownPetDetections: knownPetDetections,
+            PetDetectionCounts: petDetectionCounts.Count > 0 ? petDetectionCounts : null,
             LastUploadTime: lastUploadTime,
             PiOnlineCount: piOnlineCount,
             PiTotalCount: thingNames.Count);

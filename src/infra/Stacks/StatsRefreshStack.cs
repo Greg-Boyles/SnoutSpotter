@@ -15,6 +15,7 @@ public class StatsRefreshStackProps : StackProps
     public required Table ClipsTable { get; init; }
     public required Table LabelsTable { get; init; }
     public required Table StatsTable { get; init; }
+    public required Table PetsTable { get; init; }
     public required string IoTThingGroupName { get; init; }
 }
 
@@ -39,13 +40,15 @@ public class StatsRefreshStack : Stack
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
                 ["STATS_TABLE"] = props.StatsTable.TableName,
-                ["IOT_THING_GROUP"] = props.IoTThingGroupName
+                ["IOT_THING_GROUP"] = props.IoTThingGroupName,
+                ["PETS_TABLE"] = props.PetsTable.TableName
             }
         });
 
         props.ClipsTable.GrantReadData(StatsRefreshFunction);
         props.LabelsTable.GrantReadData(StatsRefreshFunction);
         props.StatsTable.GrantReadWriteData(StatsRefreshFunction);
+        props.PetsTable.GrantReadData(StatsRefreshFunction);
 
         StatsRefreshFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {

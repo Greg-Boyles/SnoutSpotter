@@ -14,12 +14,14 @@ public class LabelService : ILabelService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonS3 _s3;
+    private readonly IPetService _petService;
     private readonly AppConfig _config;
 
-    public LabelService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IOptions<AppConfig> config)
+    public LabelService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IPetService petService, IOptions<AppConfig> config)
     {
         _dynamoDb = dynamoDb;
         _s3 = s3;
+        _petService = petService;
         _config = config.Value;
     }
 
@@ -47,9 +49,21 @@ public class LabelService : ILabelService
         var reviewed = await CountAsync("by-review", "true");
         var (confirmedCounts, breedCounts, withBoxes, withoutBoxes) = await CountConfirmedLabelsAsync();
 
+        // Separate pet-* counts from fixed labels
+        var petCounts = confirmedCounts
+            .Where(kv => kv.Key.StartsWith("pet-"))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+        var petWithBoxes = withBoxes
+            .Where(kv => kv.Key.StartsWith("pet-"))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+        var petWithoutBoxes = withoutBoxes
+            .Where(kv => kv.Key.StartsWith("pet-"))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
         return new
         {
             total, dogs, noDogs, reviewed, unreviewed,
+            // Legacy fields for backward compat
             myDog = confirmedCounts.GetValueOrDefault("my_dog"),
             otherDog = confirmedCounts.GetValueOrDefault("other_dog"),
             confirmedNoDog = confirmedCounts.GetValueOrDefault("no_dog"),
@@ -57,16 +71,20 @@ public class LabelService : ILabelService
             myDogWithoutBoxes = withoutBoxes.GetValueOrDefault("my_dog"),
             otherDogWithBoxes = withBoxes.GetValueOrDefault("other_dog"),
             otherDogWithoutBoxes = withoutBoxes.GetValueOrDefault("other_dog"),
+            // Dynamic pet counts
+            petCounts,
+            petWithBoxes,
+            petWithoutBoxes,
             breeds = breedCounts,
         };
     }
 
     private async Task<(Dictionary<string, int> labels, Dictionary<string, int> breeds, Dictionary<string, int> withBoxes, Dictionary<string, int> withoutBoxes)> CountConfirmedLabelsAsync()
     {
-        var counts = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0, ["no_dog"] = 0 };
+        var counts = new Dictionary<string, int> { ["other_dog"] = 0, ["no_dog"] = 0 };
         var breedCounts = new Dictionary<string, int>();
-        var withBoxes = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0 };
-        var withoutBoxes = new Dictionary<string, int> { ["my_dog"] = 0, ["other_dog"] = 0 };
+        var withBoxes = new Dictionary<string, int> { ["other_dog"] = 0 };
+        var withoutBoxes = new Dictionary<string, int> { ["other_dog"] = 0 };
         Dictionary<string, AttributeValue>? lastKey = null;
 
         do
@@ -87,16 +105,25 @@ public class LabelService : ILabelService
             foreach (var item in response.Items)
             {
                 var label = item.GetValueOrDefault("confirmed_label")?.S ?? "";
-                if (counts.ContainsKey(label))
-                    counts[label]++;
 
-                if (label is "my_dog" or "other_dog")
+                // Count any known label (pet-*, my_dog, other_dog, no_dog)
+                counts.TryGetValue(label, out var c);
+                counts[label] = c + 1;
+
+                // Box tracking for any dog label (pet-*, my_dog, other_dog)
+                if (label.StartsWith("pet-") || label is "my_dog" or "other_dog")
                 {
                     var boxes = item.GetValueOrDefault("bounding_boxes")?.S ?? "[]";
                     if (boxes != "[]" && !string.IsNullOrEmpty(boxes))
-                        withBoxes[label]++;
+                    {
+                        withBoxes.TryGetValue(label, out var wb);
+                        withBoxes[label] = wb + 1;
+                    }
                     else
-                        withoutBoxes[label]++;
+                    {
+                        withoutBoxes.TryGetValue(label, out var wob);
+                        withoutBoxes[label] = wob + 1;
+                    }
                 }
 
                 var breed = item.GetValueOrDefault("breed")?.S;
@@ -279,8 +306,8 @@ public class LabelService : ILabelService
     public async Task UpdateLabelAsync(string keyframeKey, string confirmedLabel, string? breed = null)
     {
         // Map confirmed label to auto_label value for GSI consistency
-        // my_dog → dog, other_dog → dog (it is a dog, just not ours), no_dog → no_dog
-        var autoLabelValue = confirmedLabel is "my_dog" or "other_dog" ? "dog" : "no_dog";
+        // pet-* → dog, my_dog → dog, other_dog → dog (it is a dog), no_dog → no_dog
+        var autoLabelValue = confirmedLabel == "no_dog" ? "no_dog" : "dog";
 
         var updateExpr = "SET confirmed_label = :label, reviewed = :rev, reviewed_at = :at, " +
                          "original_auto_label = if_not_exists(original_auto_label, auto_label), " +
@@ -346,7 +373,7 @@ public class LabelService : ILabelService
             ContentType = ext == ".png" ? "image/png" : "image/jpeg"
         });
 
-        var autoLabelValue = confirmedLabel is "my_dog" or "other_dog" ? "dog" : "no_dog";
+        var autoLabelValue = confirmedLabel == "no_dog" ? "no_dog" : "dog";
         var now = DateTime.UtcNow.ToString("O");
         var item = new Dictionary<string, AttributeValue>
         {
@@ -437,9 +464,19 @@ public class LabelService : ILabelService
         else
         {
             // Collect all reviewed dog labels with empty bounding boxes
-            var labelsToProcess = confirmedLabel != null
-                ? new[] { confirmedLabel }
-                : new[] { "my_dog", "other_dog" };
+            string[] labelsToProcess;
+            if (confirmedLabel != null)
+            {
+                labelsToProcess = new[] { confirmedLabel };
+            }
+            else
+            {
+                var pets = await _petService.ListAsync();
+                labelsToProcess = pets.Select(p => p.PetId)
+                    .Append("other_dog")
+                    .Append("my_dog") // legacy compat until migrated
+                    .ToArray();
+            }
 
             allKeys = new List<string>();
 
