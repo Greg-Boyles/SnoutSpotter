@@ -7,6 +7,7 @@ using Amazon.KinesisVideo;
 using Amazon.Lambda;
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Options;
 using SnoutSpotter.Api;
 using SnoutSpotter.Api.Services;
 using SnoutSpotter.Api.Services.Interfaces;
@@ -81,7 +82,10 @@ builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ITrainingService, TrainingService>();
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
 builder.Services.AddSingleton<IModelService, ModelService>();
-builder.Services.AddSingleton<IStatsRefreshService, StatsRefreshService>();
+builder.Services.AddSingleton<IStatsRefreshService>(sp => new StatsRefreshService(
+    sp.GetRequiredService<IAmazonDynamoDB>(),
+    sp.GetRequiredService<IAmazonLambda>(),
+    sp.GetRequiredService<IOptions<AppConfig>>()));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
