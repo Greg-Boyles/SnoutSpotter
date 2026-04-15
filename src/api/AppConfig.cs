@@ -20,6 +20,7 @@ public class AppConfig
     public string SettingsTable { get; set; } = "snout-spotter-settings";
     public string ModelsTable { get; set; } = "snout-spotter-models";
     public string StatsTable { get; set; } = "snout-spotter-stats";
+    public string PetsTable { get; set; } = "snout-spotter-pets";
     public string StatsRefreshFunctionName { get; set; } = "snout-spotter-stats-refresh";
     public string OktaIssuer { get; set; } = "";
     public string AllowedOrigin { get; set; } = "";
