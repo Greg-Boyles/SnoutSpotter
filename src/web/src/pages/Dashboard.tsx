@@ -51,7 +51,7 @@ export default function Dashboard() {
     api.getStats().then(setStats).catch((e: Error) => setError(e.message));
     api.getClips(8).then((data) => { setRecentClips(data.clips); setLoadingClips(false); }).catch(console.error);
     api.getActivity(14).then((data) => {
-      setActivityData(data.activity.map((d) => ({ date: d.date.slice(5), clips: d.count })));
+      setActivityData(data.activity.map((d) => ({ date: d.date.slice(5), clips: d.clips })));
       setLoadingActivity(false);
     }).catch(console.error);
     api.getLabelStats().then(setLabelStats).catch(console.error);
