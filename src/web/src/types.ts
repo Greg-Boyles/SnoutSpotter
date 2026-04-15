@@ -119,6 +119,15 @@ export interface SystemHealth {
   devices: PiDevice[];
 }
 
+export interface Pet {
+  householdId: string;
+  petId: string;
+  name: string;
+  breed?: string;
+  photoUrl?: string;
+  createdAt: string;
+}
+
 export interface PiRelease {
   version: string;
   s3Key: string;

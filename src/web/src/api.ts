@@ -1,4 +1,4 @@
-import type { Clip, Detection, LogEntry, StatsOverview, StreamStartResult, SystemHealth } from "./types";
+import type { Clip, Detection, LogEntry, Pet, StatsOverview, StreamStartResult, SystemHealth } from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
@@ -275,6 +275,13 @@ export const api = {
   deletePiRelease: (version: string) =>
     deleteJson<{ message: string }>(`/device/releases/${encodeURIComponent(version)}`),
 
+
+  // Pets
+  listPets: () => fetchJson<Pet[]>("/pets"),
+  getPet: (petId: string) => fetchJson<Pet>(`/pets/${petId}`),
+  createPet: (name: string, breed?: string) => postJson<Pet>("/pets", { name, breed }),
+  updatePet: (petId: string, name: string, breed?: string) => putJson<Pet>(`/pets/${petId}`, { name, breed }),
+  deletePet: (petId: string) => deleteJson<null>(`/pets/${petId}`),
 
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>
