@@ -24,16 +24,34 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-CLASS_NAMES = ["my_dog", "other_dog"]
+FALLBACK_CLASS_NAMES = ["my_dog", "other_dog"]
+CLASS_NAMES = FALLBACK_CLASS_NAMES  # overridden if class_map.json found
 EXPECTED_INPUT_SHAPE = [1, 3, 224, 224]
-EXPECTED_OUTPUT_CLASSES = 2
+
+
+def load_class_map(model_path: str) -> list[str] | None:
+    """Load class_map.json from same directory as model."""
+    import json
+    p = Path(model_path).parent / "class_map.json"
+    if p.exists():
+        print(f"  Loaded class map from {p}")
+        return json.loads(p.read_text())
+    return None
 
 
 def check_model(model_path: str, test_images: list[str]):
+    global CLASS_NAMES
     failures = []
 
     print(f"Loading model: {model_path}")
     session = ort.InferenceSession(model_path)
+
+    # Load class_map.json if available
+    cm = load_class_map(model_path)
+    if cm:
+        CLASS_NAMES = cm
+
+    expected_output_classes = len(CLASS_NAMES)
 
     # Check input shape
     inp = session.get_inputs()[0]
@@ -44,8 +62,8 @@ def check_model(model_path: str, test_images: list[str]):
     # Check output shape
     out = session.get_outputs()[0]
     print(f"  Output: name={out.name}, shape={out.shape}")
-    if out.shape != [1, EXPECTED_OUTPUT_CLASSES]:
-        failures.append(f"Output shape {out.shape} != expected [1, {EXPECTED_OUTPUT_CLASSES}]")
+    if out.shape != [1, expected_output_classes]:
+        failures.append(f"Output shape {out.shape} != expected [1, {expected_output_classes}]")
 
     # Synthetic test (grey image)
     print("\n--- Synthetic grey image test ---")

@@ -176,6 +176,21 @@ public class JobRunner
             await transfer.UploadAsync(modelPath, _bucket, modelS3Key, ct);
             _logger.LogInformation("Model uploaded to s3://{Bucket}/{Key}", _bucket, modelS3Key);
 
+            // Upload class_map.json alongside the model if it exists in the dataset
+            var classMapPath = Path.Combine(datasetDir, "class_map.json");
+            string[]? classNames = null;
+            if (File.Exists(classMapPath))
+            {
+                var classMapS3Key = $"{modelS3Prefix}/versions/{version}/class_map.json";
+                await transfer.UploadAsync(classMapPath, _bucket, classMapS3Key, ct);
+                _logger.LogInformation("Class map uploaded to s3://{Bucket}/{Key}", _bucket, classMapS3Key);
+                try
+                {
+                    classNames = JsonSerializer.Deserialize<string[]>(await File.ReadAllTextAsync(classMapPath, ct));
+                }
+                catch { /* best effort */ }
+            }
+
             // 5b. Register model in DynamoDB
             var modelFileInfo = new FileInfo(modelPath);
             await RegisterModelAsync(jobType, version, modelS3Key, modelFileInfo.Length, job.JobId,
@@ -184,6 +199,8 @@ public class JobRunner
             // 6. Report final result
             var modelSize = modelFileInfo.Length / (1024.0 * 1024.0);
             var datasetImages = CountDatasetImages(datasetDir);
+
+            var reportedClasses = classNames ?? ["my_dog", "other_dog"];
 
             if (isClassifier && classifierParser != null)
             {
@@ -196,7 +213,7 @@ public class JobRunner
                     F1Score             = metrics.F1,
                     Precision           = metrics.Precision,
                     Recall              = metrics.Recall,
-                    Classes             = ["my_dog", "other_dog"],
+                    Classes             = reportedClasses,
                     TotalEpochs         = job.Config.Epochs,
                     BestEpoch           = metrics.BestEpoch,
                     TrainingTimeSeconds = classifierParser.ElapsedSeconds,
@@ -214,7 +231,7 @@ public class JobRunner
                     FinalMAP50_95       = metrics.MAP50_95,
                     Precision           = metrics.Precision,
                     Recall              = metrics.Recall,
-                    Classes             = ["my_dog", "other_dog"],
+                    Classes             = reportedClasses,
                     TotalEpochs         = job.Config.Epochs,
                     BestEpoch           = metrics.BestEpoch,
                     TrainingTimeSeconds = detectorParser.ElapsedSeconds,

@@ -148,6 +148,18 @@ public class ModelService : IModelService
         if (TypePaths.TryGetValue(type, out var paths))
         {
             await _s3.CopyObjectAsync(_bucketName, model.S3Key, _bucketName, paths.ActiveKey);
+
+            // Also copy class_map.json if it exists alongside the model
+            var classMapVersionKey = model.S3Key.Replace("best.onnx", "class_map.json");
+            var classMapActiveKey = paths.ActiveKey.Replace("best.onnx", "class_map.json");
+            try
+            {
+                await _s3.CopyObjectAsync(_bucketName, classMapVersionKey, _bucketName, classMapActiveKey);
+            }
+            catch (Amazon.S3.AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // No class_map.json for this version — OK for legacy models
+            }
         }
     }
 

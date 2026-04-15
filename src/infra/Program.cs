@@ -119,7 +119,8 @@ var exportDatasetStack = new ExportDatasetStack(app, "SnoutSpotter-ExportDataset
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     DataBucket = coreStack.DataBucket,
     LabelsTable = coreStack.LabelsTable,
-    ExportsTable = coreStack.ExportsTable
+    ExportsTable = coreStack.ExportsTable,
+    PetsTable = coreStack.PetsTable
 });
 
 var webStack = new WebStack(app, "SnoutSpotter-Web", new StackProps { Env = env });

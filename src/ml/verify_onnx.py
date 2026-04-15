@@ -42,14 +42,16 @@ from PIL import Image
 
 REGION = "eu-west-1"
 MODEL_KEY = "models/dog-classifier/best.onnx"
+CLASS_MAP_KEY = "models/dog-classifier/class_map.json"
 KEYFRAMES_PREFIX = "keyframes/"
 
 # Must match RunInference/Function.cs
 YOLO_INPUT_SIZE = 640
 CONFIDENCE_THRESHOLD = 0.4
-EXPECTED_NUM_CLASSES = 2
-CLASS_NAMES = ["my_dog", "other_dog"]
+FALLBACK_CLASS_NAMES = ["my_dog", "other_dog"]
+CLASS_NAMES = FALLBACK_CLASS_NAMES  # will be overridden if class_map.json exists
 DETECTION_PRIORITY = {"none": 0, "no_dog": 1, "other_dog": 2, "my_dog": 3}
+# pet-* labels get priority 3 (same as my_dog) — handled dynamically in upgrade_detection_type
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -79,6 +81,26 @@ def download_model(s3, bucket: str) -> str:
     print(f"Downloading s3://{bucket}/{MODEL_KEY} ...")
     s3.download_file(bucket, MODEL_KEY, str(local_path))
     return str(local_path)
+
+
+def load_class_map(s3=None, bucket: str = "", local_path: str = "") -> list[str] | None:
+    """Load class_map.json from S3 or local path. Returns None if not found."""
+    import json
+    if local_path:
+        p = Path(local_path).parent / "class_map.json"
+        if p.exists():
+            print(f"Loading class map from {p}")
+            return json.loads(p.read_text())
+    if s3 and bucket:
+        try:
+            import io
+            obj = s3.get_object(Bucket=bucket, Key=CLASS_MAP_KEY)
+            data = json.loads(obj["Body"].read())
+            print(f"Loaded class map from S3: {data}")
+            return data
+        except Exception:
+            pass
+    return None
 
 
 def preprocess(image_path: str) -> tuple[np.ndarray, int, int]:
@@ -140,8 +162,14 @@ def parse_detections(output: np.ndarray, orig_w: int, orig_h: int) -> list[dict]
     return detections
 
 
+def get_detection_priority(label: str) -> int:
+    if label.startswith("pet-"):
+        return 3
+    return DETECTION_PRIORITY.get(label, 0)
+
+
 def upgrade_detection_type(current: str, candidate: str) -> str:
-    if DETECTION_PRIORITY.get(candidate, 0) > DETECTION_PRIORITY.get(current, 0):
+    if get_detection_priority(candidate) > get_detection_priority(current):
         return candidate
     return current
 
@@ -196,9 +224,10 @@ def verify_model_shape(session: ort.InferenceSession) -> bool:
 
         if shape_ok:
             num_classes = out_shape[1] - 4
-            classes_ok = num_classes == EXPECTED_NUM_CLASSES
+            expected = len(CLASS_NAMES)
+            classes_ok = num_classes == expected
             all_ok &= check(
-                f"num_classes == {EXPECTED_NUM_CLASSES} ({', '.join(CLASS_NAMES)})",
+                f"num_classes == {expected} ({', '.join(CLASS_NAMES)})",
                 classes_ok,
                 f"got {num_classes} class(es) — output dim 1 = {out_shape[1]}",
             )
@@ -314,14 +343,21 @@ def main():
     print("=" * 60)
 
     # Load model
+    global CLASS_NAMES
     if args.model_path:
         model_path = args.model_path
         print(f"Model : {model_path}")
+        cm = load_class_map(local_path=model_path)
+        if cm:
+            CLASS_NAMES = cm
     else:
         s3 = boto3.client("s3", region_name=REGION)
         bucket = get_bucket(s3)
         print(f"Bucket: {bucket}")
         model_path = download_model(s3, bucket)
+        cm = load_class_map(s3=s3, bucket=bucket)
+        if cm:
+            CLASS_NAMES = cm
 
     try:
         session = ort.InferenceSession(model_path)
