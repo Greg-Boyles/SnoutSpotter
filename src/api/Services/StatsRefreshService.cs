@@ -4,6 +4,7 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda;
 using Amazon.Lambda.Model;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
@@ -23,6 +24,7 @@ public class StatsRefreshService : IStatsRefreshService
     private static readonly ConcurrentDictionary<string, DateTime> _lastTriggered = new();
 
     // Constructor for the API path (read + trigger only)
+    [ActivatorUtilitiesConstructor]
     public StatsRefreshService(IAmazonDynamoDB dynamoDb, IAmazonLambda lambda, IOptions<AppConfig> config)
     {
         _dynamoDb = dynamoDb;
