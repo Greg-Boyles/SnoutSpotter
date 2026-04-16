@@ -244,6 +244,9 @@ export const api = {
   triggerAgentUpdate: (thingName: string, version: string) =>
     postJson<{ message: string }>(`/training/agents/${thingName}/update`, { version }),
 
+  listTrainingAgentReleases: () =>
+    fetchJson<{ releases: { version: string; imagePushedAt: string; isLatest: boolean }[]; latestVersion: string | null }>("/training/agents/releases"),
+
   submitTrainingJob: (config: { exportId: string; exportS3Key: string; epochs?: number; batchSize?: number; imageSize?: number; learningRate?: number; workers?: number; modelBase?: string; resumeFrom?: string | null; notes?: string; jobType?: string }) =>
     postJson<{ jobId: string }>("/training/jobs", config),
 

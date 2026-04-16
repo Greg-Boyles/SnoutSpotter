@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Cpu, Thermometer, Zap,
-  CheckCircle, XCircle, Clock, Play, AlertTriangle, Trash2
+  CheckCircle, XCircle, Clock, Play, AlertTriangle, Trash2, RefreshCw
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { api } from "../api";
@@ -47,6 +47,12 @@ type AgentStatus = {
   thingName: string;
   online: boolean;
   reported: AgentReported | null;
+};
+
+type AgentRelease = {
+  version: string;
+  imagePushedAt: string;
+  isLatest: boolean;
 };
 
 type Job = {
@@ -114,15 +120,24 @@ export default function TrainingAgentDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deregistering, setDeregistering] = useState(false);
+  const [releases, setReleases] = useState<AgentRelease[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState("");
+  const [updating, setUpdating] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
 
   const load = () => {
     if (!thingName) return;
     return Promise.all([
       api.getTrainingAgentStatus(thingName),
       api.listTrainingJobs(),
-    ]).then(([a, j]) => {
+      api.listTrainingAgentReleases(),
+    ]).then(([a, j, rel]) => {
       setAgent(a as AgentStatus);
       setJobs((j.jobs as Job[]).filter(job => job.agentThingName === thingName));
+      setReleases(rel.releases);
+      if (rel.latestVersion && !selectedVersion) {
+        setSelectedVersion(rel.latestVersion);
+      }
     });
   };
 
@@ -144,6 +159,22 @@ export default function TrainingAgentDetail() {
     } catch (e) {
       alert("Deregister failed");
       setDeregistering(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!thingName || !selectedVersion) return;
+    setUpdating(true);
+    setUpdateMessage(null);
+    try {
+      const result = await api.triggerAgentUpdate(thingName, selectedVersion);
+      setUpdateMessage(result.message);
+      setTimeout(() => load()?.catch(console.error), 5000);
+      setTimeout(() => load()?.catch(console.error), 15000);
+    } catch (e) {
+      setUpdateMessage(`Update failed: ${(e as Error).message}`);
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -240,6 +271,32 @@ export default function TrainingAgentDetail() {
               </div>
             )}
           </dl>
+          {releases.length > 0 && (
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 gap-3">
+              <select
+                value={selectedVersion}
+                onChange={(e) => setSelectedVersion(e.target.value)}
+                className="flex-1 text-sm border border-gray-300 rounded-lg px-2.5 py-1.5"
+              >
+                {releases.map((rel) => (
+                  <option key={rel.version} value={rel.version}>
+                    v{rel.version}{rel.isLatest ? " (latest)" : ""}{rel.version === r?.agentVersion ? " — current" : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleUpdate}
+                disabled={updating || r?.updateStatus === "updating" || selectedVersion === r?.agentVersion}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50 shrink-0"
+              >
+                <RefreshCw className={`w-3 h-3 ${updating ? "animate-spin" : ""}`} />
+                {updating ? "Updating..." : "Deploy"}
+              </button>
+            </div>
+          )}
+          {updateMessage && (
+            <p className="text-xs text-gray-600 mt-2">{updateMessage}</p>
+          )}
         </div>
 
         {/* GPU */}
