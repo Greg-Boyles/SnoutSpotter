@@ -56,7 +56,7 @@ export default function Labels() {
     }, { replace: true });
   };
 
-  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; breeds: Record<string, number> } | null>(null);
+  const [stats, setStats] = useState<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; petCounts: Record<string, number>; petWithBoxes: Record<string, number>; petWithoutBoxes: Record<string, number>; breeds: Record<string, number> } | null>(null);
   const [labels, setLabels] = useState<LabelItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [labelling, setLabelling] = useState(false);
@@ -481,28 +481,44 @@ export default function Labels() {
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-3 mb-3">
-            {[
-              { label: "Confirmed My Dog", value: stats.myDog, color: "text-green-600" },
-              { label: "Confirmed Other Dog", value: stats.otherDog, color: "text-orange-600" },
-              { label: "Confirmed No Dog", value: stats.confirmedNoDog, color: "text-gray-600" },
-            ].map(({ label, value, color }) => (
-              <div key={label} className="bg-white rounded-lg border border-gray-200 p-3 text-center">
-                <p className={`text-2xl font-bold ${color}`}>{value}</p>
-                <p className="text-xs text-gray-500">{label}</p>
+          <div className="flex flex-wrap gap-3 mb-3">
+            {pets.map((pet) => (
+              <div key={pet.petId} className="flex-1 min-w-[140px] bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <p className="text-2xl font-bold text-green-600">{stats.petCounts?.[pet.petId] ?? 0}</p>
+                <p className="text-xs text-gray-500">Confirmed {pet.name}</p>
               </div>
             ))}
+            {stats.myDog > 0 && (
+              <div className="flex-1 min-w-[140px] bg-white rounded-lg border border-gray-200 p-3 text-center">
+                <p className="text-2xl font-bold text-green-600">{stats.myDog}</p>
+                <p className="text-xs text-gray-500">Legacy My Dog</p>
+              </div>
+            )}
+            <div className="flex-1 min-w-[140px] bg-white rounded-lg border border-gray-200 p-3 text-center">
+              <p className="text-2xl font-bold text-orange-600">{stats.otherDog}</p>
+              <p className="text-xs text-gray-500">Confirmed Other Dog</p>
+            </div>
+            <div className="flex-1 min-w-[140px] bg-white rounded-lg border border-gray-200 p-3 text-center">
+              <p className="text-2xl font-bold text-gray-600">{stats.confirmedNoDog}</p>
+              <p className="text-xs text-gray-500">Confirmed No Dog</p>
+            </div>
           </div>
           {/* Bounding box coverage */}
-          <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="flex flex-wrap gap-3 mb-6">
             {[
-              { label: "My Dog", withBoxes: stats.myDogWithBoxes, withoutBoxes: stats.myDogWithoutBoxes, color: "text-green-600" },
+              ...pets.map((pet) => ({
+                label: pet.name,
+                withBoxes: stats.petWithBoxes?.[pet.petId] ?? 0,
+                withoutBoxes: stats.petWithoutBoxes?.[pet.petId] ?? 0,
+                color: "text-green-600",
+              })),
+              ...(stats.myDog > 0 ? [{ label: "Legacy My Dog", withBoxes: stats.myDogWithBoxes, withoutBoxes: stats.myDogWithoutBoxes, color: "text-green-600" }] : []),
               { label: "Other Dog", withBoxes: stats.otherDogWithBoxes, withoutBoxes: stats.otherDogWithoutBoxes, color: "text-orange-600" },
             ].map(({ label, withBoxes, withoutBoxes, color }) => {
               const total = withBoxes + withoutBoxes;
               const pct = total > 0 ? Math.round((withBoxes / total) * 100) : 0;
               return (
-                <div key={label} className="bg-white rounded-lg border border-gray-200 p-3">
+                <div key={label} className="flex-1 min-w-[240px] bg-white rounded-lg border border-gray-200 p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className={`text-xs font-medium ${color}`}>{label} — Bounding Boxes</span>
                     <span className="text-xs text-gray-500">{pct}% covered</span>
