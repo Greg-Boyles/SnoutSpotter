@@ -11,5 +11,3 @@ public record PetProfile(
 public record CreatePetRequest(string Name, string? Breed = null);
 
 public record UpdatePetRequest(string Name, string? Breed = null);
-
-public record MigratePetRequest(string PetId);

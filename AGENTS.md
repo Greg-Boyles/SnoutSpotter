@@ -34,7 +34,7 @@ SnoutSpotter/
 │   │   │   ├── ExportsController.cs        # POST /api/ml/export, GET/DELETE /api/ml/exports
 │   │   │   ├── LabelsController.cs         # GET/PUT /api/ml/labels, auto-label, upload, rerun-inference
 │   │   │   ├── ModelsController.cs         # GET /api/ml/models, activate, upload-url
-│   │   │   ├── PetsController.cs           # GET/POST/PUT/DELETE /api/pets, POST /api/pets/migrate
+│   │   │   ├── PetsController.cs           # GET/POST/PUT/DELETE /api/pets
 │   │   │   ├── TrainingAgentsController.cs # GET /api/training/agents, trigger update
 │   │   │   ├── TrainingJobsController.cs   # POST/GET /api/training/jobs, cancel, delete
 │   │   │   └── StatsController.cs          # GET /api/stats, GET /api/stats/activity, GET /api/stats/health
@@ -44,7 +44,7 @@ SnoutSpotter/
 │   │   │   ├── ExportService.cs       # Training dataset export trigger and management
 │   │   │   ├── HealthService.cs       # CloudWatch heartbeat checks
 │   │   │   ├── LabelService.cs        # Label CRUD, breed, stats, upload, backfill
-│   │   │   ├── PetService.cs          # Pet profile CRUD + legacy my_dog data migration (labels + clips)
+│   │   │   ├── PetService.cs          # Pet profile CRUD
 │   │   │   ├── SettingsService.cs     # Server settings CRUD + validation (int/float/select)
 │   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, config validation
 │   │   │   ├── S3PresignService.cs    # Presigned URL generation
@@ -109,7 +109,7 @@ SnoutSpotter/
 │   │   │   │   ├── ClipDetail.tsx     # Video player + keyframes + detections
 │   │   │   │   ├── Detections.tsx     # Detection results list
 │   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions (dynamic per-pet filters)
-│   │   │   │   ├── Pets.tsx           # Pet profile CRUD + legacy my_dog data migration trigger
+│   │   │   │   ├── Pets.tsx           # Pet profile CRUD
 │   │   │   │   ├── TrainingExports.tsx# Training dataset export: config form (class balancing, background), list, download
 │   │   │   │   ├── Models.tsx         # YOLOv8 detection model version management: upload, list, activate
 │   │   │   │   ├── SubmitTraining.tsx # New training job form: dataset, hyperparams, prefill from prev job
@@ -357,7 +357,6 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `POST /api/pets` — create pet (`{"name": "Biscuit", "breed": "Labrador Retriever"}`). Service generates `petId = pet-{slug}-{rand}`.
 - `PUT /api/pets/{petId}` — update name/breed (REMOVE clause drops breed when omitted)
 - `DELETE /api/pets/{petId}` — delete. Rejected with 409 Conflict if the pet is referenced in the active model's `class_map.json` (retrain without the pet first).
-- `POST /api/pets/migrate` — one-time migration of legacy `my_dog` labels + clips to a specific pet. Body: `{"petId": "pet-biscuit-a3f2"}`. Scans `by-confirmed-label` GSI (labels) and `by-detection` GSI (clips), read-modify-writes `detection_type` plus nested `keyframe_detections[*].label` and `keyframe_detections[*].detections[*].label` entries.
 
 **ML Labels & Training:**
 - `POST /api/ml/auto-label` — trigger auto-labeling for keyframes
@@ -500,11 +499,7 @@ Named pet profiles. Composite key is household-ready from day one — currently 
 | `photo_url` | String | (optional) future use |
 | `created_at` | String | ISO 8601. **Drives YOLO class ordering** — pets sorted by `created_at` become class 0..N-1, with `other_dog` as the last class. |
 
-**Service:** `PetService.cs` handles CRUD plus `MigrateLegacyLabelsAsync(petId)`:
-- Query labels GSI `by-confirmed-label` where `confirmed_label = "my_dog"` → UpdateItem sets `confirmed_label = petId`
-- Query clips GSI `by-detection` where `detection_type = "my_dog"` → read full clip, rewrite every `my_dog` occurrence inside `keyframe_detections[*].label` and `keyframe_detections[*].detections[*].label`, then UpdateItem with new `detection_type` + patched list
-
-Pet deletion is refused with a 409 Conflict if the pet ID appears in `models/dog-classifier/class_map.json` — retrain the model without the pet first.
+**Service:** `PetService.cs` handles CRUD. Pet deletion is refused with a 409 Conflict if the pet ID appears in `models/dog-classifier/class_map.json` — retrain the model without the pet first.
 
 ### Exports Table
 
