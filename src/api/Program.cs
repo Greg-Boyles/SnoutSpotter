@@ -1,6 +1,7 @@
 using Amazon.CloudWatch;
 using Amazon.CloudWatchLogs;
 using Amazon.DynamoDBv2;
+using Amazon.ECR;
 using Amazon.IoT;
 using Amazon.IotData;
 using Amazon.KinesisVideo;
@@ -61,6 +62,7 @@ builder.Services.AddSingleton<IAmazonIotData>(sp =>
     });
 });
 
+builder.Services.AddSingleton<IAmazonECR, AmazonECRClient>();
 builder.Services.AddSingleton<IAmazonKinesisVideo, AmazonKinesisVideoClient>();
 builder.Services.AddSingleton<IAmazonLambda, AmazonLambdaClient>();
 
