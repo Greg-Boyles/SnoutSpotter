@@ -248,14 +248,14 @@ export default function Labels() {
     }
   };
 
-  const handleBulkConfirmSelected = async (label: "my_dog" | "other_dog" | "no_dog") => {
+  const handleBulkConfirmSelected = async (label: string) => {
     const keys = Array.from(selected);
     if (keys.length === 0) return;
     if (label !== "no_dog" && !bulkBreed) {
       window.alert("Please select a breed before confirming dog labels.");
       return;
     }
-    if (!window.confirm(`Confirm ${keys.length} item${keys.length > 1 ? "s" : ""} as "${label}"${bulkBreed && label !== "no_dog" ? ` (${bulkBreed})` : ""}?`)) return;
+    if (!window.confirm(`Confirm ${keys.length} item${keys.length > 1 ? "s" : ""} as "${petName(label)}"${bulkBreed && label !== "no_dog" ? ` (${bulkBreed})` : ""}?`)) return;
 
     setBulkActioning(true);
     try {
@@ -663,14 +663,17 @@ export default function Labels() {
               <option value="">-- Breed --</option>
               {DOG_BREEDS.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
-            <button
-              onClick={() => handleBulkConfirmSelected("my_dog")}
-              disabled={bulkActioning}
-              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded disabled:opacity-50"
-            >
-              {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Dog className="w-3 h-3" />}
-              My Dog
-            </button>
+            {pets.map((pet) => (
+              <button
+                key={pet.petId}
+                onClick={() => handleBulkConfirmSelected(pet.petId)}
+                disabled={bulkActioning}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded disabled:opacity-50"
+              >
+                {bulkActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Dog className="w-3 h-3" />}
+                {pet.name}
+              </button>
+            ))}
             <button
               onClick={() => handleBulkConfirmSelected("other_dog")}
               disabled={bulkActioning}
@@ -801,42 +804,47 @@ export default function Labels() {
                     </Link>
                   </div>
                   {!isReviewed && pendingConfirm?.key !== item.keyframe_key && (
-                    <div className="p-2 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: "my_dog" }); setPendingBreed("Labrador Retriever"); }}
-                        disabled={isUpdating}
-                        className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded disabled:opacity-50"
-                      >
-                        <Dog className="w-3 h-3" /> My Dog
-                      </button>
-                      <button
-                        onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: "other_dog" }); setPendingBreed("Unknown"); }}
-                        disabled={isUpdating}
-                        className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded disabled:opacity-50"
-                      >
-                        <Dog className="w-3 h-3" /> Other Dog
-                      </button>
-                      <button
-                        onClick={() => handleConfirm(item.keyframe_key, "no_dog")}
-                        disabled={isUpdating}
-                        className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded disabled:opacity-50"
-                      >
-                        <Ban className="w-3 h-3" /> No Dog
-                      </button>
-                      <button
-                        onClick={() => handleReboxSingle(item.keyframe_key)}
-                        disabled={reboxing.has(item.keyframe_key)}
-                        title="Re-run bounding box detection"
-                        className="p-1.5 text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded disabled:opacity-50"
-                      >
-                        {reboxing.has(item.keyframe_key) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
-                      </button>
+                    <div className="p-2 space-y-1" onClick={(e) => e.stopPropagation()}>
+                      {pets.map((pet) => (
+                        <button
+                          key={pet.petId}
+                          onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: pet.petId }); setPendingBreed(pet.breed ?? "Unknown"); }}
+                          disabled={isUpdating}
+                          className="w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded disabled:opacity-50"
+                        >
+                          <Dog className="w-3 h-3" /> {pet.name}
+                        </button>
+                      ))}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => { setPendingConfirm({ key: item.keyframe_key, label: "other_dog" }); setPendingBreed("Unknown"); }}
+                          disabled={isUpdating}
+                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded disabled:opacity-50"
+                        >
+                          <Dog className="w-3 h-3" /> Other Dog
+                        </button>
+                        <button
+                          onClick={() => handleConfirm(item.keyframe_key, "no_dog")}
+                          disabled={isUpdating}
+                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded disabled:opacity-50"
+                        >
+                          <Ban className="w-3 h-3" /> No Dog
+                        </button>
+                        <button
+                          onClick={() => handleReboxSingle(item.keyframe_key)}
+                          disabled={reboxing.has(item.keyframe_key)}
+                          title="Re-run bounding box detection"
+                          className="p-1.5 text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded disabled:opacity-50"
+                        >
+                          {reboxing.has(item.keyframe_key) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+                        </button>
+                      </div>
                     </div>
                   )}
                   {!isReviewed && pendingConfirm?.key === item.keyframe_key && (
                     <div className="p-2 space-y-1" onClick={(e) => e.stopPropagation()}>
                       <p className="text-xs text-gray-500">
-                        {pendingConfirm.label === "my_dog" ? "My Dog" : "Other Dog"} — select breed:
+                        {petName(pendingConfirm.label)} — select breed:
                       </p>
                       <select
                         value={pendingBreed}
