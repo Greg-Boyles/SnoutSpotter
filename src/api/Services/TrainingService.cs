@@ -1,29 +1,46 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Amazon.ECR;
+using Amazon.ECR.Model;
 using Amazon.IotData;
 using Amazon.IotData.Model;
 using Amazon.IoT;
 using Amazon.IoT.Model;
+using Amazon.S3;
+using Amazon.S3.Model;
 using Microsoft.Extensions.Options;
 using SnoutSpotter.Api.Services.Interfaces;
 using SnoutSpotter.Shared.Training;
 
 namespace SnoutSpotter.Api.Services;
 
-public class TrainingService : ITrainingService
+public partial class TrainingService : ITrainingService
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonIotData _iotData;
     private readonly IAmazonIoT _iot;
+    private readonly IAmazonECR _ecr;
+    private readonly IAmazonS3 _s3;
     private readonly AppConfig _config;
 
-    public TrainingService(IAmazonDynamoDB dynamoDb, IAmazonIotData iotData, IAmazonIoT iot, IOptions<AppConfig> config)
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+    private string? _cachedLatestVersion;
+    private DateTime _cacheExpiry;
+
+    [GeneratedRegex(@"^v\d+\.\d+\.\d+$")]
+    private static partial Regex VersionTagRegex();
+
+    public TrainingService(IAmazonDynamoDB dynamoDb, IAmazonIotData iotData, IAmazonIoT iot,
+        IAmazonECR ecr, IAmazonS3 s3, IOptions<AppConfig> config)
     {
         _dynamoDb = dynamoDb;
         _iotData = iotData;
         _iot = iot;
+        _ecr = ecr;
+        _s3 = s3;
         _config = config.Value;
     }
 
@@ -95,6 +112,58 @@ public class TrainingService : ITrainingService
                 new AgentDesiredState { AgentVersion = version }));
 
         await UpdateShadowAsync(thingName, payload);
+    }
+
+    public async Task<string?> GetLatestAgentVersionAsync()
+    {
+        if (_cachedLatestVersion != null && DateTime.UtcNow < _cacheExpiry)
+            return _cachedLatestVersion;
+
+        try
+        {
+            var response = await _s3.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = _config.BucketName,
+                Key = "releases/training-agent/manifest.json"
+            });
+
+            using var reader = new StreamReader(response.ResponseStream);
+            var json = await reader.ReadToEndAsync();
+            var doc = JsonDocument.Parse(json);
+
+            _cachedLatestVersion = doc.RootElement.GetProperty("version").GetString();
+            _cacheExpiry = DateTime.UtcNow.Add(CacheDuration);
+            return _cachedLatestVersion;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<List<TrainingAgentRelease>> ListAgentReleasesAsync()
+    {
+        var latest = await GetLatestAgentVersionAsync();
+        var releases = new List<TrainingAgentRelease>();
+
+        var response = await _ecr.DescribeImagesAsync(new DescribeImagesRequest
+        {
+            RepositoryName = "snout-spotter-training-agent"
+        });
+
+        foreach (var image in response.ImageDetails)
+        {
+            var versionTag = image.ImageTags?.FirstOrDefault(t => VersionTagRegex().IsMatch(t));
+            if (versionTag == null) continue;
+
+            var version = versionTag[1..]; // strip leading 'v'
+            releases.Add(new TrainingAgentRelease(
+                version,
+                image.ImagePushedAt.ToString("O"),
+                version == latest));
+        }
+
+        return releases.OrderByDescending(r => r.ImagePushedAt).ToList();
     }
 
     public async Task<string> SubmitJobAsync(TrainingJobRequest request)

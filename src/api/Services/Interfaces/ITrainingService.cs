@@ -7,6 +7,8 @@ public interface ITrainingService
     Task<List<TrainerAgentSummary>> ListAgentsAsync();
     Task<object?> GetAgentStatusAsync(string thingName);
     Task TriggerAgentUpdateAsync(string thingName, string version);
+    Task<List<TrainingAgentRelease>> ListAgentReleasesAsync();
+    Task<string?> GetLatestAgentVersionAsync();
     Task<string> SubmitJobAsync(TrainingJobRequest request);
     Task<List<TrainingJobSummary>> ListJobsAsync(string? status = null, int limit = 50);
     Task<TrainingJobDetail?> GetJobAsync(string jobId);
@@ -27,6 +29,8 @@ public record TrainerAgentSummary(
     TrainerProgressSummary? CurrentJobProgress);
 
 public record TrainerGpuSummary(string Name, int VramMb, int TemperatureC, int UtilizationPercent);
+
+public record TrainingAgentRelease(string Version, string ImagePushedAt, bool IsLatest);
 
 public record TrainerProgressSummary(int Epoch, int TotalEpochs, double? MAP50);
 

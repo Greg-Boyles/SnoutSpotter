@@ -24,6 +24,14 @@ public class TrainingAgentsController : ControllerBase
         return Ok(new { agents });
     }
 
+    [HttpGet("agents/releases")]
+    public async Task<ActionResult> ListReleases()
+    {
+        var releases = await _trainingService.ListAgentReleasesAsync();
+        var latest = await _trainingService.GetLatestAgentVersionAsync();
+        return Ok(new { releases, latestVersion = latest });
+    }
+
     [HttpGet("agents/{thingName}")]
     public async Task<ActionResult> GetAgentStatus(string thingName)
     {
