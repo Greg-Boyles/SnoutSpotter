@@ -35,7 +35,7 @@ SnoutSpotter/
 │   │   │   ├── LabelsController.cs         # GET/PUT /api/ml/labels, auto-label, upload, rerun-inference
 │   │   │   ├── ModelsController.cs         # GET /api/ml/models, activate, upload-url
 │   │   │   ├── PetsController.cs           # GET/POST/PUT/DELETE /api/pets
-│   │   │   ├── TrainingAgentsController.cs # GET /api/training/agents, trigger update
+│   │   │   ├── TrainingAgentsController.cs # GET /api/training/agents, releases, trigger update
 │   │   │   ├── TrainingJobsController.cs   # POST/GET /api/training/jobs, cancel, delete
 │   │   │   └── StatsController.cs          # GET /api/stats, GET /api/stats/activity, GET /api/stats/health
 │   │   ├── Models/ClipModels.cs       # Record types for API responses
@@ -114,7 +114,7 @@ SnoutSpotter/
 │   │   │   │   ├── Models.tsx         # YOLOv8 detection model version management: upload, list, activate
 │   │   │   │   ├── SubmitTraining.tsx # New training job form: dataset, hyperparams, prefill from prev job
 │   │   │   │   ├── TrainingJobDetail.tsx # Training job detail: stage timeline, epoch progress, metrics, cancel
-│   │   │   │   ├── TrainingAgentDetail.tsx # Agent detail: status, GPU, current job, job history
+│   │   │   │   ├── TrainingAgentDetail.tsx # Agent detail: status, GPU, version selector + deploy, current job, job history
 │   │   │   │   ├── ServerSettings.tsx # Server settings editor: grouped sections, numeric + select inputs
 │   │   │   │   ├── PiPackages.tsx    # Pi release version list, delete, and management
 │   │   │   │   ├── SystemHealth.tsx   # Landing page: API health + device summary table
@@ -177,7 +177,7 @@ SnoutSpotter/
 │   │
 │   └── training-agent/                # .NET training agent (runs in Docker on GPU machine)
 │       ├── Dockerfile                 # Multi-stage: dotnet SDK build + nvidia/cuda:12.1.1 runtime + Python/ultralytics
-│       ├── docker-compose.yml         # NVIDIA runtime, trainer-state volume, AGENT_NAME env var
+│       ├── docker-compose.yml         # NVIDIA runtime, trainer-state volume, host-state bind mount, AGENT_NAME env var
 │       ├── updater.sh                 # Host-side lifecycle: watches exit codes, pulls new image on code=42
 │       └── SnoutSpotter.TrainingAgent/
 │           ├── Program.cs             # Startup: self-register if no state, load config, connect MQTT, poll SQS
@@ -382,6 +382,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/training/agents` — list registered training agents with online status (from IoT shadow)
 - `GET /api/training/agents/{thingName}` — single agent status + full reported shadow
 - `POST /api/training/agents/{thingName}/update` — trigger agent container update (`{"version": "1.2.0"}`)
+- `GET /api/training/agents/releases` — list available agent image versions from ECR with latest flag from S3 manifest
 - `POST /api/training/jobs` — submit a training job (dispatched via SQS to an idle agent)
 - `GET /api/training/jobs?status=running&limit=50` — list training jobs
 - `GET /api/training/jobs/{jobId}` — get job detail (config, progress, result as native typed objects)
@@ -738,7 +739,7 @@ On first start the agent calls `POST /api/trainers/register`, saves certs + `con
 
 **Failed stage tracking:** `JobRunner` tracks `currentStage` and calls `PublishError(jobId, error, stage)` with the stage name. The `UpdateTrainingProgress` Lambda stores it as `failed_stage` in DynamoDB. The UI timeline highlights the failed node in red.
 
-**Self-update:** API writes `desired.agentVersion` → agent exits with code 42 → `updater.sh` pulls new image and restarts.
+**Self-update:** Dashboard version picker (or API) writes `desired.agentVersion` → agent writes version to `/app/host-state/pending-version` bind mount → exits with code 42 → `updater.sh` reads the file, sets `IMAGE_TAG`, persists to `.env` (survives reboots), pulls the pinned image tag → restarts.
 
 **Docker notes:**
 - `shm_size: '8gb'` — required for PyTorch DataLoader workers; the default 64MB `/dev/shm` causes Bus error with multiple workers
