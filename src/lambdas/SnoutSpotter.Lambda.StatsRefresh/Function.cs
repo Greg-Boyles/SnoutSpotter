@@ -167,11 +167,13 @@ public class Function
     private async Task RefreshLabelStatsAsync(string refreshedAt, ILambdaContext context)
     {
         var totalTask = CountLabelsAsync(null, null);
+        var dogsTask = CountLabelsAsync("by-label", "dog");
+        var noDogsTask = CountLabelsAsync("by-label", "no_dog");
         var unreviewedTask = CountLabelsAsync("by-review", "false");
         var reviewedTask = CountLabelsAsync("by-review", "true");
         var confirmedTask = CountConfirmedLabelsAsync();
 
-        await Task.WhenAll(totalTask, unreviewedTask, reviewedTask, confirmedTask);
+        await Task.WhenAll(totalTask, dogsTask, noDogsTask, unreviewedTask, reviewedTask, confirmedTask);
 
         var (confirmedCounts, breedCounts, withBoxes, withoutBoxes) = confirmedTask.Result;
 
@@ -188,6 +190,8 @@ public class Function
         var stats = new
         {
             total = totalTask.Result,
+            dogs = dogsTask.Result,
+            noDogs = noDogsTask.Result,
             reviewed = reviewedTask.Result,
             unreviewed = unreviewedTask.Result,
             myDog = confirmedCounts.GetValueOrDefault("my_dog"),
