@@ -170,6 +170,14 @@ public class ApiStack : Stack
             Resources = new[] { $"arn:aws:sqs:{Region}:{Account}:snout-spotter-backfill-boxes" }
         }));
 
+        // ECR read for training agent release listing
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "ecr:DescribeImages", "ecr:ListImages" },
+            Resources = new[] { $"arn:aws:ecr:{Region}:{Account}:repository/snout-spotter-training-agent" }
+        }));
+
         // SQS SendMessage for training job queue
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
