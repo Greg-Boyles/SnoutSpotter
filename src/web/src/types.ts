@@ -44,6 +44,8 @@ export interface StatsOverview {
   clipsToday: number;
   totalDetections: number;
   myDogDetections: number;
+  knownPetDetections: number;
+  petDetectionCounts?: Record<string, number>;
   lastUploadTime: string | null;
   piOnlineCount: number;
   piTotalCount: number;
@@ -117,6 +119,15 @@ export interface SystemHealth {
   checkedAt: string;
   latestVersion?: string;
   devices: PiDevice[];
+}
+
+export interface Pet {
+  householdId: string;
+  petId: string;
+  name: string;
+  breed?: string;
+  photoUrl?: string;
+  createdAt: string;
 }
 
 export interface PiRelease {

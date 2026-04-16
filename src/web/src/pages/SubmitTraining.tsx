@@ -167,7 +167,7 @@ export default function SubmitTraining() {
       <p className="text-xs text-gray-500 mb-4">
         {jobType === "detector"
           ? "Trains a YOLO model to detect dogs in images. Uses detection-format exports."
-          : "Trains a MobileNetV3 classifier to identify my_dog vs other_dog on cropped patches. Uses classification-format exports."}
+          : "Trains a MobileNetV3 classifier to identify your pets vs other dogs on cropped patches. Uses classification-format exports."}
       </p>
 
       {error && (
@@ -212,7 +212,17 @@ export default function SubmitTraining() {
                       {selectedExp.total_images && (
                         <span><span className="font-medium">{selectedExp.total_images}</span> images total</span>
                       )}
-                      {selectedExp.my_dog_count && (
+                      {/* Per-pet counts from new exports */}
+                      {selectedExp.pet_counts && (() => {
+                        try {
+                          const pc = typeof selectedExp.pet_counts === "string" ? JSON.parse(selectedExp.pet_counts) : selectedExp.pet_counts;
+                          return Object.entries(pc as Record<string, number>).map(([petId, count]) => (
+                            <span key={petId}><span className="font-medium">{String(count)}</span> {petId}</span>
+                          ));
+                        } catch { return null; }
+                      })()}
+                      {/* Legacy my_dog_count for old exports */}
+                      {!selectedExp.pet_counts && selectedExp.my_dog_count && (
                         <span><span className="font-medium">{selectedExp.my_dog_count}</span> my_dog</span>
                       )}
                       {selectedExp.other_dog_count && (

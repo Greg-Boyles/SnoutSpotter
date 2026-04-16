@@ -15,18 +15,31 @@ public class LabelsController : ControllerBase
     private readonly ILabelService _labelService;
     private readonly IClipService _clipService;
     private readonly IStatsRefreshService _statsCache;
+    private readonly IPetService _petService;
     private readonly AppConfig _config;
 
     public LabelsController(
         ILabelService labelService,
         IClipService clipService,
         IStatsRefreshService statsCache,
+        IPetService petService,
         IOptions<AppConfig> config)
     {
         _labelService = labelService;
         _clipService = clipService;
         _statsCache = statsCache;
+        _petService = petService;
         _config = config.Value;
+    }
+
+    private static bool IsValidLabel(string label) =>
+        label == "other_dog" || label == "no_dog" || label.StartsWith("pet-");
+
+    private async Task<bool> ValidatePetLabelAsync(string label)
+    {
+        if (label is "other_dog" or "no_dog") return true;
+        if (!label.StartsWith("pet-")) return false;
+        return await _petService.ExistsAsync(label);
     }
 
     [HttpPost("auto-label")]
@@ -111,8 +124,11 @@ public class LabelsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.ConfirmedLabel))
             return BadRequest(new { error = "confirmedLabel is required" });
 
-        if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
-            return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
+        if (!IsValidLabel(request.ConfirmedLabel))
+            return BadRequest(new { error = "confirmedLabel must be a pet ID (pet-*), 'other_dog', or 'no_dog'" });
+
+        if (!await ValidatePetLabelAsync(request.ConfirmedLabel))
+            return BadRequest(new { error = $"Pet '{request.ConfirmedLabel}' not found" });
 
         await _labelService.UpdateLabelAsync(keyframeKey, request.ConfirmedLabel, request.Breed);
         return Ok(new { message = "Label updated" });
@@ -124,8 +140,11 @@ public class LabelsController : ControllerBase
         if (request.KeyframeKeys == null || request.KeyframeKeys.Count == 0)
             return BadRequest(new { error = "keyframeKeys is required" });
 
-        if (request.ConfirmedLabel is not ("my_dog" or "other_dog" or "no_dog"))
-            return BadRequest(new { error = "confirmedLabel must be 'my_dog', 'other_dog', or 'no_dog'" });
+        if (!IsValidLabel(request.ConfirmedLabel))
+            return BadRequest(new { error = "confirmedLabel must be a pet ID (pet-*), 'other_dog', or 'no_dog'" });
+
+        if (!await ValidatePetLabelAsync(request.ConfirmedLabel))
+            return BadRequest(new { error = $"Pet '{request.ConfirmedLabel}' not found" });
 
         await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel, request.Breed);
         return Ok(new { message = $"Updated {request.KeyframeKeys.Count} labels" });
@@ -149,8 +168,8 @@ public class LabelsController : ControllerBase
         var confirmedLabel = request?.ConfirmedLabel;
         var keys = request?.Keys;
 
-        if (confirmedLabel != null && confirmedLabel is not ("my_dog" or "other_dog"))
-            return BadRequest(new { error = "confirmedLabel must be 'my_dog' or 'other_dog'" });
+        if (confirmedLabel != null && confirmedLabel != "other_dog" && !confirmedLabel.StartsWith("pet-"))
+            return BadRequest(new { error = "confirmedLabel must be a pet ID (pet-*) or 'other_dog'" });
 
         var result = await _labelService.BackfillBoundingBoxesAsync(confirmedLabel, keys);
         return Ok(result);
@@ -158,10 +177,13 @@ public class LabelsController : ControllerBase
 
     [HttpPost("labels/upload")]
     [RequestSizeLimit(100 * 1024 * 1024)] // 100MB total
-    public async Task<ActionResult> UploadTrainingImages([FromQuery] string label = "my_dog", [FromQuery] string? breed = null)
+    public async Task<ActionResult> UploadTrainingImages([FromQuery] string? label = null, [FromQuery] string? breed = null)
     {
-        if (label is not ("my_dog" or "other_dog" or "no_dog"))
-            return BadRequest(new { error = "label must be 'my_dog', 'other_dog', or 'no_dog'" });
+        if (string.IsNullOrWhiteSpace(label))
+            return BadRequest(new { error = "label query parameter is required (pet ID, 'other_dog', or 'no_dog')" });
+
+        if (!IsValidLabel(label))
+            return BadRequest(new { error = "label must be a pet ID (pet-*), 'other_dog', or 'no_dog'" });
 
         var files = Request.Form.Files;
         if (files.Count == 0)

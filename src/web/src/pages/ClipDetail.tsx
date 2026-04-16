@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, Play, Tag, ExternalLink, CheckCircle, Clock, Trash2
 import { api } from "../api";
 import type { Clip } from "../types";
 import { DetectionBadge } from "../components/LabelBadge";
+import { usePets } from "../hooks/usePets";
 
 type OverlayMode = "inference" | "labels";
 
@@ -19,6 +20,7 @@ interface LabelRecord {
 export default function ClipDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { petName } = usePets();
   const [clip, setClip] = useState<Clip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inferring, setInferring] = useState(false);
@@ -223,21 +225,21 @@ export default function ClipDetail() {
                               x={d.boundingBox.x} y={d.boundingBox.y}
                               width={d.boundingBox.width} height={d.boundingBox.height}
                               fill="none"
-                              stroke={d.label === "my_dog" ? "#d97706" : "#6b7280"}
+                              stroke={d.label.startsWith("pet-") || d.label === "my_dog" ? "#d97706" : "#6b7280"}
                               strokeWidth={Math.max(dims.w, dims.h) / 300}
                               rx={4}
                             />
                             <rect
                               x={d.boundingBox.x} y={d.boundingBox.y - 20}
                               width={d.boundingBox.width} height={20}
-                              fill={d.label === "my_dog" ? "#d97706" : "#6b7280"}
+                              fill={d.label.startsWith("pet-") || d.label === "my_dog" ? "#d97706" : "#6b7280"}
                               rx={4}
                             />
                             <text
                               x={d.boundingBox.x + 4} y={d.boundingBox.y - 5}
                               fill="white" fontSize={12} fontFamily="system-ui"
                             >
-                              {d.label} {(d.confidence * 100).toFixed(0)}%
+                              {petName(d.label)} {(d.confidence * 100).toFixed(0)}%
                             </text>
                           </g>
                         ))}
@@ -270,7 +272,7 @@ export default function ClipDetail() {
                     {/* Inference result */}
                     {kd && (
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <DetectionBadge label={kd.label} type="inference" />
+                        <DetectionBadge label={kd.label} displayName={petName(kd.label)} type="inference" />
                         {kd.detections.length > 0 && (
                           <span className="text-xs text-gray-400">
                             {kd.detections.length} box{kd.detections.length !== 1 ? "es" : ""}
@@ -284,10 +286,10 @@ export default function ClipDetail() {
                     {label && (
                       <div className="flex items-center gap-1.5 flex-wrap border-t border-gray-100 pt-1.5">
                         {label.auto_label && (
-                          <DetectionBadge label={label.auto_label} type="auto" />
+                          <DetectionBadge label={label.auto_label} displayName={petName(label.auto_label)} type="auto" />
                         )}
                         {label.confirmed_label && (
-                          <DetectionBadge label={label.confirmed_label} type="confirmed" />
+                          <DetectionBadge label={label.confirmed_label} displayName={petName(label.confirmed_label)} type="confirmed" />
                         )}
                         {label.breed && (
                           <span className="text-xs text-gray-500">{label.breed}</span>

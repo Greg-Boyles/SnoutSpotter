@@ -29,6 +29,7 @@ public class CoreStack : Stack
     public Repository UpdateTrainingProgressEcrRepo { get; }
     public Repository StatsRefreshEcrRepo { get; }
     public Table StatsTable { get; }
+    public Table PetsTable { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -356,6 +357,17 @@ public class CoreStack : Stack
         {
             ParameterName = "/snoutspotter/core/stats-table-name",
             StringValue = StatsTable.TableName
+        });
+
+        // DynamoDB table for pet profiles
+        PetsTable = new Table(this, "PetsTable", new TableProps
+        {
+            TableName = "snout-spotter-pets",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "household_id", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "pet_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.RETAIN,
+            PointInTimeRecovery = true
         });
 
         // ECR repository for Training Agent Docker image

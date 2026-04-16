@@ -5,6 +5,8 @@ public record DashboardStats(
     int ClipsToday,
     int TotalDetections,
     int MyDogDetections,
+    int KnownPetDetections,
+    Dictionary<string, int>? PetDetectionCounts,
     string? LastUploadTime,
     int PiOnlineCount,
     int PiTotalCount,

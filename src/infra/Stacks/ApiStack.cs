@@ -21,6 +21,7 @@ public class ApiStackProps : StackProps
     public required Table ModelsTable { get; init; }
     public string TrainerThingGroupName { get; init; } = "snoutspotter-trainers";
     public required Table StatsTable { get; init; }
+    public required Table PetsTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
@@ -77,7 +78,8 @@ public class ApiStack : Stack
                 ["SETTINGS_TABLE"] = settingsTableName,
                 ["MODELS_TABLE"] = props.ModelsTable.TableName,
                 ["STATS_TABLE"] = props.StatsTable.TableName,
-                ["STATS_REFRESH_FUNCTION"] = "snout-spotter-stats-refresh"
+                ["STATS_REFRESH_FUNCTION"] = "snout-spotter-stats-refresh",
+                ["PETS_TABLE"] = props.PetsTable.TableName
             }
         });
 
@@ -214,6 +216,7 @@ public class ApiStack : Stack
         }));
 
         props.StatsTable.GrantReadWriteData(apiFunction);
+        props.PetsTable.GrantReadWriteData(apiFunction);
 
         // HTTP API Gateway
         var httpApi = new CfnApi(this, "ApiGateway", new CfnApiProps

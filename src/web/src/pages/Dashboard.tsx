@@ -100,7 +100,7 @@ export default function Dashboard() {
           <>
             <StatCard icon={Video} label="Total Clips" value={stats.totalClips} sub={`${stats.clipsToday} today`} />
             <StatCard icon={Search} label="Detections" value={stats.totalDetections} color="bg-blue-50" iconColor="text-blue-600" />
-            <StatCard icon={Dog} label="My Dog" value={stats.myDogDetections} color="bg-green-50" iconColor="text-green-600" />
+            <StatCard icon={Dog} label="Known Pets" value={stats.knownPetDetections || stats.myDogDetections} color="bg-green-50" iconColor="text-green-600" />
             <Link to="/health" className="block">
               <StatCard
                 icon={HardDrive}
@@ -330,13 +330,13 @@ export default function Dashboard() {
                   )}
                   {clip.detectionType && clip.detectionType !== "pending" && (
                     <span className={`absolute top-1 left-1 px-1.5 py-0.5 rounded text-xs font-medium ${
-                      clip.detectionType === "my_dog"
+                      clip.detectionType.startsWith("pet-") || clip.detectionType === "my_dog"
                         ? "bg-green-600 text-white"
                         : clip.detectionType === "other_dog"
                         ? "bg-amber-500 text-white"
                         : "bg-gray-500 text-white"
                     }`}>
-                      {clip.detectionType === "my_dog" ? "My Dog" : clip.detectionType === "no_dog" ? "No Dog" : clip.detectionType}
+                      {clip.detectionType === "no_dog" ? "No Dog" : clip.detectionType === "other_dog" ? "Other Dog" : clip.detectionType === "my_dog" ? "My Dog" : clip.detectionType}
                     </span>
                   )}
                   <span className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black bg-opacity-60 text-white text-xs rounded">

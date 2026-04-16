@@ -33,6 +33,7 @@ public class Function
     private readonly string _bucketName;
     private readonly string _labelsTable;
     private readonly string _exportsTable;
+    private readonly string _petsTable;
     private readonly SettingsReader _settings;
     private float _trainSplitRatio = 0.8f;
     private int _maxParallelDownloads = 20;
@@ -47,6 +48,7 @@ public class Function
             ?? throw new InvalidOperationException("LABELS_TABLE not set");
         _exportsTable = Environment.GetEnvironmentVariable("EXPORTS_TABLE")
             ?? throw new InvalidOperationException("EXPORTS_TABLE not set");
+        _petsTable = Environment.GetEnvironmentVariable("PETS_TABLE") ?? "snout-spotter-pets";
         _settings = new SettingsReader(_dynamoDb);
     }
 
@@ -67,6 +69,7 @@ public class Function
         try
         {
             var labels = await GetAllReviewedLabels(context);
+            var (classMap, labelToIdx) = await BuildClassMapAsync(context);
             context.Logger.LogInformation($"Found {labels.Count} reviewed labels");
 
             if (labels.Count == 0)
@@ -77,15 +80,17 @@ public class Function
 
             // Only include dog labels that have real bounding box data
             var dogLabelsWithBoxes = labels
-                .Where(l => l.ConfirmedLabel is "my_dog" or "other_dog" && HasBoundingBoxes(l.BoundingBoxes))
+                .Where(l => IsKnownPetLabel(l.ConfirmedLabel) && HasBoundingBoxes(l.BoundingBoxes))
                 .ToList();
-            var skippedMyDog = labels.Count(l => l.ConfirmedLabel == "my_dog" && !HasBoundingBoxes(l.BoundingBoxes));
-            var skippedOtherDog = labels.Count(l => l.ConfirmedLabel == "other_dog" && !HasBoundingBoxes(l.BoundingBoxes));
-            var dogLabelsNoBoxes = skippedMyDog + skippedOtherDog;
+            var skippedByClass = labels
+                .Where(l => IsKnownPetLabel(l.ConfirmedLabel) && !HasBoundingBoxes(l.BoundingBoxes))
+                .GroupBy(l => l.ConfirmedLabel)
+                .ToDictionary(g => g.Key, g => g.Count());
+            var dogLabelsNoBoxes = skippedByClass.Values.Sum();
             var noDogLabels = labels.Where(l => l.ConfirmedLabel == "no_dog").ToList();
 
             context.Logger.LogInformation(
-                $"Dogs with boxes: {dogLabelsWithBoxes.Count}, skipped my_dog: {skippedMyDog}, skipped other_dog: {skippedOtherDog}, no_dog (background): {noDogLabels.Count}");
+                $"Dogs with boxes: {dogLabelsWithBoxes.Count}, skipped (no boxes): {dogLabelsNoBoxes}, no_dog (background): {noDogLabels.Count}");
 
             if (dogLabelsWithBoxes.Count == 0)
             {
@@ -99,18 +104,16 @@ public class Function
             if (request.MaxPerClass is > 0)
             {
                 var target = request.MaxPerClass.Value;
-                var myDogList = dogLabelsWithBoxes.Where(l => l.ConfirmedLabel == "my_dog").ToList();
-                var otherDogList = dogLabelsWithBoxes.Where(l => l.ConfirmedLabel == "other_dog").ToList();
+                var byClass = dogLabelsWithBoxes.GroupBy(l => l.ConfirmedLabel)
+                    .ToDictionary(g => g.Key, g => g.ToList());
 
-                context.Logger.LogInformation(
-                    $"Balancing to {target}/class — before: my_dog={myDogList.Count}, other_dog={otherDogList.Count}");
-
-                myDogList = BalanceClass(myDogList, target, rng);
-                otherDogList = BalanceClass(otherDogList, target, rng);
-                dogLabelsWithBoxes = myDogList.Concat(otherDogList).ToList();
-
-                context.Logger.LogInformation(
-                    $"After balancing: my_dog={myDogList.Count}, other_dog={otherDogList.Count}");
+                var balanced = new List<LabelRecord>();
+                foreach (var (cls, items) in byClass)
+                {
+                    context.Logger.LogInformation($"Balancing {cls}: {items.Count} → {target}");
+                    balanced.AddRange(BalanceClass(items, target, rng));
+                }
+                dogLabelsWithBoxes = balanced;
             }
 
             // Apply background filtering
@@ -140,38 +143,44 @@ public class Function
             var valSet = dogLabelsWithBoxes.Skip(dogTrainCount)
                 .Concat(noDogLabels.Skip(noDogTrainCount)).ToList();
 
+            var petCounts = dogLabelsWithBoxes
+                .GroupBy(l => l.ConfirmedLabel)
+                .ToDictionary(g => g.Key, g => g.Count());
+
             var zipPath = $"/tmp/{exportId}.zip";
             if (File.Exists(zipPath)) File.Delete(zipPath);
 
             await using (var zipStream = File.Create(zipPath))
             using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false))
             {
-                await WriteImageSplit(archive, "train", trainSet, request.MergeClasses, context);
-                await WriteImageSplit(archive, "val", valSet, request.MergeClasses, context);
+                await WriteImageSplit(archive, "train", trainSet, request.MergeClasses, labelToIdx, context);
+                await WriteImageSplit(archive, "val", valSet, request.MergeClasses, labelToIdx, context);
 
-                // Write dataset.yaml
-                var datasetYaml = request.MergeClasses
-                    ? """
-                    path: .
-                    train: images/train
-                    val: images/val
-
-                    names:
-                      0: dog
-                    """
-                    : """
-                    path: .
-                    train: images/train
-                    val: images/val
-
-                    names:
-                      0: my_dog
-                      1: other_dog
-                    """;
+                // Write dataset.yaml with dynamic class names
+                var yamlSb = new StringBuilder();
+                yamlSb.AppendLine("path: .");
+                yamlSb.AppendLine("train: images/train");
+                yamlSb.AppendLine("val: images/val");
+                yamlSb.AppendLine();
+                yamlSb.AppendLine("names:");
+                if (request.MergeClasses)
+                {
+                    yamlSb.AppendLine("  0: dog");
+                }
+                else
+                {
+                    for (var i = 0; i < classMap.Length; i++)
+                        yamlSb.AppendLine($"  {i}: {classMap[i]}");
+                }
                 var yamlEntry = archive.CreateEntry("dataset.yaml");
                 await using (var yamlStream = yamlEntry.Open())
                 await using (var writer = new StreamWriter(yamlStream))
-                    await writer.WriteAsync(datasetYaml);
+                    await writer.WriteAsync(yamlSb.ToString());
+
+                // Write class_map.json — authoritative index-to-label mapping
+                var classMapEntry = archive.CreateEntry("class_map.json");
+                await using (var classMapStream = classMapEntry.Open())
+                    await JsonSerializer.SerializeAsync(classMapStream, classMap);
 
                 // Write manifest.json
                 var breedCounts = labels
@@ -179,21 +188,21 @@ public class Function
                     .GroupBy(l => l.Breed)
                     .ToDictionary(g => g.Key, g => g.Count());
 
-                var myDogCount = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "my_dog");
-                var otherDogCount = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "other_dog");
-
                 var manifest = new
                 {
                     export_id = exportId,
                     created_at = DateTime.UtcNow.ToString("O"),
                     format = request.MergeClasses ? "yolo_detection_single_class" : "yolo_detection",
                     total = dogLabelsWithBoxes.Count + noDogLabels.Count,
-                    my_dog = myDogCount,
-                    other_dog = otherDogCount,
+                    // Legacy fields (set to 0 for new exports, kept for old export UI compat)
+                    my_dog = petCounts.GetValueOrDefault("my_dog"),
+                    other_dog = petCounts.GetValueOrDefault("other_dog"),
                     no_dog_background = noDogLabels.Count,
                     dogs_without_boxes_skipped = dogLabelsNoBoxes,
                     train_count = trainSet.Count,
                     val_count = valSet.Count,
+                    pet_counts = petCounts,
+                    class_map = classMap,
                     breeds = breedCounts,
                     config = new
                     {
@@ -231,6 +240,11 @@ public class Function
                 ContentType = "application/zip"
             });
 
+            var petCountsAttr = new AttributeValue
+            {
+                M = petCounts.ToDictionary(kv => kv.Key, kv => new AttributeValue { N = kv.Value.ToString() })
+            };
+
             await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
             {
                 TableName = _exportsTable,
@@ -240,8 +254,8 @@ public class Function
                 },
                 UpdateExpression = "SET #s = :status, completed_at = :completed, s3_key = :key, " +
                                    "total_images = :total, my_dog_count = :mydog, not_my_dog_count = :notmydog, " +
-                                   "no_dog_count = :nodog, skipped_my_dog_count = :skippedmy, skipped_other_dog_count = :skippedother, " +
-                                   "train_count = :train, val_count = :val, size_mb = :size",
+                                   "no_dog_count = :nodog, " +
+                                   "train_count = :train, val_count = :val, size_mb = :size, pet_counts = :pc",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#s"] = "status" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
@@ -249,14 +263,13 @@ public class Function
                     [":completed"] = new() { S = DateTime.UtcNow.ToString("O") },
                     [":key"] = new() { S = s3Key },
                     [":total"] = new() { N = (dogLabelsWithBoxes.Count + noDogLabels.Count).ToString() },
-                    [":mydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "my_dog").ToString() },
-                    [":notmydog"] = new() { N = dogLabelsWithBoxes.Count(l => l.ConfirmedLabel == "other_dog").ToString() },
+                    [":mydog"] = new() { N = petCounts.GetValueOrDefault("my_dog").ToString() },
+                    [":notmydog"] = new() { N = petCounts.GetValueOrDefault("other_dog").ToString() },
                     [":nodog"]        = new() { N = noDogLabels.Count.ToString() },
-                    [":skippedmy"]    = new() { N = skippedMyDog.ToString() },
-                    [":skippedother"] = new() { N = skippedOtherDog.ToString() },
                     [":train"] = new() { N = trainSet.Count.ToString() },
                     [":val"] = new() { N = valSet.Count.ToString() },
                     [":size"] = new() { N = sizeMb.ToString() },
+                    [":pc"] = petCountsAttr,
                 }
             });
 
@@ -276,8 +289,9 @@ public class Function
         try
         {
             var labels = await GetAllReviewedLabels(context);
+            var (classMap, _) = await BuildClassMapAsync(context);
             var dogLabels = labels
-                .Where(l => l.ConfirmedLabel is "my_dog" or "other_dog" && HasBoundingBoxes(l.BoundingBoxes))
+                .Where(l => IsKnownPetLabel(l.ConfirmedLabel) && HasBoundingBoxes(l.BoundingBoxes))
                 .ToList();
 
             if (dogLabels.Count == 0)
@@ -292,12 +306,14 @@ public class Function
             if (request.MaxPerClass is > 0)
             {
                 var target = request.MaxPerClass.Value;
-                var myDog = dogLabels.Where(l => l.ConfirmedLabel == "my_dog").ToList();
-                var otherDog = dogLabels.Where(l => l.ConfirmedLabel == "other_dog").ToList();
-                context.Logger.LogInformation($"Balancing to {target}/class — before: my_dog={myDog.Count}, other_dog={otherDog.Count}");
-                myDog = BalanceClass(myDog, target, rng);
-                otherDog = BalanceClass(otherDog, target, rng);
-                dogLabels = myDog.Concat(otherDog).ToList();
+                var byClass = dogLabels.GroupBy(l => l.ConfirmedLabel).ToDictionary(g => g.Key, g => g.ToList());
+                var balanced = new List<LabelRecord>();
+                foreach (var (cls, items) in byClass)
+                {
+                    context.Logger.LogInformation($"Balancing {cls}: {items.Count} → {target}");
+                    balanced.AddRange(BalanceClass(items, target, rng));
+                }
+                dogLabels = balanced;
             }
 
             // Shuffle and split
@@ -308,6 +324,10 @@ public class Function
 
             context.Logger.LogInformation($"Classification export: {dogLabels.Count} labels, train={trainSet.Count}, val={valSet.Count}");
 
+            var petCounts = dogLabels
+                .GroupBy(l => l.ConfirmedLabel)
+                .ToDictionary(g => g.Key, g => g.Count());
+
             var zipPath = $"/tmp/{exportId}.zip";
             if (File.Exists(zipPath)) File.Delete(zipPath);
 
@@ -317,17 +337,21 @@ public class Function
                 await WriteClassificationSplit(archive, "train", trainSet, request.CropPadding, context);
                 await WriteClassificationSplit(archive, "val", valSet, request.CropPadding, context);
 
-                // Manifest
-                var myDogCount = dogLabels.Count(l => l.ConfirmedLabel == "my_dog");
-                var otherDogCount = dogLabels.Count(l => l.ConfirmedLabel == "other_dog");
+                // Write class_map.json
+                var classMapEntry = archive.CreateEntry("class_map.json");
+                await using (var cms = classMapEntry.Open())
+                    await JsonSerializer.SerializeAsync(cms, classMap);
+
                 var manifest = new
                 {
                     export_id = exportId,
                     created_at = DateTime.UtcNow.ToString("O"),
                     format = "classification",
                     total = dogLabels.Count,
-                    my_dog = myDogCount,
-                    other_dog = otherDogCount,
+                    my_dog = petCounts.GetValueOrDefault("my_dog"),
+                    other_dog = petCounts.GetValueOrDefault("other_dog"),
+                    pet_counts = petCounts,
+                    class_map = classMap,
                     train_count = trainSet.Count,
                     val_count = valSet.Count,
                     config = new
@@ -352,8 +376,10 @@ public class Function
                 BucketName = _bucketName, Key = s3Key, FilePath = zipPath, ContentType = "application/zip"
             });
 
-            var myDogFinal = dogLabels.Count(l => l.ConfirmedLabel == "my_dog");
-            var otherDogFinal = dogLabels.Count(l => l.ConfirmedLabel == "other_dog");
+            var petCountsAttr = new AttributeValue
+            {
+                M = petCounts.ToDictionary(kv => kv.Key, kv => new AttributeValue { N = kv.Value.ToString() })
+            };
 
             await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
             {
@@ -361,7 +387,7 @@ public class Function
                 Key = new Dictionary<string, AttributeValue> { ["export_id"] = new() { S = exportId } },
                 UpdateExpression = "SET #s = :status, completed_at = :completed, s3_key = :key, " +
                                    "total_images = :total, my_dog_count = :mydog, not_my_dog_count = :notmydog, " +
-                                   "no_dog_count = :nodog, train_count = :train, val_count = :val, size_mb = :size",
+                                   "no_dog_count = :nodog, train_count = :train, val_count = :val, size_mb = :size, pet_counts = :pc",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#s"] = "status" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
@@ -369,12 +395,13 @@ public class Function
                     [":completed"] = new() { S = DateTime.UtcNow.ToString("O") },
                     [":key"] = new() { S = s3Key },
                     [":total"] = new() { N = dogLabels.Count.ToString() },
-                    [":mydog"] = new() { N = myDogFinal.ToString() },
-                    [":notmydog"] = new() { N = otherDogFinal.ToString() },
+                    [":mydog"] = new() { N = petCounts.GetValueOrDefault("my_dog").ToString() },
+                    [":notmydog"] = new() { N = petCounts.GetValueOrDefault("other_dog").ToString() },
                     [":nodog"] = new() { N = "0" },
                     [":train"] = new() { N = trainSet.Count.ToString() },
                     [":val"] = new() { N = valSet.Count.ToString() },
                     [":size"] = new() { N = sizeMb.ToString() },
+                    [":pc"] = petCountsAttr,
                 }
             });
 
@@ -460,7 +487,7 @@ public class Function
         context.Logger.LogInformation($"Classification {split}: {cropIdx} crops written");
     }
 
-    private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, bool mergeClasses, ILambdaContext context)
+    private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, bool mergeClasses, Dictionary<string, int> labelToIdx, ILambdaContext context)
     {
         // Parallel-download all images
         var downloaded = new (byte[] data, string ext, int imgWidth, int imgHeight)[items.Count];
@@ -501,7 +528,7 @@ public class Function
                 await entryStream.WriteAsync(data);
 
             // Write YOLO label file
-            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight, mergeClasses);
+            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight, mergeClasses, labelToIdx);
             var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
             await using (var labelStream = labelEntry.Open())
             await using (var writer = new StreamWriter(labelStream, new UTF8Encoding(false)))
@@ -509,13 +536,13 @@ public class Function
         }
     }
 
-    private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight, bool mergeClasses = false)
+    private static string ConvertToYoloLabels(LabelRecord label, int imgWidth, int imgHeight, bool mergeClasses, Dictionary<string, int> labelToIdx)
     {
         // no_dog = background image, empty label file
         if (label.ConfirmedLabel == "no_dog")
             return "";
 
-        var classId = mergeClasses ? 0 : (label.ConfirmedLabel == "my_dog" ? 0 : 1);
+        var classId = mergeClasses ? 0 : labelToIdx.GetValueOrDefault(label.ConfirmedLabel, 0);
         var boxes = ParseBoundingBoxes(label.BoundingBoxes);
 
         if (boxes.Count == 0)
@@ -590,6 +617,59 @@ public class Function
         }
     }
 
+    /// <summary>
+    /// Build the class mapping: pet IDs sorted by created_at (class 0..N-1), then "other_dog" as last class.
+    /// Returns (classMap array, labelToClassIdx lookup).
+    /// </summary>
+    private async Task<(string[] ClassMap, Dictionary<string, int> LabelToIdx)> BuildClassMapAsync(ILambdaContext context)
+    {
+        var petIds = new List<(string PetId, string CreatedAt)>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _petsTable,
+                KeyConditionExpression = "household_id = :hid",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":hid"] = new() { S = "default" }
+                },
+                ProjectionExpression = "pet_id, created_at",
+                ExclusiveStartKey = lastKey
+            });
+
+            foreach (var item in response.Items)
+            {
+                var petId = item["pet_id"].S;
+                var createdAt = item.GetValueOrDefault("created_at")?.S ?? "";
+                petIds.Add((petId, createdAt));
+            }
+
+            lastKey = response.LastEvaluatedKey;
+        } while (lastKey is { Count: > 0 });
+
+        // Sort by created_at for stable class ordering
+        petIds.Sort((a, b) => string.Compare(a.CreatedAt, b.CreatedAt, StringComparison.Ordinal));
+
+        // Build class map: pet IDs first, then "other_dog"
+        var classMap = petIds.Select(p => p.PetId).Append("other_dog").ToArray();
+        var labelToIdx = new Dictionary<string, int>();
+        for (var i = 0; i < classMap.Length; i++)
+            labelToIdx[classMap[i]] = i;
+
+        // Legacy "my_dog" maps to first pet if available (for backward compat during migration)
+        if (petIds.Count > 0 && !labelToIdx.ContainsKey("my_dog"))
+            labelToIdx["my_dog"] = 0;
+
+        context.Logger.LogInformation($"Class map: [{string.Join(", ", classMap)}]");
+        return (classMap, labelToIdx);
+    }
+
+    private static bool IsKnownPetLabel(string label) =>
+        label.StartsWith("pet-") || label is "my_dog" or "other_dog";
+
     private async Task<List<LabelRecord>> GetAllReviewedLabels(ILambdaContext context)
     {
         var labels = new List<LabelRecord>();
@@ -612,7 +692,7 @@ public class Function
             foreach (var item in response.Items)
             {
                 var confirmedLabel = item.GetValueOrDefault("confirmed_label")?.S ?? "";
-                if (confirmedLabel is not ("my_dog" or "other_dog" or "no_dog")) continue;
+                if (confirmedLabel != "no_dog" && !IsKnownPetLabel(confirmedLabel)) continue;
 
                 labels.Add(new LabelRecord
                 {

@@ -16,6 +16,7 @@ public class ExportDatasetStackProps : StackProps
     public required Bucket DataBucket { get; init; }
     public required Table LabelsTable { get; init; }
     public required Table ExportsTable { get; init; }
+    public required Table PetsTable { get; init; }
 }
 
 public class ExportDatasetStack : Stack
@@ -38,6 +39,7 @@ public class ExportDatasetStack : Stack
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["LABELS_TABLE"] = props.LabelsTable.TableName,
                 ["EXPORTS_TABLE"] = props.ExportsTable.TableName,
+                ["PETS_TABLE"] = props.PetsTable.TableName,
                 ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
             }
         });
@@ -46,6 +48,7 @@ public class ExportDatasetStack : Stack
         props.DataBucket.GrantPut(exportFunction, "training-exports/*");
         props.LabelsTable.GrantReadData(exportFunction);
         props.ExportsTable.GrantReadWriteData(exportFunction);
+        props.PetsTable.GrantReadData(exportFunction);
         exportFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,

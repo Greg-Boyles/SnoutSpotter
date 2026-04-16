@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-SnoutSpotter is a motion-triggered video capture system running on Raspberry Pi devices, with cloud-based ML inference to detect dogs (and identify a specific dog). Clips are uploaded to AWS, processed through an ingest pipeline, analysed by ML models, and viewable via a React web dashboard protected by Okta authentication.
+SnoutSpotter is a motion-triggered video capture system running on Raspberry Pi devices, with cloud-based ML inference to detect dogs (and identify which specific pet it is). Users create named pet profiles (e.g. "Biscuit", "Luna") via the dashboard; labels and detections use pet IDs (`pet-{slug}-{rand}`) rather than a fixed binary my_dog/other_dog split. Clips are uploaded to AWS, processed through an ingest pipeline, analysed by ML models, and viewable via a React web dashboard protected by Okta authentication.
 
 **Tech stack:** .NET 8 / C#, AWS CDK, Python 3, React + TypeScript + Vite + Tailwind CSS, Terraform, AWS (Lambda, DynamoDB, S3, IoT Core, CloudFront, API Gateway, ECR), Okta OIDC.
 
@@ -34,6 +34,7 @@ SnoutSpotter/
 │   │   │   ├── ExportsController.cs        # POST /api/ml/export, GET/DELETE /api/ml/exports
 │   │   │   ├── LabelsController.cs         # GET/PUT /api/ml/labels, auto-label, upload, rerun-inference
 │   │   │   ├── ModelsController.cs         # GET /api/ml/models, activate, upload-url
+│   │   │   ├── PetsController.cs           # GET/POST/PUT/DELETE /api/pets, POST /api/pets/migrate
 │   │   │   ├── TrainingAgentsController.cs # GET /api/training/agents, trigger update
 │   │   │   ├── TrainingJobsController.cs   # POST/GET /api/training/jobs, cancel, delete
 │   │   │   └── StatsController.cs          # GET /api/stats, GET /api/stats/activity, GET /api/stats/health
@@ -43,6 +44,7 @@ SnoutSpotter/
 │   │   │   ├── ExportService.cs       # Training dataset export trigger and management
 │   │   │   ├── HealthService.cs       # CloudWatch heartbeat checks
 │   │   │   ├── LabelService.cs        # Label CRUD, breed, stats, upload, backfill
+│   │   │   ├── PetService.cs          # Pet profile CRUD + legacy my_dog data migration (labels + clips)
 │   │   │   ├── SettingsService.cs     # Server settings CRUD + validation (int/float/select)
 │   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, config validation
 │   │   │   ├── S3PresignService.cs    # Presigned URL generation
@@ -106,7 +108,8 @@ SnoutSpotter/
 │   │   │   │   ├── ClipsBrowser.tsx   # Paginated clip grid
 │   │   │   │   ├── ClipDetail.tsx     # Video player + keyframes + detections
 │   │   │   │   ├── Detections.tsx     # Detection results list
-│   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions
+│   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions (dynamic per-pet filters)
+│   │   │   │   ├── Pets.tsx           # Pet profile CRUD + legacy my_dog data migration trigger
 │   │   │   │   ├── TrainingExports.tsx# Training dataset export: config form (class balancing, background), list, download
 │   │   │   │   ├── Models.tsx         # YOLOv8 detection model version management: upload, list, activate
 │   │   │   │   ├── SubmitTraining.tsx # New training job form: dataset, hyperparams, prefill from prev job
@@ -121,6 +124,8 @@ SnoutSpotter/
 │   │   │   │   ├── DeviceShadow.tsx   # Raw IoT device shadow JSON viewer
 │   │   │   │   └── CommandHistory.tsx # Per-device command history
 │   │   │   ├── constants.ts            # Shared constants: DOG_BREEDS
+│   │   │   ├── hooks/
+│   │   │   │   └── usePets.ts          # Module-level cache of pet list + invalidate() + petName() lookup
 │   │   │   └── components/
 │   │   │       ├── BoundingBoxOverlay.tsx
 │   │   │       ├── ErrorBoundary.tsx   # Global error boundary with fallback UI
@@ -221,7 +226,8 @@ SnoutSpotter/
               │ S3 event notification
               ▼
          [Lambda: RunInference]
-              │ Custom YOLOv8 detection (my_dog / other_dog / no_dog + bounding boxes)
+              │ Custom YOLOv8 detection: class names loaded from models/dog-classifier/class_map.json
+              │ (pet-{slug}-{rand} per named pet + "other_dog", plus "no_dog" for no detection)
               ▼
          [DynamoDB: keyframe_detections list updated on clip record]
 
@@ -313,7 +319,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs` + `snout-spotter-stats`, ECR repos |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs` + `snout-spotter-stats` + `snout-spotter-pets` (PK: household_id, SK: pet_id), ECR repos |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars; also hosts `snout-spotter-stats-refresh` Lambda (same image, `APP_MODE=stats-refresh`) invoked on-demand |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
@@ -343,15 +349,23 @@ All main API endpoints require a valid Okta JWT Bearer token.
 - `GET /api/stats/health` — multi-device health (all Pi shadows with camera, system, upload stats)
 
 **Detections:**
-- `GET /api/detections?type=my_dog&limit=50` — list detection results
+- `GET /api/detections?type={petId}&limit=50` — list detection results. `type` accepts any `pet-*` ID, `other_dog`, `no_dog`, or legacy `my_dog`.
+
+**Pets:**
+- `GET /api/pets` — list all pet profiles for the current household (currently hardcoded to `default`)
+- `GET /api/pets/{petId}` — single pet detail
+- `POST /api/pets` — create pet (`{"name": "Biscuit", "breed": "Labrador Retriever"}`). Service generates `petId = pet-{slug}-{rand}`.
+- `PUT /api/pets/{petId}` — update name/breed (REMOVE clause drops breed when omitted)
+- `DELETE /api/pets/{petId}` — delete. Rejected with 409 Conflict if the pet is referenced in the active model's `class_map.json` (retrain without the pet first).
+- `POST /api/pets/migrate` — one-time migration of legacy `my_dog` labels + clips to a specific pet. Body: `{"petId": "pet-biscuit-a3f2"}`. Scans `by-confirmed-label` GSI (labels) and `by-detection` GSI (clips), read-modify-writes `detection_type` plus nested `keyframe_detections[*].label` and `keyframe_detections[*].detections[*].label` entries.
 
 **ML Labels & Training:**
 - `POST /api/ml/auto-label` — trigger auto-labeling for keyframes
-- `GET /api/ml/labels/stats` — label counts + breed distribution (cached in `snout-spotter-stats`, same stale-while-revalidate pattern)
-- `GET /api/ml/labels?reviewed=false&confirmedLabel=my_dog&breed=Labrador+Retriever` — paginated labels (filterable)
-- `PUT /api/ml/labels/{keyframeKey}` — update label (`confirmedLabel`, optional `breed`)
-- `POST /api/ml/labels/bulk-confirm` — bulk confirm labels with breed
-- `POST /api/ml/labels/upload?label=other_dog&breed=Chihuahua` — upload training images
+- `GET /api/ml/labels/stats` — label counts (per-pet via `petCounts` / `petWithBoxes` / `petWithoutBoxes` maps) + breed distribution. Also returns legacy `myDog`/`otherDog` totals for backward compat with pre-migration data. Cached in `snout-spotter-stats`, same stale-while-revalidate pattern.
+- `GET /api/ml/labels?reviewed=false&confirmedLabel={petId}&breed=Labrador+Retriever` — paginated labels. `confirmedLabel` accepts any `pet-*` ID, `other_dog`, `no_dog`, or legacy `my_dog`.
+- `PUT /api/ml/labels/{keyframeKey}` — update label (`confirmedLabel`: pet_id / `other_dog` / `no_dog`, optional `breed`). `LabelService` validates the pet exists via `IPetService`.
+- `POST /api/ml/labels/bulk-confirm` — bulk confirm labels with breed (same accepted labels as above)
+- `POST /api/ml/labels/upload?label={petId}&breed=Chihuahua` — upload training images. `label` must be a valid pet_id, `other_dog`, or `no_dog` — there is no default.
 - `POST /api/ml/labels/backfill-breed` — set breed on existing labels missing it
 - `POST /api/ml/export` — trigger training dataset export (optional body: `maxPerClass`, `includeBackground`, `backgroundRatio` for class balancing)
 - `GET /api/ml/exports` — list exports
@@ -419,7 +433,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
 | `date` | String | `YYYY/MM/DD` |
 | `keyframe_count` | Number | Number of extracted keyframes |
 | `keyframe_keys` | String Set | S3 keys for keyframe images |
-| `detection_type` | String | `pending`, `my_dog`, `other_dog`, `no_dog`, `none` |
+| `detection_type` | String | `pending`, `no_dog`, `none`, `other_dog`, or a pet ID (`pet-{slug}-{rand}`). Legacy clips may still have `my_dog` until migrated. |
 | `detection_count` | Number | Number of detections found |
 | `keyframe_detections` | List | List of Maps: per-keyframe detection results (see below) |
 | `created_at` | String | ISO 8601 timestamp |
@@ -430,10 +444,10 @@ All main API endpoints require a valid Okta JWT Bearer token.
 [
   {
     "keyframeKey": "keyframes/2026/03/27/clip_0001.jpg",
-    "label": "my_dog",
+    "label": "pet-biscuit-a3f2",
     "detections": [
       {
-        "label": "my_dog",
+        "label": "pet-biscuit-a3f2",
         "confidence": 0.92,
         "boundingBox": { "x": 100, "y": 50, "width": 200, "height": 300 }
       }
@@ -441,6 +455,7 @@ All main API endpoints require a valid Okta JWT Bearer token.
   }
 ]
 ```
+Label values match `detection_type`: any `pet-*` ID, `other_dog`, `no_dog`, or legacy `my_dog`.
 
 **GSIs:**
 - `all-by-time` — PK: fixed value, SK: `timestamp` (server-side ordering across all clips)
@@ -456,8 +471,8 @@ All main API endpoints require a valid Okta JWT Bearer token.
 |-----------|------|-------------|
 | `keyframe_key` (PK) | String | S3 key for the keyframe image |
 | `clip_id` | String | Source clip reference (or "uploaded" for manual uploads) |
-| `auto_label` | String | `dog`, `no_dog` (ML detection result) |
-| `confirmed_label` | String | `my_dog`, `other_dog`, `no_dog` (human review) |
+| `auto_label` | String | `dog`, `no_dog` (COCO ML detection result — stays binary; individual pet identification happens on confirm) |
+| `confirmed_label` | String | Pet ID (`pet-{slug}-{rand}`), `other_dog`, or `no_dog` (human review). Legacy records may still contain `my_dog` until migrated. |
 | `breed` | String | Dog breed (e.g., "Labrador Retriever", "Chihuahua") |
 | `confidence` | Number | ML detection confidence score |
 | `bounding_boxes` | String | JSON array of detection boxes |
@@ -468,7 +483,28 @@ All main API endpoints require a valid Okta JWT Bearer token.
 **GSIs:**
 - `by-review` — PK: `reviewed`, SK: `labelled_at`
 - `by-label` — PK: `auto_label`, SK: `labelled_at`
-- `by-confirmed-label` — PK: `confirmed_label`, SK: `labelled_at`
+- `by-confirmed-label` — PK: `confirmed_label`, SK: `labelled_at` (used to query per-pet counts and drive the migration from `my_dog` → pet_id)
+
+### Pets Table
+
+**Table:** `snout-spotter-pets` | **Billing:** Pay-per-request
+
+Named pet profiles. Composite key is household-ready from day one — currently a single hardcoded `default` household.
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `household_id` (PK) | String | Currently always `"default"`. When multi-household is added, this becomes the real household identifier. |
+| `pet_id` (SK) | String | `pet-{slug}-{rand}` — slug derived from the name (lowercase, alphanumeric only), `rand` is 4 hex chars of a GUID. |
+| `name` | String | Human-friendly pet name (e.g. `Biscuit`) |
+| `breed` | String | (optional) Breed — removed via UpdateItem `REMOVE breed` when set to null/empty |
+| `photo_url` | String | (optional) future use |
+| `created_at` | String | ISO 8601. **Drives YOLO class ordering** — pets sorted by `created_at` become class 0..N-1, with `other_dog` as the last class. |
+
+**Service:** `PetService.cs` handles CRUD plus `MigrateLegacyLabelsAsync(petId)`:
+- Query labels GSI `by-confirmed-label` where `confirmed_label = "my_dog"` → UpdateItem sets `confirmed_label = petId`
+- Query clips GSI `by-detection` where `detection_type = "my_dog"` → read full clip, rewrite every `my_dog` occurrence inside `keyframe_detections[*].label` and `keyframe_detections[*].detections[*].label`, then UpdateItem with new `detection_type` + patched list
+
+Pet deletion is refused with a 409 Conflict if the pet ID appears in `models/dog-classifier/class_map.json` — retrain the model without the pet first.
 
 ### Exports Table
 
@@ -481,12 +517,14 @@ All main API endpoints require a valid Okta JWT Bearer token.
 | `created_at` | String | ISO 8601 timestamp |
 | `config` | Map (M) | Export options: `include_background` (BOOL), `background_ratio` (N), `max_per_class` (N, optional) |
 | `s3_key` | String | S3 key for the exported zip |
-| `total_images` | Number | Total images included (my_dog + other_dog with boxes + no_dog) |
-| `my_dog_count` | Number | Count of my_dog labels included |
-| `not_my_dog_count` | Number | Count of other_dog labels included |
+| `total_images` | Number | Total images included (dog labels with boxes + no_dog) |
+| `pet_counts` | Map (M) | Per-label counts as a DynamoDB Map, e.g. `{"pet-biscuit-a3f2": 150, "other_dog": 80}`. Written by current exports. |
 | `no_dog_count` | Number | Count of no_dog labels included (background images) |
-| `skipped_my_dog_count` | Number | my_dog labels excluded — no bounding box |
-| `skipped_other_dog_count` | Number | other_dog labels excluded — no bounding box |
+| `skipped_no_boxes_count` | Number | Dog-labelled items excluded because they have no bounding box |
+| `my_dog_count` | Number | Legacy — count of `my_dog` labels. Present on pre-migration exports only; new exports set `pet_counts` instead. |
+| `not_my_dog_count` | Number | Legacy — count of `other_dog` labels (pre-migration exports only) |
+| `skipped_my_dog_count` | Number | Legacy — pre-migration exports only |
+| `skipped_other_dog_count` | Number | Legacy — pre-migration exports only |
 | `train_count` | Number | Training split count |
 | `val_count` | Number | Validation split count |
 | `size_mb` | Number | Zip file size |
@@ -546,9 +584,9 @@ Holds pre-computed dashboard metrics. Written by `snout-spotter-stats-refresh` L
 
 | `stat_id` (PK) | Contents |
 |----------------|----------|
-| `"dashboard"` | `total_clips`, `clips_today`, `total_detections`, `my_dog_detections`, `last_upload_time`, `pi_online_count`, `pi_total_count`, `refreshed_at` (all Number or String) |
+| `"dashboard"` | `total_clips`, `clips_today`, `total_detections`, `known_pet_detections`, `pet_detection_counts` (Map: pet_id → count), `last_upload_time`, `pi_online_count`, `pi_total_count`, `refreshed_at`. Also writes `my_dog_detections` for backward compat during transition; `StatsRefreshService` falls back to it if `known_pet_detections` is missing. |
 | `"activity"` | `data` (JSON string: `[{date, count}]` for 14 days), `refreshed_at` |
-| `"label_stats"` | `data` (JSON string of label stats object from `LabelService.GetStatsAsync()`), `refreshed_at` |
+| `"label_stats"` | `data` (JSON string of label stats object from `LabelService.GetStatsAsync()` — includes `petCounts`, `petWithBoxes`, `petWithoutBoxes` maps plus legacy `myDog`/`otherDog` totals), `refreshed_at` |
 
 **Stale-while-revalidate:** When `refreshed_at` is older than 5 minutes, `StatsRefreshService.TriggerRefreshIfStale()` fires a `lambda:InvokeFunction` (Event type, async) to `snout-spotter-stats-refresh`. The API returns cached data immediately; the next request after the Lambda completes gets fresh data. A per-instance 4-minute cooldown prevents duplicate invocations.
 
@@ -654,8 +692,14 @@ Config changes are written to the IoT shadow desired state, picked up by the Pi 
 ## ML Training Workflow
 
 **Inference pipeline:** Two modes controlled by `inference.pipeline_mode` server setting:
-- **Single-stage (legacy):** Fine-tuned YOLOv8n with 2 classes (`my_dog`=0, `other_dog`=1). Output `[1, 6, 8400]`.
-- **Two-stage (recommended):** COCO-pretrained YOLO detects all dogs (class 16), then a MobileNetV3-Small classifier identifies `my_dog` vs `other_dog` on each cropped patch. Combined confidence = detector × classifier. Classifier input: `[1,3,224,224]`, output: `[1,2]` (softmax).
+- **Single-stage (legacy):** Fine-tuned YOLOv8n. Class count + names come from `models/dog-classifier/class_map.json` (loaded at cold start). Output `[1, 4+N, 8400]` where N = number of classes (pets + `other_dog`). If no class_map is present, falls back to `["my_dog", "other_dog"]` for backward compat.
+- **Two-stage (recommended):** COCO-pretrained YOLO detects all dogs (class 16), then a MobileNetV3-Small classifier identifies which pet (or `other_dog`) on each cropped patch. Class names also come from `class_map.json`. Combined confidence = detector × classifier. Classifier input: `[1,3,224,224]`, output: `[1,N]` softmax.
+
+**`class_map.json`** is the authoritative index-to-label mapping, produced by ExportDataset and carried through the full pipeline:
+1. `ExportDataset` Lambda reads the pets table, orders pets by `created_at` (class 0..N-1), appends `"other_dog"` as the last class, and writes the resulting array both into the dataset ZIP (`class_map.json`) and into `dataset.yaml` (`names:` map).
+2. The training agent uploads the `class_map.json` to `models/dog-classifier/versions/{version}/class_map.json` alongside the `best.onnx` upload.
+3. On `POST /api/ml/models/activate`, `ModelService` copies the versioned `class_map.json` to `models/dog-classifier/class_map.json` atomically with `best.onnx` (tolerant of legacy models where no class_map exists).
+4. RunInference (and `verify_onnx.py` / `verify_classifier.py`) load `class_map.json` at cold start and use its ordering to index prediction output. Warm instances keep stale data until recycled — acceptable same as the ONNX session caching.
 
 **S3 model paths:**
 - Detector: `models/dog-detector/best.onnx` (active), `models/dog-detector/versions/{version}/best.onnx`
@@ -680,7 +724,7 @@ docker compose pull && docker compose up -d
 ```
 On first start the agent calls `POST /api/trainers/register`, saves certs + `config.yaml` to the `trainer-state` Docker volume, and connects. Subsequent starts skip registration.
 
-**Dispatch a job:** Submit via the dashboard (Training page) → select job type (detector or classifier) → API dispatches via SQS with `jobType` → agent downloads ML scripts + dataset from S3, runs `train_detector.py` or `train_classifier.py` based on job type, uploads `best.onnx` to `models/dog-detector/versions/` or `models/dog-classifier/versions/`, then registers the model in the `snout-spotter-models` DynamoDB table with `source: "training"`, linked `training_job_id`, and final metrics.
+**Dispatch a job:** Submit via the dashboard (Training page) → select job type (detector or classifier) → API dispatches via SQS with `jobType` → agent downloads ML scripts + dataset from S3, runs `train_detector.py` or `train_classifier.py` based on job type, uploads `best.onnx` to `models/dog-detector/versions/` or `models/dog-classifier/versions/` alongside the dataset's `class_map.json`, then registers the model in the `snout-spotter-models` DynamoDB table with `source: "training"`, linked `training_job_id`, final metrics, and `classes` derived from `class_map.json` (falls back to `["my_dog", "other_dog"]` for legacy datasets without one).
 
 **Job stages (in order):**
 
@@ -716,7 +760,7 @@ Training scripts in `src/ml/` can be run directly if preferred.
 
 **End-to-end flow:**
 1. Pi records clips → keyframes extracted → AutoLabel Lambda detects dogs + bounding boxes
-2. Human reviews labels in dashboard (Labels page) — confirms `my_dog`/`other_dog`/`no_dog` + breed
+2. Human reviews labels in dashboard (Labels page) — assigns each dog to a specific pet profile (e.g. `Biscuit`) or `other_dog` / `no_dog`, plus breed. Auto-labeled `dog` entries stay unreviewed until assigned; if only one pet exists, future workflows may auto-confirm to that pet.
 3. Export dataset from dashboard (Training Exports page):
    - **Detection export:** YOLO format with bounding box labels. Use `mergeClasses=true` for single-class dog detector.
    - **Classification export:** Crops bounding boxes into `train/my_dog/`, `train/other_dog/` folders for classifier training.
@@ -740,7 +784,9 @@ Training scripts in `src/ml/` can be run directly if preferred.
 
 **Detection dataset format** (from ExportDataset Lambda):
 ```
-dataset.yaml          ← names: { 0: my_dog, 1: other_dog } or { 0: dog } when mergeClasses=true
+dataset.yaml          ← names: { 0: pet-biscuit-a3f2, 1: pet-luna-b7e1, 2: other_dog }
+                        (or { 0: dog } when mergeClasses=true)
+class_map.json        ← JSON array of class names in class-index order; authoritative mapping
 images/train/
 images/val/
 labels/train/         ← YOLO format: class cx cy w h (normalised)
@@ -751,10 +797,11 @@ labels.csv
 
 **Classification dataset format:**
 ```
-train/my_dog/*.jpg
+train/<pet-id>/*.jpg  ← one folder per pet (e.g. train/pet-biscuit-a3f2/)
 train/other_dog/*.jpg
-val/my_dog/*.jpg
+val/<pet-id>/*.jpg
 val/other_dog/*.jpg
+class_map.json
 manifest.json
 ```
 
@@ -809,7 +856,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 - **Pi Management API has no auth** — Pi devices connect directly, cannot use Okta
 - **CORS** is locked to `allowedOrigin` on main API; open on Pi Management
 - **Naming:** IoT things prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
-- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-classifier/versions/` + `best.onnx` + `active.json`, `models/yolov8n.onnx` + `yolov8s.onnx` + `yolov8m.onnx` (COCO pretrained for AutoLabel), `releases/pi/`, `releases/ml-training/`, `training-checkpoints/`, `terraform/`
+- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-detector/versions/{version}/best.onnx`, `models/dog-classifier/versions/{version}/best.onnx` + `class_map.json`, `models/dog-classifier/best.onnx` + `class_map.json` (active copies written atomically during activation), `models/yolov8n.onnx` + `yolov8s.onnx` + `yolov8m.onnx` (COCO pretrained for AutoLabel), `releases/pi/`, `releases/ml-training/`, `training-checkpoints/`, `terraform/`
 
 ---
 
@@ -843,15 +890,15 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 14. **DynamoDB `FilterExpression` with `Limit`** — `Limit` applies *before* `FilterExpression`. A query with `Limit=30` and a filter may return 0 results even when matching items exist. Use the `by-confirmed-label` GSI for direct queries instead of filtering on the `by-review` GSI.
 
-15. **Training label types** — Three confirmed labels: `my_dog`, `other_dog`, `no_dog`. The `auto_label` field uses `dog`/`no_dog` (binary). `my_dog` and `other_dog` both map to `auto_label=dog`. In single-stage mode, the detector trains on 2 YOLO classes: `my_dog` (class 0) and `other_dog` (class 1). In two-stage mode, the detector trains on 1 class: `dog` (class 0, merged), and the classifier trains on 2 classes: `my_dog`, `other_dog` from cropped patches. Training exports support both detection format (YOLO labels) and classification format (cropped image folders).
+15. **Training label types** — Confirmed labels are dynamic: one entry per pet profile (e.g. `pet-biscuit-a3f2`), plus `other_dog` and `no_dog`. The `auto_label` field stays binary (`dog` / `no_dog`) — COCO AutoLabel only identifies "is this a dog", pet identity comes from human review. Any `pet-*` ID and `other_dog` map to `auto_label=dog`. In single-stage mode, the detector trains on N+1 YOLO classes (N pets sorted by `created_at`, then `other_dog`). In two-stage mode, the detector trains on 1 class (`dog`) and the classifier trains on N+1 classes from cropped patches. Legacy `my_dog` values are still accepted anywhere a pet_id is — they're migrated to a real pet via `POST /api/pets/migrate`.
 
 16. **Breed data on labels** — Breed is required when confirming dog labels (my_dog/other_dog). My dog defaults to "Labrador Retriever". 120 breeds from ImageNet/Stanford Dogs dataset are supported. Breed is stored in DynamoDB and included in training exports via `labels.csv`.
 
 17. **System Health is split across two pages** — `/health` is a clean landing page with device summary table. `/device/:thingName` is the full device detail page. Sub-pages (config, logs, commands, shadow) link back to the detail page, not `/health`.
 
-18. **Model deployment** — RunInference supports two pipeline modes: **single-stage** uses `models/dog-classifier/best.onnx` (fine-tuned 2-class YOLO), **two-stage** uses `models/dog-detector/best.onnx` (COCO YOLO or single-class fine-tuned) + `models/dog-classifier/best.onnx` (MobileNetV3 classifier). Models are managed via the Models page with Detector/Classifier tabs, versioned uploads, and activate. AutoLabel uses COCO-pretrained YOLOv8 models (`models/yolov8{n,s,m}.onnx`) selected via the `autolabel.model_key` server setting — a warm Lambda reloads the model if the setting changes.
+18. **Model deployment** — RunInference supports two pipeline modes: **single-stage** uses `models/dog-classifier/best.onnx` (fine-tuned YOLO with N+1 classes), **two-stage** uses `models/dog-detector/best.onnx` (COCO YOLO or single-class fine-tuned) + `models/dog-classifier/best.onnx` (MobileNetV3 classifier with N+1 outputs). Both pipelines read `models/dog-classifier/class_map.json` for class names — activation copies both `best.onnx` and `class_map.json` from the versioned S3 prefix atomically. Models are managed via the Models page with Detector/Classifier tabs, versioned uploads, and activate. AutoLabel uses COCO-pretrained YOLOv8 models (`models/yolov8{n,s,m}.onnx`) selected via the `autolabel.model_key` server setting — a warm Lambda reloads the model if the setting changes.
 
-19. **Custom YOLOv8 output format** — A fine-tuned YOLOv8 with 2 classes outputs tensor shape `[1, 6, 8400]` (4 bbox coords + 2 class scores). COCO-pretrained outputs `[1, 84, 8400]` (80 classes). In two-stage mode, the detector uses COCO class 16 (dog) for detection, then the classifier (`[1,3,224,224]` → `[1,2]` softmax) identifies my_dog vs other_dog. The RunInference Lambda dynamically reads the number of classes from the output tensor dimensions.
+19. **Custom YOLOv8 output format** — A fine-tuned YOLOv8 outputs tensor shape `[1, 4+N, 8400]` where N is the number of classes from `class_map.json` (pets + `other_dog`). COCO-pretrained outputs `[1, 84, 8400]` (80 classes). In two-stage mode, the detector uses COCO class 16 (dog) for detection, then the classifier (`[1,3,224,224]` → `[1,N]` softmax) identifies which pet — again keyed by `class_map.json`. The RunInference Lambda dynamically reads the number of classes from the output tensor dimensions and maps indices to labels via the class map.
 
 20. **Keyframe detections are DynamoDB native** — Detection results are stored as a DynamoDB List of Maps (`keyframe_detections`) on the clips table, not as a JSON string. Each entry contains the keyframe key, overall label, and a list of detection boxes with bounding coordinates. The API parses these directly into typed DTOs.
 
@@ -890,3 +937,13 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 37. **Server settings system** — `SnoutSpotter.Contracts/ServerSettings.cs` defines all settings centrally with `SettingSpec(Label, Default, Type, Min, Max, Description, Options)`. Types: `int`, `float`, `select`. The `select` type uses an `Options` string array for allowed values (e.g. model key). `SettingsReader` (used by Lambdas) caches all values for 5 minutes. Settings are stored in DynamoDB `snout-spotter-settings` (PK: `setting_key`). The API (`SettingsService`) validates on write; the UI renders dropdowns for `select` type and numeric inputs for `int`/`float`.
 
 38. **IoT Shadow null serialization for agent state** — `AgentReportedState.CurrentJobId` and `CurrentJobProgress` must NOT have `[JsonIgnore(WhenWritingNull)]`. IoT Shadow uses merge-patch semantics — omitting a field leaves the old value in the shadow. To clear `currentJobId` after a job finishes, the agent must explicitly serialize `null`. Only truly static fields (like `hostname`) use `WhenWritingNull`.
+
+39. **Pet ID format and origin** — Pet IDs are `pet-{slug}-{rand}` where `slug` is the lowercase-alphanumeric form of the name (empty slugs fall back to `"pet"`) and `rand` is 4 hex chars of a fresh GUID. The `pet-` prefix is load-bearing — every piece of code that needs to distinguish a named pet from fixed labels uses `label.StartsWith("pet-")` (e.g. `RunInference.GetDetectionPriority`, frontend `LabelBadge`, `ClipService.GetDetectionsAsync`). Don't invent IDs elsewhere — always go through `PetService.CreateAsync`.
+
+40. **`class_map.json` is authoritative, not `dataset.yaml`** — `ExportDataset` writes both, but only `class_map.json` is uploaded alongside the ONNX and copied during activation. `dataset.yaml` is only consumed by YOLO during training. If you need to know what classes the active model predicts, always read `models/dog-classifier/class_map.json` — never trust the names in a historical `dataset.yaml`. The training agent extracts classes from `class_map.json` for `TrainingResult.Classes`.
+
+41. **Class ordering is stable until pets change** — Pets are sorted by `created_at` → class indices are deterministic across successive exports as long as no pets are added, deleted, or re-ordered. Adding a new pet appends it before `other_dog` (which is always the last class), bumping `other_dog`'s class index. This is why `PetService.DeleteAsync` refuses to delete a pet that appears in the active model's `class_map.json` — removing it would silently renumber classes and break inference. The workflow is: create/delete pet → export → train → activate (which copies the new `class_map.json`).
+
+42. **Retraining is required when pets change** — The active model's class indices are fixed by whichever `class_map.json` was uploaded with it. Creating or renaming pets mid-deployment does not affect inference output until a new model is trained and activated. The UI should surface this (banner on Pets / Models / Training pages). Until the retrain happens, new pet IDs won't appear in detections — inference still only knows the pets that were present at training time.
+
+43. **Legacy `my_dog` fallbacks are everywhere on purpose** — Until `POST /api/pets/migrate` has been run, pre-migration labels, clips, stats cache entries, and exports may still contain `my_dog`. Backward-compat shims live in: `ClipService.GetDetectionsAsync` (queries `my_dog` alongside pet IDs), `LabelService.CountConfirmedLabelsAsync` + stats refresh (count `my_dog` into `myDog` totals), `StatsRefreshService` (reads `my_dog_detections` fallback when `known_pet_detections` absent), RunInference (`_classifierClassNames` defaults to `["my_dog", "other_dog"]` when no `class_map.json`), JobRunner (same fallback for `TrainingResult.Classes`), and several frontend renderers (`Dashboard.tsx` export summary, `ClipDetail` detection SVG, `LabelBadge`, `usePets.petName`). Removing any of these before the user has run the migration will make legacy data invisible or incorrectly labelled. After migration, they can be pruned — but do a grep for `my_dog` before touching any of them and understand which branch you're in.

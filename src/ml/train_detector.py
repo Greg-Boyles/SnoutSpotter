@@ -78,13 +78,20 @@ def get_latest_export(dynamodb, s3, bucket: str) -> tuple[str, str]:
     s3_key = latest["s3_key"]["S"]
 
     total    = latest.get("total_images",    {}).get("N", "?")
-    my_dog   = latest.get("my_dog_count",    {}).get("N", "?")
-    not_mine = latest.get("not_my_dog_count",{}).get("N", "?")
     created  = latest.get("created_at",      {}).get("S", "?")
+
+    # Show per-pet counts if available, fall back to legacy my_dog/not_my_dog
+    pet_counts = latest.get("pet_counts", {}).get("M", {})
+    if pet_counts:
+        counts_str = ", ".join(f"{k}: {v.get('N', '?')}" for k, v in pet_counts.items())
+    else:
+        my_dog   = latest.get("my_dog_count",    {}).get("N", "?")
+        not_mine = latest.get("not_my_dog_count",{}).get("N", "?")
+        counts_str = f"my_dog: {my_dog}, other+background: {not_mine}"
 
     print(f"  Export ID  : {export_id}")
     print(f"  Created    : {created}")
-    print(f"  Images     : {total} total ({my_dog} my_dog, {not_mine} other+background)")
+    print(f"  Images     : {total} total ({counts_str})")
     print(f"  S3 key     : {s3_key}")
     return export_id, s3_key
 

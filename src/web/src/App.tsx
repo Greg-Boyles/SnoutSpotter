@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, NavLink, useLocation } from "react-router-dom";
-import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, GraduationCap, HardDriveDownload, Settings } from "lucide-react";
+import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, GraduationCap, HardDriveDownload, Settings, PawPrint } from "lucide-react";
 import { useOktaAuth, LoginCallback } from "@okta/okta-react";
 import Dashboard from "./pages/Dashboard";
 import ClipsBrowser from "./pages/ClipsBrowser";
@@ -23,6 +23,7 @@ import TrainingJobs from "./pages/TrainingJobs";
 import SubmitTraining from "./pages/SubmitTraining";
 import TrainingJobDetail from "./pages/TrainingJobDetail";
 import TrainingAgentDetail from "./pages/TrainingAgentDetail";
+import Pets from "./pages/Pets";
 import { setAuthGetter } from "./api";
 
 type NavItem = { to: string; icon: React.ElementType; label: string };
@@ -35,6 +36,7 @@ const navGroups: NavGroup[] = [
       { to: "/", icon: LayoutDashboard, label: "Dashboard" },
       { to: "/clips", icon: Video, label: "Clips" },
       { to: "/detections", icon: Search, label: "Activity" },
+      { to: "/pets", icon: PawPrint, label: "Pets" },
       { to: "/live", icon: Radio, label: "Live View" },
     ],
   },
@@ -177,6 +179,7 @@ export default function App() {
                   <Route path="/clips" element={<ClipsBrowser />} />
                   <Route path="/clips/:id" element={<ClipDetail />} />
                   <Route path="/detections" element={<Detections />} />
+                  <Route path="/pets" element={<Pets />} />
                   <Route path="/live" element={<LiveView />} />
                   <Route path="/labels/:keyframeKey" element={<LabelDetail />} />
                   <Route path="/labels" element={<Labels />} />

@@ -5,6 +5,7 @@ import { formatDistanceToNow } from "date-fns";
 import { api } from "../api";
 import { DOG_BREEDS } from "../constants";
 import { LabelBadge } from "../components/LabelBadge";
+import { usePets } from "../hooks/usePets";
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -27,7 +28,8 @@ export default function LabelDetail() {
   const [reboxResult, setReboxResult] = useState("");
   const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
   const [editing, setEditing] = useState(false);
-  const [pendingLabel, setPendingLabel] = useState<"my_dog" | "other_dog" | "no_dog" | null>(null);
+  const { pets, petName } = usePets();
+  const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const [pendingBreed, setPendingBreed] = useState("Unknown");
   const [confirming, setConfirming] = useState(false);
 
@@ -155,7 +157,7 @@ export default function LabelDetail() {
   })();
   const hasBoxes = boundingBoxes.length > 0;
   const filename = keyframeKey.split("/").pop() ?? keyframeKey;
-  const isDogLabel = confirmedLabel === "my_dog" || confirmedLabel === "other_dog";
+  const isDogLabel = confirmedLabel?.startsWith("pet-") || confirmedLabel === "my_dog" || confirmedLabel === "other_dog";
 
   return (
     <div>
@@ -362,12 +364,15 @@ export default function LabelDetail() {
               <div className="space-y-2">
                 <p className="text-xs text-gray-500">Confirm label:</p>
                 <div className="flex flex-col gap-1.5">
-                  <button
-                    onClick={() => { setPendingLabel("my_dog"); setPendingBreed("Labrador Retriever"); }}
-                    className="w-full inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg"
-                  >
-                    <Dog className="w-4 h-4" /> My Dog
-                  </button>
+                  {pets.map((pet) => (
+                    <button
+                      key={pet.petId}
+                      onClick={() => { setPendingLabel(pet.petId); setPendingBreed(pet.breed ?? "Unknown"); }}
+                      className="w-full inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg"
+                    >
+                      <Dog className="w-4 h-4" /> {pet.name}
+                    </button>
+                  ))}
                   <button
                     onClick={() => { setPendingLabel("other_dog"); setPendingBreed("Unknown"); }}
                     className="w-full inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-lg"
@@ -391,7 +396,7 @@ export default function LabelDetail() {
 
             {pendingLabel && pendingLabel !== "no_dog" && (
               <div className="space-y-2">
-                <p className="text-xs text-gray-500">Select breed for {pendingLabel === "my_dog" ? "My Dog" : "Other Dog"}:</p>
+                <p className="text-xs text-gray-500">Select breed for {petName(pendingLabel)}:</p>
                 <select
                   value={pendingBreed}
                   onChange={(e) => setPendingBreed(e.target.value)}

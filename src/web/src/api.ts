@@ -1,4 +1,4 @@
-import type { Clip, Detection, LogEntry, StatsOverview, StreamStartResult, SystemHealth } from "./types";
+import type { Clip, Detection, LogEntry, Pet, StatsOverview, StreamStartResult, SystemHealth } from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
@@ -136,7 +136,7 @@ export const api = {
     postJson<{ message: string }>(`/ml/auto-label${date ? `?date=${date}` : ""}`),
 
   getLabelStats: () =>
-    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; breeds: Record<string, number> }>("/ml/labels/stats"),
+    fetchJson<{ total: number; dogs: number; noDogs: number; reviewed: number; unreviewed: number; myDog: number; otherDog: number; confirmedNoDog: number; myDogWithBoxes: number; myDogWithoutBoxes: number; otherDogWithBoxes: number; otherDogWithoutBoxes: number; petCounts: Record<string, number>; petWithBoxes: Record<string, number>; petWithoutBoxes: Record<string, number>; breeds: Record<string, number> }>("/ml/labels/stats"),
 
   getLabel: (keyframeKey: string) =>
     fetchJson<Record<string, string | null>>(`/ml/labels/${encodeURIComponent(keyframeKey)}`),
@@ -275,6 +275,15 @@ export const api = {
   deletePiRelease: (version: string) =>
     deleteJson<{ message: string }>(`/device/releases/${encodeURIComponent(version)}`),
 
+
+  // Pets
+  listPets: () => fetchJson<Pet[]>("/pets"),
+  getPet: (petId: string) => fetchJson<Pet>(`/pets/${petId}`),
+  createPet: (name: string, breed?: string) => postJson<Pet>("/pets", { name, breed }),
+  updatePet: (petId: string, name: string, breed?: string) => putJson<Pet>(`/pets/${petId}`, { name, breed }),
+  deletePet: (petId: string) => deleteJson<null>(`/pets/${petId}`),
+  migrateLegacyData: (petId: string) =>
+    postJson<{ message: string; labelsUpdated: number; clipsUpdated: number }>("/pets/migrate", { petId }),
 
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>

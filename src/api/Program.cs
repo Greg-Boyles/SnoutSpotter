@@ -36,6 +36,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.ModelsTable = Environment.GetEnvironmentVariable("MODELS_TABLE") ?? "snout-spotter-models";
     cfg.StatsTable = Environment.GetEnvironmentVariable("STATS_TABLE") ?? "snout-spotter-stats";
     cfg.StatsRefreshFunctionName = Environment.GetEnvironmentVariable("STATS_REFRESH_FUNCTION") ?? "snout-spotter-stats-refresh";
+    cfg.PetsTable = Environment.GetEnvironmentVariable("PETS_TABLE") ?? "snout-spotter-pets";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });
@@ -76,6 +77,7 @@ builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ITrainingService, TrainingService>();
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
 builder.Services.AddSingleton<IModelService, ModelService>();
+builder.Services.AddSingleton<IPetService, PetService>();
 builder.Services.AddSingleton<IStatsRefreshService>(sp => new StatsRefreshService(
     sp.GetRequiredService<IAmazonDynamoDB>(),
     sp.GetRequiredService<IAmazonLambda>(),

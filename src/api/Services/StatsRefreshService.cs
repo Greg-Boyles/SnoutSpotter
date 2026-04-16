@@ -41,11 +41,28 @@ public class StatsRefreshService : IStatsRefreshService
         var refreshedAt = item.GetValueOrDefault("refreshed_at")?.S;
         TriggerIfStale("dashboard", refreshedAt);
 
+        var myDogDetections = int.Parse(item.GetValueOrDefault("my_dog_detections")?.N ?? "0");
+        var knownPetDetections = int.Parse(item.GetValueOrDefault("known_pet_detections")?.N ?? "0");
+
+        // Parse per-pet detection counts from DynamoDB map
+        Dictionary<string, int>? petDetectionCounts = null;
+        if (item.TryGetValue("pet_detection_counts", out var petCountsAttr) && petCountsAttr.M?.Count > 0)
+        {
+            petDetectionCounts = petCountsAttr.M
+                .ToDictionary(kv => kv.Key, kv => int.Parse(kv.Value.N ?? "0"));
+        }
+
+        // Fallback: if no known_pet_detections yet, use my_dog_detections
+        if (knownPetDetections == 0 && myDogDetections > 0)
+            knownPetDetections = myDogDetections;
+
         return new DashboardStats(
             TotalClips: int.Parse(item.GetValueOrDefault("total_clips")?.N ?? "0"),
             ClipsToday: int.Parse(item.GetValueOrDefault("clips_today")?.N ?? "0"),
             TotalDetections: int.Parse(item.GetValueOrDefault("total_detections")?.N ?? "0"),
-            MyDogDetections: int.Parse(item.GetValueOrDefault("my_dog_detections")?.N ?? "0"),
+            MyDogDetections: myDogDetections,
+            KnownPetDetections: knownPetDetections,
+            PetDetectionCounts: petDetectionCounts,
             LastUploadTime: item.GetValueOrDefault("last_upload_time")?.S,
             PiOnlineCount: int.Parse(item.GetValueOrDefault("pi_online_count")?.N ?? "0"),
             PiTotalCount: int.Parse(item.GetValueOrDefault("pi_total_count")?.N ?? "0"),

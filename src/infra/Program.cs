@@ -89,6 +89,7 @@ var statsRefreshStack = new StatsRefreshStack(app, "SnoutSpotter-StatsRefresh", 
     ClipsTable = coreStack.ClipsTable,
     LabelsTable = coreStack.LabelsTable,
     StatsTable = coreStack.StatsTable,
+    PetsTable = coreStack.PetsTable,
     IoTThingGroupName = "snoutspotter-pis"
 });
 
@@ -104,6 +105,7 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     ModelsTable = coreStack.ModelsTable,
     TrainerThingGroupName = iotStack.TrainerThingGroupName,
     StatsTable = coreStack.StatsTable,
+    PetsTable = coreStack.PetsTable,
     ApiEcrRepo = coreStack.ApiEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     OktaIssuer = oktaIssuer,
@@ -117,7 +119,8 @@ var exportDatasetStack = new ExportDatasetStack(app, "SnoutSpotter-ExportDataset
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     DataBucket = coreStack.DataBucket,
     LabelsTable = coreStack.LabelsTable,
-    ExportsTable = coreStack.ExportsTable
+    ExportsTable = coreStack.ExportsTable,
+    PetsTable = coreStack.PetsTable
 });
 
 var webStack = new WebStack(app, "SnoutSpotter-Web", new StackProps { Env = env });

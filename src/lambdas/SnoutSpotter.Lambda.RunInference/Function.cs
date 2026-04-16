@@ -17,8 +17,7 @@ namespace SnoutSpotter.Lambda.RunInference;
 
 public class Function
 {
-    private static readonly string[] SingleStageClassNames = ["my_dog", "other_dog"];
-    private static readonly string[] ClassifierClassNames = ["my_dog", "other_dog"];
+    private static readonly string[] FallbackClassNames = ["my_dog", "other_dog"];
     private const int CocoClassDog = 16;
 
     private readonly IAmazonS3 _s3Client;
@@ -34,6 +33,8 @@ public class Function
     private InferenceSession? _classifierSession;
     private string? _loadedDetectorKey;
     private string? _loadedClassifierKey;
+    private string[]? _singleStageClassNames;
+    private string[]? _classifierClassNames;
 
     public Function()
     {
@@ -234,16 +235,19 @@ public class Function
         return lastUnderscore > 0 ? filename[..lastUnderscore] : filename;
     }
 
-    private static string UpgradeDetectionType(string current, string candidate)
-    {
-        var priority = new Dictionary<string, int>
+    private static int GetDetectionPriority(string label) =>
+        label switch
         {
-            ["pending"] = 0, ["none"] = 1, ["no_dog"] = 1, ["other_dog"] = 2, ["my_dog"] = 3
+            "pending" => 0,
+            "none" or "no_dog" => 1,
+            "other_dog" => 2,
+            "my_dog" => 3,
+            _ when label.StartsWith("pet-") => 3,
+            _ => 0
         };
-        return priority.GetValueOrDefault(candidate, 0) > priority.GetValueOrDefault(current, 0)
-            ? candidate
-            : current;
-    }
+
+    private static string UpgradeDetectionType(string current, string candidate) =>
+        GetDetectionPriority(candidate) > GetDetectionPriority(current) ? candidate : current;
 
     private async Task EnsureDetectorLoaded(string modelKey, ILambdaContext context)
     {
@@ -259,6 +263,10 @@ public class Function
         var modelPath = await DownloadModel(modelKey);
         _detectorSession = new InferenceSession(modelPath);
         _loadedDetectorKey = modelKey;
+
+        // Load class_map.json for single-stage model (alongside best.onnx)
+        if (modelKey == _singleStageModelKey)
+            _singleStageClassNames = await LoadClassMapAsync("models/dog-classifier/class_map.json", context);
     }
 
     private async Task EnsureClassifierLoaded(ILambdaContext context)
@@ -275,6 +283,30 @@ public class Function
         var modelPath = await DownloadModel(_classifierModelKey);
         _classifierSession = new InferenceSession(modelPath);
         _loadedClassifierKey = _classifierModelKey;
+
+        // Load class_map.json for classifier
+        _classifierClassNames = await LoadClassMapAsync("models/dog-classifier/class_map.json", context);
+    }
+
+    private async Task<string[]?> LoadClassMapAsync(string s3Key, ILambdaContext context)
+    {
+        try
+        {
+            var response = await _s3Client.GetObjectAsync(_bucketName, s3Key);
+            using var reader = new StreamReader(response.ResponseStream);
+            var json = await reader.ReadToEndAsync();
+            var classMap = JsonSerializer.Deserialize<string[]>(json);
+            if (classMap is { Length: > 0 })
+            {
+                context.Logger.LogInformation($"Loaded class_map.json: [{string.Join(", ", classMap)}]");
+                return classMap;
+            }
+        }
+        catch (Exception ex)
+        {
+            context.Logger.LogWarning($"Could not load {s3Key}: {ex.Message} — using fallback class names");
+        }
+        return null;
     }
 
     private async Task<string> DownloadModel(string modelKey)
@@ -300,10 +332,11 @@ public class Function
         }
 
         var detections = RunYolo(_detectorSession, image, inputSize, confidenceThreshold);
+        var classNames = _singleStageClassNames ?? FallbackClassNames;
 
         foreach (var (classIdx, confidence, box) in detections)
         {
-            var label = classIdx < SingleStageClassNames.Length ? SingleStageClassNames[classIdx] : $"class_{classIdx}";
+            var label = classIdx < classNames.Length ? classNames[classIdx] : $"class_{classIdx}";
             result.Detections.Add(new DetectionBox { Label = label, Confidence = confidence, BoundingBox = box });
         }
 
@@ -399,7 +432,7 @@ public class Function
         using var results = _classifierSession.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, tensor) });
         var output = results.First().AsTensor<float>();
 
-        // Output: [1, 2] — logits for [my_dog, other_dog]
+        // Output: [1, N] — logits for each class
         var numClasses = output.Dimensions[1];
         var bestIdx = 0;
         var bestConf = output[0, 0];
@@ -413,12 +446,16 @@ public class Function
         }
 
         // Apply softmax to get probability
-        var maxVal = Math.Max(output[0, 0], output[0, 1]);
-        var exp0 = MathF.Exp(output[0, 0] - maxVal);
-        var exp1 = MathF.Exp(output[0, 1] - maxVal);
-        var softmaxConf = bestIdx == 0 ? exp0 / (exp0 + exp1) : exp1 / (exp0 + exp1);
+        var maxLogit = bestConf;
+        for (var c = 0; c < numClasses; c++)
+            if (output[0, c] > maxLogit) maxLogit = output[0, c];
+        var expSum = 0f;
+        for (var c = 0; c < numClasses; c++)
+            expSum += MathF.Exp(output[0, c] - maxLogit);
+        var softmaxConf = MathF.Exp(output[0, bestIdx] - maxLogit) / expSum;
 
-        var label = bestIdx < ClassifierClassNames.Length ? ClassifierClassNames[bestIdx] : "other_dog";
+        var classNames = _classifierClassNames ?? FallbackClassNames;
+        var label = bestIdx < classNames.Length ? classNames[bestIdx] : "other_dog";
 
         // If classifier confidence is below threshold, default to other_dog
         if (softmaxConf < confidenceThreshold)

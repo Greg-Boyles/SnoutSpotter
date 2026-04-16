@@ -13,14 +13,16 @@ public class ClipService : IClipService
     private readonly IAmazonDynamoDB _dynamoClient;
     private readonly IS3UrlService _s3UrlService;
     private readonly IAmazonS3 _s3;
+    private readonly IPetService _petService;
     private readonly AppConfig _config;
     private const string TableName = "snout-spotter-clips";
 
-    public ClipService(IAmazonDynamoDB dynamoClient, IS3UrlService s3UrlService, IAmazonS3 s3, IOptions<AppConfig> config)
+    public ClipService(IAmazonDynamoDB dynamoClient, IS3UrlService s3UrlService, IAmazonS3 s3, IPetService petService, IOptions<AppConfig> config)
     {
         _dynamoClient = dynamoClient;
         _s3UrlService = s3UrlService;
         _s3 = s3;
+        _petService = petService;
         _config = config.Value;
     }
 
@@ -141,13 +143,18 @@ public class ClipService : IClipService
             return await QueryDetectionsByTypeAsync(detectionType, limit);
         }
 
-        // No specific type — query both my_dog and other_dog via GSI, merge results
-        var myDogTask = QueryDetectionsByTypeAsync("my_dog", limit);
-        var otherDogTask = QueryDetectionsByTypeAsync("other_dog", limit);
-        await Task.WhenAll(myDogTask, otherDogTask);
+        // No specific type — query all pet IDs + other_dog + legacy my_dog via GSI, merge results
+        var pets = await _petService.ListAsync();
+        var typesToQuery = pets.Select(p => p.PetId)
+            .Append("other_dog")
+            .Append("my_dog") // legacy compat until migrated
+            .ToList();
 
-        return myDogTask.Result
-            .Concat(otherDogTask.Result)
+        var tasks = typesToQuery.Select(t => QueryDetectionsByTypeAsync(t, limit));
+        var results = await Task.WhenAll(tasks);
+
+        return results
+            .SelectMany(r => r)
             .OrderByDescending(d => d.Timestamp)
             .Take(limit)
             .ToList();

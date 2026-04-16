@@ -24,7 +24,7 @@ export default function Detections() {
 
   const filtered =
     filter === "target"
-      ? detections.filter((d) => d.detectionType === "my_dog")
+      ? detections.filter((d) => d.detectionType.startsWith("pet-") || d.detectionType === "my_dog")
       : detections;
 
   return (
@@ -42,7 +42,7 @@ export default function Detections() {
                   : "text-gray-500"
               }`}
             >
-              {f === "all" ? "All" : "My Dog"}
+              {f === "all" ? "All" : "Known Pets"}
             </button>
           ))}
         </div>

@@ -65,13 +65,14 @@ Replace all hardcoded "my_dog" validation with dynamic pet-aware checks.
 - `src/api/Services/ClipService.cs` — `GetDetectionsAsync`: query all pet_ids + "other_dog" via `by-detection` GSI in parallel. For N pets this is N+1 parallel queries — acceptable for household-scale (<10 pets). Merge and sort client-side as before.
 - `src/api/Controllers/StatsController.cs` — replace `MyDogDetections` with `KnownPetDetections` + per-pet breakdown
 - `src/api/Models/DashboardStats.cs` — replace `int MyDogDetections` with `int KnownPetDetections` + `Dictionary<string, int>? PetDetectionCounts`
+- `src/api/Services/StatsRefreshService.cs` — update stats cache write: replace `my_dog_detections` with `known_pet_detections` + per-pet counts (query `by-detection` GSI for each pet_id). Update cache read to map new fields into `DashboardStats`. Handle stale cache entries that still have `my_dog_detections` gracefully (treat as `known_pet_detections` fallback during transition).
 
 ### Phase 4: Frontend Adaptation
 
 Update all pages to use dynamic pet names. Create a `usePets()` hook to fetch and cache the pet list once.
 
 **New files:**
-- `src/web/src/hooks/usePets.ts` — fetches pet list, caches in state, provides name lookup helper
+- `src/web/src/hooks/usePets.ts` — fetches pet list, caches in state, provides name lookup helper. Must expose an `invalidate()` function so that Pets.tsx CRUD operations (create/delete/update) can bust the cache. Use React Query or a manual refetch mechanism — stale pet lists cause wrong labels across Labels, Detections, and Dashboard pages.
 
 **Modified files:**
 - `src/web/src/types.ts` — update StatsOverview (knownPetDetections, petDetectionCounts)
@@ -81,7 +82,7 @@ Update all pages to use dynamic pet names. Create a `usePets()` hook to fetch an
 - `src/web/src/pages/Labels.tsx` — dynamic filter tabs, review buttons per pet, bulk confirm per pet. Upload picker: pet selector instead of hardcoded "my_dog" default.
 - `src/web/src/pages/LabelDetail.tsx` — pet picker buttons instead of "My Dog"/"Other Dog". Render one button per pet + "Other Dog" + "No Dog".
 - `src/web/src/components/LabelBadge.tsx` — dynamic colors: any `pet-*` = green (with pet name from lookup), "other_dog" = orange
-- `src/web/src/pages/TrainingExports.tsx` — per-pet counts instead of my_dog/other_dog
+- `src/web/src/pages/TrainingExports.tsx` — per-pet counts instead of my_dog/other_dog. Handle old export records gracefully: if `my_dog_count`/`not_my_dog_count` present (pre-migration exports), display them as-is with legacy labels; if `pet_counts` map present (new exports), render per-pet breakdown.
 - `src/web/src/pages/ClipDetail.tsx` — pet name in detection badges
 - `src/web/src/pages/SubmitTraining.tsx` — per-pet counts in export manifest display
 
@@ -97,18 +98,20 @@ Make RunInference, ExportDataset, and the training agent handle dynamic class na
   - Line 293: use loaded class names instead of `ClassNames[bestClassIdx]`
   - **Cache invalidation**: `_session` is cached per Lambda instance. On cold start, the latest `best.onnx` + `class_map.json` are loaded. Warm instances use stale data until they recycle — this is acceptable (same as current model caching behavior). No change needed.
 - `src/lambdas/SnoutSpotter.Lambda.ExportDataset/Function.cs`:
-  - Read pets table to build class mapping: class 0..N-1 = pet_ids sorted by created_at, class N = "other_dog"
+  - Read pets table to build class mapping: class 0..N-1 = pet_ids sorted by created_at, class N = "other_dog". **The export determines class ordering** — it writes `class_map.json` as the authoritative index-to-label mapping. Training agent and model activation must preserve this ordering unchanged.
   - Generate dynamic `dataset.yaml` with actual pet names
   - Write `class_map.json` into the export ZIP alongside `dataset.yaml` and `manifest.json`. The training agent extracts and uploads it with the model.
-  - Per-pet counts in export manifest and DynamoDB export record (replace my_dog_count/not_my_dog_count)
+  - Per-pet counts in export manifest and DynamoDB export record: add `pet_counts` map (e.g. `{"pet-biscuit-a3f2": 150, "other_dog": 80}`) alongside legacy `my_dog_count`/`not_my_dog_count` fields (keep legacy fields for old export readability, set to 0 for new exports)
+- `src/api/Controllers/ExportsController.cs` — map new `pet_counts` field from DynamoDB to API response. Fall back to `my_dog_count`/`not_my_dog_count` for pre-migration export records.
   - Replace hardcoded `var classId = label.ConfirmedLabel == "my_dog" ? 0 : 1` with dynamic lookup from class mapping
 - `src/infra/Stacks/ExportDatasetStack.cs` — add PetsTable access + env var
 - `src/training-agent/SnoutSpotter.TrainingAgent/JobRunner.cs`:
   - After training completes, read `dataset.yaml` from the dataset dir to extract class names
   - Upload `class_map.json` to S3 alongside the ONNX model at `models/dog-classifier/versions/{version}/class_map.json`
   - Use extracted class names in `TrainingResult.Classes` instead of hardcoded `["my_dog", "other_dog"]`
-- `src/api/Controllers/LabelsController.cs` — `ActivateModel`: in addition to copying `best.onnx`, also copy `versions/{version}/class_map.json` to `models/dog-classifier/class_map.json`
+- `src/api/Controllers/ModelsController.cs` — `ActivateModel`: in addition to copying `best.onnx`, also copy `versions/{version}/class_map.json` to `models/dog-classifier/class_map.json`
 - `src/ml/verify_onnx.py` — load class_map.json instead of hardcoded `CLASS_NAMES`/`EXPECTED_NUM_CLASSES`
+- `src/ml/verify_classifier.py` — load class_map.json instead of hardcoded `CLASS_NAMES = ["my_dog", "other_dog"]` (lines 27, 65, 85)
 - `src/ml/train_detector.py` — update summary display for per-pet counts
 
 ### Phase 6: Data Migration
@@ -119,8 +122,8 @@ One-time migration of existing "my_dog" data to the first pet profile.
 - `src/api/Controllers/PetsController.cs` — add `POST /api/pets/migrate`
 - `src/api/Services/PetService.cs` — add `MigrateLegacyLabelsAsync(petId)`:
   - Query labels via `by-confirmed-label` GSI where confirmed_label = "my_dog" → update to petId (batch writes, 25 per batch)
-  - Query clips via `by-detection` GSI where detection_type = "my_dog" → update to petId
-  - For `keyframe_detections` list entries: read full clip item, replace "my_dog" labels in-memory, write back. Must handle concurrent updates (use conditional writes with version counter or just accept last-writer-wins for migration).
+  - Query clips via `by-detection` GSI where detection_type = "my_dog" → update top-level `detection_type` to petId
+  - For each matched clip: read full item, replace "my_dog" in all nested locations — `keyframe_detections[*].label` AND `keyframe_detections[*].detections[*].label` — then write back. Must handle concurrent updates (use conditional writes with version counter or just accept last-writer-wins for migration).
   - Return count of migrated records
 - `src/web/src/pages/Pets.tsx` — migration wizard when no pets exist + legacy "my_dog" data detected. Prompt: "Create your first pet profile and migrate existing data."
 
