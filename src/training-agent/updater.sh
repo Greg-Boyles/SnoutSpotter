@@ -42,7 +42,14 @@ while true; do
     EXIT_CODE=$?
 
     if [ "$EXIT_CODE" -eq 42 ]; then
-        echo "Agent requested update — pulling new image..."
+        if [ -f host-state/pending-version ]; then
+            export IMAGE_TAG="v$(cat host-state/pending-version)"
+            echo "Agent requested update to $IMAGE_TAG"
+            rm -f host-state/pending-version
+            sed -i '/^IMAGE_TAG=/d' .env 2>/dev/null
+            echo "IMAGE_TAG=$IMAGE_TAG" >> .env
+        fi
+        echo "Pulling new image..."
         ecr_login
         docker compose pull trainer
         echo "Restarting with new image..."

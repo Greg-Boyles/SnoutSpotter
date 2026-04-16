@@ -185,6 +185,8 @@ try
 
                 logger.LogInformation("Applying update to v{Version}", pendingUpdate);
                 await ReportShadow(updateStatus: "updating");
+                Directory.CreateDirectory("/app/host-state");
+                File.WriteAllText("/app/host-state/pending-version", pendingUpdate);
                 Environment.Exit(ExitCodeUpdate);
             }
             else
@@ -262,6 +264,8 @@ try
                 {
                     logger.LogInformation("Applying deferred update to v{Version}", pendingUpdate);
                     await ReportShadow(updateStatus: "updating");
+                    Directory.CreateDirectory("/app/host-state");
+                    File.WriteAllText("/app/host-state/pending-version", pendingUpdate);
                     Environment.Exit(ExitCodeUpdate);
                 }
             }
