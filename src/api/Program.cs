@@ -165,15 +165,21 @@ app.Use(async (context, next) =>
         if (string.IsNullOrEmpty(householdId) && user.Households.Count == 1)
             householdId = user.Households[0].HouseholdId;
 
-        if (string.IsNullOrEmpty(householdId) || !user.Households.Any(h => h.HouseholdId == householdId))
+        // Validate household membership if a header was provided or auto-selected
+        if (!string.IsNullOrEmpty(householdId))
         {
-            context.Response.StatusCode = 403;
-            context.Response.ContentType = "application/json";
-            await context.Response.WriteAsync("{\"error\":\"Invalid or missing household. Set X-Household-Id header.\"}");
-            return;
+            if (!user.Households.Any(h => h.HouseholdId == householdId))
+            {
+                context.Response.StatusCode = 403;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync("{\"error\":\"You are not a member of this household.\"}");
+                return;
+            }
+            context.Items["HouseholdId"] = householdId;
         }
 
-        context.Items["HouseholdId"] = householdId;
+        // Pass through without HouseholdId if user has no households yet —
+        // allows the app to work before household scoping is enforced in later phases
         context.Items["UserId"] = userId;
     }
 
