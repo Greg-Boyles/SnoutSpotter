@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 using SnoutSpotter.Contracts;
@@ -228,7 +229,7 @@ public class LabelsController : ControllerBase
         // Accept explicit clip IDs or query by date range
         var clipIds = request?.ClipIds?.Count > 0
             ? request.ClipIds
-            : await _clipService.GetClipIdsForDateRangeAsync(request?.DateFrom, request?.DateTo);
+            : await _clipService.GetClipIdsForDateRangeAsync(HttpContext.GetHouseholdId(), request?.DateFrom, request?.DateTo);
         if (clipIds.Count == 0)
             return Ok(new { total = 0, queued = 0 });
 
