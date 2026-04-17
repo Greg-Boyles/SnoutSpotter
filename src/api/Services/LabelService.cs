@@ -371,7 +371,7 @@ public class LabelService : ILabelService
 
         var timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ss");
         var id = Guid.NewGuid().ToString("N")[..8];
-        var s3Key = $"training-uploads/{timestamp}_{id}{ext}";
+        var s3Key = $"{householdId}/training-uploads/{timestamp}_{id}{ext}";
 
         await _s3.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest
         {
@@ -534,7 +534,7 @@ public class LabelService : ILabelService
             await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
             {
                 QueueUrl = _config.BackfillQueueUrl,
-                MessageBody = JsonSerializer.Serialize(new BackfillMessage(batch))
+                MessageBody = JsonSerializer.Serialize(new BackfillMessage(batch, householdId))
             });
 
             batches++;

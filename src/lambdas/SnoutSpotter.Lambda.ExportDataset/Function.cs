@@ -24,6 +24,7 @@ public class ExportRequest
     public string ExportType { get; set; } = "detection";  // "detection" or "classification"
     public float CropPadding { get; set; } = 0.1f;
     public bool MergeClasses { get; set; } = false;  // When true, all dogs → single "dog" class
+    public string? HouseholdId { get; set; }
 }
 
 public class Function
@@ -68,8 +69,8 @@ public class Function
 
         try
         {
-            var labels = await GetAllReviewedLabels(context);
-            var (classMap, labelToIdx) = await BuildClassMapAsync(context);
+            var labels = await GetAllReviewedLabels(request.HouseholdId, context);
+            var (classMap, labelToIdx) = await BuildClassMapAsync(request.HouseholdId, context);
             context.Logger.LogInformation($"Found {labels.Count} reviewed labels");
 
             if (labels.Count == 0)
@@ -229,7 +230,8 @@ public class Function
             var zipSize = new FileInfo(zipPath).Length;
             var sizeMb = Math.Round(zipSize / (1024.0 * 1024.0), 1);
 
-            var s3Key = $"training-exports/{exportId}.zip";
+            var exportPrefix = string.IsNullOrEmpty(request.HouseholdId) ? "training-exports" : $"{request.HouseholdId}/training-exports";
+            var s3Key = $"{exportPrefix}/{exportId}.zip";
             context.Logger.LogInformation($"Uploading {sizeMb}MB zip to s3://{_bucketName}/{s3Key}");
 
             await _s3.PutObjectAsync(new PutObjectRequest
@@ -288,8 +290,8 @@ public class Function
         var exportId = request.ExportId;
         try
         {
-            var labels = await GetAllReviewedLabels(context);
-            var (classMap, _) = await BuildClassMapAsync(context);
+            var labels = await GetAllReviewedLabels(request.HouseholdId, context);
+            var (classMap, _) = await BuildClassMapAsync(request.HouseholdId, context);
             var dogLabels = labels
                 .Where(l => IsKnownPetLabel(l.ConfirmedLabel) && HasBoundingBoxes(l.BoundingBoxes))
                 .ToList();
@@ -368,7 +370,8 @@ public class Function
 
             var zipSize = new FileInfo(zipPath).Length;
             var sizeMb = Math.Round(zipSize / (1024.0 * 1024.0), 1);
-            var s3Key = $"training-exports/{exportId}.zip";
+            var exportPrefix = string.IsNullOrEmpty(request.HouseholdId) ? "training-exports" : $"{request.HouseholdId}/training-exports";
+            var s3Key = $"{exportPrefix}/{exportId}.zip";
 
             context.Logger.LogInformation($"Uploading {sizeMb}MB classification zip to s3://{_bucketName}/{s3Key}");
             await _s3.PutObjectAsync(new PutObjectRequest
@@ -621,10 +624,11 @@ public class Function
     /// Build the class mapping: pet IDs sorted by created_at (class 0..N-1), then "other_dog" as last class.
     /// Returns (classMap array, labelToClassIdx lookup).
     /// </summary>
-    private async Task<(string[] ClassMap, Dictionary<string, int> LabelToIdx)> BuildClassMapAsync(ILambdaContext context)
+    private async Task<(string[] ClassMap, Dictionary<string, int> LabelToIdx)> BuildClassMapAsync(string? householdId, ILambdaContext context)
     {
         var petIds = new List<(string PetId, string CreatedAt)>();
         Dictionary<string, AttributeValue>? lastKey = null;
+        var hhId = householdId ?? "hh-default";
 
         do
         {
@@ -634,7 +638,7 @@ public class Function
                 KeyConditionExpression = "household_id = :hid",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
-                    [":hid"] = new() { S = "default" }
+                    [":hid"] = new() { S = hhId }
                 },
                 ProjectionExpression = "pet_id, created_at",
                 ExclusiveStartKey = lastKey
@@ -670,10 +674,21 @@ public class Function
     private static bool IsKnownPetLabel(string label) =>
         label.StartsWith("pet-") || label is "my_dog" or "other_dog";
 
-    private async Task<List<LabelRecord>> GetAllReviewedLabels(ILambdaContext context)
+    private async Task<List<LabelRecord>> GetAllReviewedLabels(string? householdId, ILambdaContext context)
     {
         var labels = new List<LabelRecord>();
         Dictionary<string, AttributeValue>? lastKey = null;
+
+        var exprValues = new Dictionary<string, AttributeValue>
+        {
+            [":rev"] = new() { S = "true" }
+        };
+        string? filterExpr = null;
+        if (!string.IsNullOrEmpty(householdId))
+        {
+            filterExpr = "household_id = :hid";
+            exprValues[":hid"] = new() { S = householdId };
+        }
 
         do
         {
@@ -682,10 +697,8 @@ public class Function
                 TableName = _labelsTable,
                 IndexName = "by-review",
                 KeyConditionExpression = "reviewed = :rev",
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":rev"] = new() { S = "true" }
-                },
+                FilterExpression = filterExpr,
+                ExpressionAttributeValues = exprValues,
                 ExclusiveStartKey = lastKey
             });
 

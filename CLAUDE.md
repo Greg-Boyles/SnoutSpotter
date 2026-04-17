@@ -16,6 +16,16 @@ Read `AGENTS.md` for full project context (architecture, file layout, data flow,
 - Pi scripts are Python in `src/pi/`. IoT thing names prefixed `snoutspotter-`.
 - CI/CD is GitHub Actions with OIDC. Main pipeline: `deploy.yml`. Always invalidate CloudFront after web deploys.
 
+## Multi-Household Isolation
+
+- **Every API request** resolves the active household from the `X-Household-Id` header, validated against the user's membership in `snout-spotter-users`.
+- **Every DynamoDB query** that returns user-facing data filters by `household_id`. Use `FilterExpression` on existing GSIs with a pagination loop (`Limit=100`, loop until enough results collected) — never use a single query with `Limit` + `FilterExpression` as DynamoDB applies `Limit` before filtering.
+- **Every DynamoDB write** of user data must include `household_id`.
+- **S3 paths** are prefixed with `{household_id}/` (e.g. `hh-default/raw-clips/...`). Global resources (`releases/`, `models/yolov8*.onnx`, `terraform/`) stay at the bucket root.
+- **Lambdas** receive `household_id` either from the S3 key (IngestClip), the clip DynamoDB record (RunInference), or the invocation payload (ExportDataset).
+- **Settings and stats are global** — not scoped per household. Training agents are a shared pool.
+- **IoT device ownership** is stored as a `household_id` attribute on the IoT Thing, checked by `DeviceOwnershipService`.
+
 ## Verification Commands
 
 - C# changes: `dotnet build SnoutSpotter.sln`

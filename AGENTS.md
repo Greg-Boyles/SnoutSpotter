@@ -6,6 +6,8 @@ SnoutSpotter is a motion-triggered video capture system running on Raspberry Pi 
 
 **Tech stack:** .NET 8 / C#, AWS CDK, Python 3, React + TypeScript + Vite + Tailwind CSS, Terraform, AWS (Lambda, DynamoDB, S3, IoT Core, CloudFront, API Gateway, ECR), Okta OIDC.
 
+**Multi-household:** All data is scoped by `household_id`. Users belong to 1+ households (stored in `snout-spotter-users`). The API middleware validates the `X-Household-Id` header against user memberships. S3 paths are prefixed with `{household_id}/`. Settings, stats, and training agents are global.
+
 **Region:** `eu-west-1`
 
 ---
@@ -40,11 +42,14 @@ SnoutSpotter/
 │   │   │   └── StatsController.cs          # GET /api/stats, GET /api/stats/activity, GET /api/stats/health
 │   │   ├── Models/ClipModels.cs       # Record types for API responses
 │   │   ├── Services/
-│   │   │   ├── ClipService.cs         # DynamoDB queries for clips
-│   │   │   ├── ExportService.cs       # Training dataset export trigger and management
+│   │   │   ├── ClipService.cs         # DynamoDB queries for clips (scoped by household_id)
+│   │   │   ├── DeviceOwnershipService.cs # IoT Thing household_id attribute lookup + cache
+│   │   │   ├── ExportService.cs       # Training dataset export trigger and management (scoped by household_id)
 │   │   │   ├── HealthService.cs       # CloudWatch heartbeat checks
-│   │   │   ├── LabelService.cs        # Label CRUD, breed, stats, upload, backfill
-│   │   │   ├── PetService.cs          # Pet profile CRUD
+│   │   │   ├── HouseholdService.cs     # Household CRUD, user membership management
+│   │   │   ├── LabelService.cs        # Label CRUD, breed, stats, upload, backfill (scoped by household_id)
+│   │   │   ├── PetService.cs          # Pet profile CRUD (scoped by household_id)
+│   │   │   ├── UserService.cs         # User auto-provisioning from Okta JWT, cached lookup
 │   │   │   ├── SettingsService.cs     # Server settings CRUD + validation (int/float/select)
 │   │   │   ├── PiUpdateService.cs     # IoT shadow reads/writes, OTA triggers, config validation
 │   │   │   ├── S3PresignService.cs    # Presigned URL generation
@@ -270,11 +275,17 @@ SnoutSpotter/
 - All routes gated by `RequiredAuth` — redirects to Okta login if unauthenticated
 - PKCE flow via `@okta/okta-react` + `@okta/okta-auth-js`
 - Access tokens injected into all API calls via `setAuthGetter` in `api.ts`
+- `X-Household-Id` header injected via `setHouseholdGetter` (reads from `localStorage.activeHouseholdId`)
+- After auth, `HouseholdProvider` calls `GET /api/households` — auto-selects if one household, shows picker if none/multiple
+- Household name displayed in sidebar with dropdown switcher for multi-household users
 - Logout button in sidebar
 
-### API (JWT Bearer)
+### API (JWT Bearer + Household)
 - All controllers have `[Authorize]` — validates Okta JWT on every request
 - `Program.cs` configures `AddAuthentication().AddJwtBearer()` with Okta issuer/audience
+- After auth, middleware extracts `sub` from JWT → looks up user in `snout-spotter-users` (cached 5 min) → validates `X-Household-Id` header against user's household memberships → sets `HttpContext.Items["HouseholdId"]` and `HttpContext.Items["UserId"]`
+- If user has exactly one household, header is optional (auto-selected). If no households, request passes through without `HouseholdId` (for `/api/households` and onboarding flows)
+- Controllers access via `HttpContext.GetHouseholdId()` / `HttpContext.GetUserId()` extension methods
 - **Pi Management API has no auth** — Pi devices cannot authenticate to Okta
 
 ### Pi Devices (IoT Credentials Provider)
@@ -319,12 +330,12 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs` + `snout-spotter-stats` + `snout-spotter-pets` (PK: household_id, SK: pet_id), ECR repos |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs` + `snout-spotter-stats` + `snout-spotter-pets` (PK: household_id, SK: pet_id) + `snout-spotter-users` (PK: user_id) + `snout-spotter-households` (PK: household_id), ECR repos |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars; also hosts `snout-spotter-stats-refresh` Lambda (same image, `APP_MODE=stats-refresh`) invoked on-demand |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
-| IngestStack | Docker Lambda triggered by S3 `raw-clips/` events |
-| InferenceStack | Docker Lambda triggered by S3 `keyframes/` events + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3) |
+| IngestStack | Docker Lambda triggered by S3 events (wildcard matches `raw-clips/` and `*/raw-clips/`). Parses `household_id` from S3 key prefix. |
+| InferenceStack | Docker Lambda triggered by S3 events (wildcard matches `keyframes/` and `*/keyframes/`) + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3). Loads models from `{household_id}/models/`. |
 | WebStack | S3 static site bucket, CloudFront distribution |
 | AutoLabelStack | Docker Lambda (2 GB) + SQS backfill queue (BatchSize=1, MaxConcurrency=2) + settings table read |
 | ExportDatasetStack | Docker Lambda for training dataset packaging (class balancing, background filtering) |
@@ -335,7 +346,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 ## API Endpoints
 
-All main API endpoints require a valid Okta JWT Bearer token.
+All main API endpoints require a valid Okta JWT Bearer token. Most endpoints also require an `X-Household-Id` header (auto-selected if the user belongs to exactly one household). The middleware validates the header against the user's household memberships.
 
 ### Main API (`snout-spotter-api` Lambda)
 
@@ -351,8 +362,12 @@ All main API endpoints require a valid Okta JWT Bearer token.
 **Detections:**
 - `GET /api/detections?type={petId}&limit=50` — list detection results. `type` accepts any `pet-*` ID, `other_dog`, `no_dog`, or legacy `my_dog`.
 
+**Households & Users:**
+- `GET /api/households` — list the current user's households (from `snout-spotter-users` record). Also returns `userId`, `email`, `name`.
+- `POST /api/households` — create a new household (`{"name": "Smith Family"}`), adds the current user as `owner`
+
 **Pets:**
-- `GET /api/pets` — list all pet profiles for the current household (currently hardcoded to `default`)
+- `GET /api/pets` — list all pet profiles for the current household
 - `GET /api/pets/{petId}` — single pet detail
 - `POST /api/pets` — create pet (`{"name": "Biscuit", "breed": "Labrador Retriever"}`). Service generates `petId = pet-{slug}-{rand}`.
 - `PUT /api/pets/{petId}` — update name/breed (REMOVE clause drops breed when omitted)
@@ -489,18 +504,45 @@ Label values match `detection_type`: any `pet-*` ID, `other_dog`, `no_dog`, or l
 
 **Table:** `snout-spotter-pets` | **Billing:** Pay-per-request
 
-Named pet profiles. Composite key is household-ready from day one — currently a single hardcoded `default` household.
+Named pet profiles. Composite key scoped by household.
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `household_id` (PK) | String | Currently always `"default"`. When multi-household is added, this becomes the real household identifier. |
+| `household_id` (PK) | String | Household identifier (e.g. `hh-default`, `hh-smith-a3f2`). |
 | `pet_id` (SK) | String | `pet-{slug}-{rand}` — slug derived from the name (lowercase, alphanumeric only), `rand` is 4 hex chars of a GUID. |
 | `name` | String | Human-friendly pet name (e.g. `Biscuit`) |
 | `breed` | String | (optional) Breed — removed via UpdateItem `REMOVE breed` when set to null/empty |
 | `photo_url` | String | (optional) future use |
 | `created_at` | String | ISO 8601. **Drives YOLO class ordering** — pets sorted by `created_at` become class 0..N-1, with `other_dog` as the last class. |
 
-**Service:** `PetService.cs` handles CRUD. Pet deletion is refused with a 409 Conflict if the pet ID appears in `models/dog-classifier/class_map.json` — retrain the model without the pet first.
+**Service:** `PetService.cs` handles CRUD. Pet deletion is refused with a 409 Conflict if the pet ID appears in `{household_id}/models/dog-classifier/class_map.json` — retrain the model without the pet first.
+
+### Users Table
+
+**Table:** `snout-spotter-users` | **Billing:** Pay-per-request
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `user_id` (PK) | String | Okta `sub` claim (email address) |
+| `email` | String | (optional) From Okta JWT |
+| `name` | String | (optional) From Okta JWT |
+| `households` | List of Maps | `[{ householdId, role, joinedAt }]` — user's household memberships |
+| `created_at` | String | ISO 8601 |
+| `last_login_at` | String | ISO 8601 — debounced, updated at most once per hour |
+
+**Service:** `UserService.cs` auto-provisions on first login from JWT claims. Cached in-memory for 5 minutes.
+
+### Households Table
+
+**Table:** `snout-spotter-households` | **Billing:** Pay-per-request
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `household_id` (PK) | String | e.g. `hh-default`, `hh-smith-a3f2` |
+| `name` | String | Display name (e.g. "Default Household") |
+| `created_at` | String | ISO 8601 |
+
+**Service:** `HouseholdService.cs` handles creation (generates `hh-{slug}-{rand}` ID) and listing.
 
 ### Exports Table
 
@@ -852,7 +894,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 - **Pi Management API has no auth** — Pi devices connect directly, cannot use Okta
 - **CORS** is locked to `allowedOrigin` on main API; open on Pi Management
 - **Naming:** IoT things prefixed `snoutspotter-` (e.g. `snoutspotter-garden`)
-- **S3 layout:** `raw-clips/YYYY/MM/DD/`, `keyframes/YYYY/MM/DD/`, `training-uploads/`, `training-exports/`, `models/dog-detector/versions/{version}/best.onnx`, `models/dog-classifier/versions/{version}/best.onnx` + `class_map.json`, `models/dog-classifier/best.onnx` + `class_map.json` (active copies written atomically during activation), `models/yolov8n.onnx` + `yolov8s.onnx` + `yolov8m.onnx` (COCO pretrained for AutoLabel), `releases/pi/`, `releases/ml-training/`, `training-checkpoints/`, `terraform/`
+- **S3 layout:** All household data is under `{household_id}/` prefix: `{hh}/raw-clips/{device}/YYYY/MM/DD/`, `{hh}/keyframes/{device}/YYYY/MM/DD/`, `{hh}/training-uploads/`, `{hh}/training-exports/`, `{hh}/models/dog-detector/versions/{version}/best.onnx`, `{hh}/models/dog-classifier/versions/{version}/best.onnx` + `class_map.json`, `{hh}/models/dog-classifier/best.onnx` + `class_map.json` (active copies). Global resources at root: `models/yolov8n.onnx` + `yolov8s.onnx` + `yolov8m.onnx` (COCO pretrained for AutoLabel), `releases/pi/`, `releases/ml-training/`, `releases/training-agent/`, `training-checkpoints/`, `terraform/`
 
 ---
 
@@ -884,7 +926,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 13. **Config validation exists in TWO places** — both `PiUpdateService.cs` (`ConfigurableKeys` dict) and `config_schema.py` (`CONFIGURABLE_KEYS` dict) validate config changes. The API validates before writing to the shadow; the Pi validates again when it receives the delta. Both must be updated when adding new configurable settings.
 
-14. **DynamoDB `FilterExpression` with `Limit`** — `Limit` applies *before* `FilterExpression`. A query with `Limit=30` and a filter may return 0 results even when matching items exist. Use the `by-confirmed-label` GSI for direct queries instead of filtering on the `by-review` GSI.
+14. **DynamoDB `FilterExpression` with `Limit`** — `Limit` applies *before* `FilterExpression`. A query with `Limit=30` and a filter may return 0 results even when matching items exist. This is especially critical for `household_id` filtering — all GSI queries that filter by household must use a pagination loop (`Limit=100`, keep scanning until enough results or exhausted). Never use a single query with both `Limit` and `FilterExpression`.
 
 15. **Training label types** — Confirmed labels are dynamic: one entry per pet profile (e.g. `pet-biscuit-a3f2`), plus `other_dog` and `no_dog`. The `auto_label` field stays binary (`dog` / `no_dog`) — COCO AutoLabel only identifies "is this a dog", pet identity comes from human review. Any `pet-*` ID and `other_dog` map to `auto_label=dog`. In single-stage mode, the detector trains on N+1 YOLO classes (N pets sorted by `created_at`, then `other_dog`). In two-stage mode, the detector trains on 1 class (`dog`) and the classifier trains on N+1 classes from cropped patches. Legacy `my_dog` values are still accepted anywhere a pet_id is — they're migrated to a real pet via `POST /api/pets/migrate`.
 
@@ -942,4 +984,6 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 42. **Retraining is required when pets change** — The active model's class indices are fixed by whichever `class_map.json` was uploaded with it. Creating or renaming pets mid-deployment does not affect inference output until a new model is trained and activated. The UI should surface this (banner on Pets / Models / Training pages). Until the retrain happens, new pet IDs won't appear in detections — inference still only knows the pets that were present at training time.
 
-43. **Legacy `my_dog` fallbacks are everywhere on purpose** — Until `POST /api/pets/migrate` has been run, pre-migration labels, clips, stats cache entries, and exports may still contain `my_dog`. Backward-compat shims live in: `ClipService.GetDetectionsAsync` (queries `my_dog` alongside pet IDs), `LabelService.CountConfirmedLabelsAsync` + stats refresh (count `my_dog` into `myDog` totals), `StatsRefreshService` (reads `my_dog_detections` fallback when `known_pet_detections` absent), RunInference (`_classifierClassNames` defaults to `["my_dog", "other_dog"]` when no `class_map.json`), JobRunner (same fallback for `TrainingResult.Classes`), and several frontend renderers (`Dashboard.tsx` export summary, `ClipDetail` detection SVG, `LabelBadge`, `usePets.petName`). Removing any of these before the user has run the migration will make legacy data invisible or incorrectly labelled. After migration, they can be pruned — but do a grep for `my_dog` before touching any of them and understand which branch you're in.
+43. **Multi-household data isolation** — Every DynamoDB table that stores user data has a `household_id` attribute. Every query must filter by it. S3 paths are prefixed with `{household_id}/`. Settings (`snout-spotter-settings`), stats (`snout-spotter-stats`), and training agents are global — not scoped. IoT device ownership is tracked via a `household_id` attribute on the IoT Thing (checked by `DeviceOwnershipService` with 5-min cache). The `HouseholdProvider` React component resolves the active household after auth — if a user has no households, they see a creation form. New user records are auto-provisioned on first login from the JWT `sub` claim.
+
+44. **Legacy `my_dog` fallbacks are everywhere on purpose** — Until `POST /api/pets/migrate` has been run, pre-migration labels, clips, stats cache entries, and exports may still contain `my_dog`. Backward-compat shims live in: `ClipService.GetDetectionsAsync` (queries `my_dog` alongside pet IDs), `LabelService.CountConfirmedLabelsAsync` + stats refresh (count `my_dog` into `myDog` totals), `StatsRefreshService` (reads `my_dog_detections` fallback when `known_pet_detections` absent), RunInference (`_classifierClassNames` defaults to `["my_dog", "other_dog"]` when no `class_map.json`), JobRunner (same fallback for `TrainingResult.Classes`), and several frontend renderers (`Dashboard.tsx` export summary, `ClipDetail` detection SVG, `LabelBadge`, `usePets.petName`). Removing any of these before the user has run the migration will make legacy data invisible or incorrectly labelled. After migration, they can be pruned — but do a grep for `my_dog` before touching any of them and understand which branch you're in.

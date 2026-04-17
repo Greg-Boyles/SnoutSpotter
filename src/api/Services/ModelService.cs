@@ -22,6 +22,12 @@ public class ModelService : IModelService
         ["classifier"] = ("models/dog-classifier/versions/", "models/dog-classifier/best.onnx"),
     };
 
+    private static (string Prefix, string ActiveKey) GetHouseholdPaths(string householdId, string type)
+    {
+        var paths = TypePaths[type];
+        return ($"{householdId}/{paths.Prefix}", $"{householdId}/{paths.ActiveKey}");
+    }
+
     public ModelService(IAmazonDynamoDB dynamoDb, IAmazonS3 s3, IS3PresignService presignService, IOptions<AppConfig> config)
     {
         _dynamoDb = dynamoDb;
@@ -148,13 +154,13 @@ public class ModelService : IModelService
         });
 
         // Copy to active S3 key for RunInference compatibility
-        if (TypePaths.TryGetValue(type, out var paths))
+        if (TypePaths.ContainsKey(type))
         {
-            await _s3.CopyObjectAsync(_bucketName, model.S3Key, _bucketName, paths.ActiveKey);
+            var hhPaths = GetHouseholdPaths(householdId, type);
+            await _s3.CopyObjectAsync(_bucketName, model.S3Key, _bucketName, hhPaths.ActiveKey);
 
-            // Also copy class_map.json if it exists alongside the model
             var classMapVersionKey = model.S3Key.Replace("best.onnx", "class_map.json");
-            var classMapActiveKey = paths.ActiveKey.Replace("best.onnx", "class_map.json");
+            var classMapActiveKey = hhPaths.ActiveKey.Replace("best.onnx", "class_map.json");
             try
             {
                 await _s3.CopyObjectAsync(_bucketName, classMapVersionKey, _bucketName, classMapActiveKey);
@@ -189,10 +195,11 @@ public class ModelService : IModelService
 
     public async Task<(string UploadUrl, string S3Key)> GetUploadUrlAsync(string householdId, string type, string version)
     {
-        if (!TypePaths.TryGetValue(type, out var paths))
+        if (!TypePaths.ContainsKey(type))
             throw new ArgumentException($"Unknown model type: {type}");
 
-        var s3Key = $"{paths.Prefix}{version}.onnx";
+        var hhPaths = GetHouseholdPaths(householdId, type);
+        var s3Key = $"{hhPaths.Prefix}{version}.onnx";
         var uploadUrl = _presignService.GeneratePresignedPutUrl(s3Key, "application/octet-stream");
 
         // Pre-register the model in DynamoDB (size will be 0 until upload completes)
