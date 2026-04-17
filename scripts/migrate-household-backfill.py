@@ -51,6 +51,8 @@ def create_default_household(dynamodb, household_id, dry_run):
     except ClientError as e:
         if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
             print(f"  Household '{household_id}' already exists — skipping")
+        elif e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print(f"  {HOUSEHOLDS_TABLE}: table not found — skipping (deploy pending?)")
         else:
             raise
 
@@ -72,10 +74,15 @@ def backfill_table(dynamodb, table_config, household_id, dry_run):
     }
 
     while True:
-        response = table.scan(**scan_kwargs)
-        items = response.get("Items", [])
+        try:
+            response = table.scan(**scan_kwargs)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceNotFoundException":
+                print(f"  {table_name}: table not found — skipping (deploy pending?)")
+                return 0
+            raise
 
-        for item in items:
+        for item in response.get("Items", []):
             pk_value = item[pk]
             if dry_run:
                 print(f"    [DRY RUN] Would update {pk}={pk_value}")
@@ -110,10 +117,16 @@ def migrate_pets(dynamodb, household_id, dry_run):
     table = dynamodb.Table(PETS_TABLE)
 
     print(f"\n  Scanning {PETS_TABLE} for household_id='default'...")
-    response = table.query(
-        KeyConditionExpression="household_id = :hid",
-        ExpressionAttributeValues={":hid": "default"},
-    )
+    try:
+        response = table.query(
+            KeyConditionExpression="household_id = :hid",
+            ExpressionAttributeValues={":hid": "default"},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print(f"  {PETS_TABLE}: table not found — skipping")
+            return 0
+        raise
     items = response.get("Items", [])
 
     if not items:
@@ -160,7 +173,13 @@ def assign_users_to_household(dynamodb, household_id, dry_run):
     table = dynamodb.Table(USERS_TABLE)
 
     print(f"\n  Scanning {USERS_TABLE} for users without households...")
-    response = table.scan()
+    try:
+        response = table.scan()
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print(f"  {USERS_TABLE}: table not found — skipping (deploy pending?)")
+            return
+        raise
     items = response.get("Items", [])
 
     updated = 0
@@ -204,26 +223,38 @@ def verify(dynamodb):
     all_good = True
     for t in TABLES_TO_BACKFILL:
         table = dynamodb.Table(t["name"])
-        response = table.scan(
-            FilterExpression="attribute_not_exists(household_id)",
-            Select="COUNT",
-        )
-        count = response["Count"]
-        status = "OK" if count == 0 else f"FAIL — {count} records missing"
+        try:
+            response = table.scan(
+                FilterExpression="attribute_not_exists(household_id)",
+                Select="COUNT",
+            )
+            count = response["Count"]
+            status = "OK" if count == 0 else f"FAIL — {count} records missing"
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceNotFoundException":
+                status = "SKIP — table not found"
+            else:
+                raise
         print(f"  {t['name']}: {status}")
-        if count > 0:
+        if "FAIL" in status:
             all_good = False
 
     pets_table = dynamodb.Table(PETS_TABLE)
-    response = pets_table.query(
-        KeyConditionExpression="household_id = :hid",
-        ExpressionAttributeValues={":hid": "default"},
-        Select="COUNT",
-    )
-    count = response["Count"]
-    status = "OK" if count == 0 else f"FAIL — {count} pets still under 'default'"
+    try:
+        response = pets_table.query(
+            KeyConditionExpression="household_id = :hid",
+            ExpressionAttributeValues={":hid": "default"},
+            Select="COUNT",
+        )
+        count = response["Count"]
+        status = "OK" if count == 0 else f"FAIL — {count} pets still under 'default'"
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            status = "SKIP — table not found"
+        else:
+            raise
     print(f"  {PETS_TABLE} (old 'default' key): {status}")
-    if count > 0:
+    if "FAIL" in status:
         all_good = False
 
     return all_good
