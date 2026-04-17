@@ -4,14 +4,23 @@ const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
 
 let getAccessToken: (() => string | undefined) | null = null;
+let getHouseholdId: (() => string | undefined) | null = null;
 
 export function setAuthGetter(getter: () => string | undefined) {
   getAccessToken = getter;
 }
 
+export function setHouseholdGetter(getter: () => string | undefined) {
+  getHouseholdId = getter;
+}
+
 function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
   const token = getAccessToken?.();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const hhId = getHouseholdId?.();
+  if (hhId) headers["X-Household-Id"] = hhId;
+  return headers;
 }
 
 interface DeviceRegistrationResult {
@@ -285,6 +294,13 @@ export const api = {
   createPet: (name: string, breed?: string) => postJson<Pet>("/pets", { name, breed }),
   updatePet: (petId: string, name: string, breed?: string) => putJson<Pet>(`/pets/${petId}`, { name, breed }),
   deletePet: (petId: string) => deleteJson<null>(`/pets/${petId}`),
+
+  // Households
+  listHouseholds: () =>
+    fetchJson<{ households: { householdId: string; name: string; createdAt: string }[]; userId: string; email: string | null; name: string | null }>("/households"),
+
+  createHousehold: (name: string) =>
+    postJson<{ householdId: string; name: string; createdAt: string }>("/households", { name }),
 
   // Pi Management API (separate endpoint)
   registerDevice: (name: string) =>

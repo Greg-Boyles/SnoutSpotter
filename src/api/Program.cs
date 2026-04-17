@@ -12,6 +12,7 @@ using Microsoft.Extensions.Options;
 using SnoutSpotter.Api;
 using SnoutSpotter.Api.Services;
 using SnoutSpotter.Api.Services.Interfaces;
+using SnoutSpotter.Api.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,6 +39,8 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.StatsTable = Environment.GetEnvironmentVariable("STATS_TABLE") ?? "snout-spotter-stats";
     cfg.StatsRefreshFunctionName = Environment.GetEnvironmentVariable("STATS_REFRESH_FUNCTION") ?? "snout-spotter-stats-refresh";
     cfg.PetsTable = Environment.GetEnvironmentVariable("PETS_TABLE") ?? "snout-spotter-pets";
+    cfg.UsersTable = Environment.GetEnvironmentVariable("USERS_TABLE") ?? "snout-spotter-users";
+    cfg.HouseholdsTable = Environment.GetEnvironmentVariable("HOUSEHOLDS_TABLE") ?? "snout-spotter-households";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });
@@ -80,6 +83,8 @@ builder.Services.AddSingleton<ITrainingService, TrainingService>();
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
 builder.Services.AddSingleton<IModelService, ModelService>();
 builder.Services.AddSingleton<IPetService, PetService>();
+builder.Services.AddSingleton<IUserService, UserService>();
+builder.Services.AddSingleton<IHouseholdService, HouseholdService>();
 builder.Services.AddSingleton<IStatsRefreshService>(sp => new StatsRefreshService(
     sp.GetRequiredService<IAmazonDynamoDB>(),
     sp.GetRequiredService<IAmazonLambda>(),
@@ -121,6 +126,66 @@ app.UseSwaggerUI();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.Use(async (context, next) =>
+{
+    if (context.User?.Identity?.IsAuthenticated != true)
+    {
+        await next();
+        return;
+    }
+
+    var path = context.Request.Path.Value ?? "";
+    if (path.StartsWith("/api/households", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase))
+    {
+        var userId = context.User.FindFirst("sub")?.Value
+                     ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userId != null)
+        {
+            context.Items["UserId"] = userId;
+        }
+        await next();
+        return;
+    }
+
+    {
+        var userId = context.User.FindFirst("sub")?.Value
+                     ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            context.Response.StatusCode = 401;
+            return;
+        }
+
+        var userService = context.RequestServices.GetRequiredService<IUserService>();
+        var user = await userService.GetOrCreateAsync(userId, context.User);
+        var householdId = context.Request.Headers["X-Household-Id"].FirstOrDefault();
+
+        if (string.IsNullOrEmpty(householdId) && user.Households.Count == 1)
+            householdId = user.Households[0].HouseholdId;
+
+        // Validate household membership if a header was provided or auto-selected
+        if (!string.IsNullOrEmpty(householdId))
+        {
+            if (!user.Households.Any(h => h.HouseholdId == householdId))
+            {
+                context.Response.StatusCode = 403;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync("{\"error\":\"You are not a member of this household.\"}");
+                return;
+            }
+            context.Items["HouseholdId"] = householdId;
+        }
+
+        // Pass through without HouseholdId if user has no households yet —
+        // allows the app to work before household scoping is enforced in later phases
+        context.Items["UserId"] = userId;
+    }
+
+    await next();
+});
+
 app.MapControllers();
 
 app.Run();

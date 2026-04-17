@@ -144,6 +144,39 @@ public static string GetUserId(this HttpContext context)
 
 ---
 
+## Phase 1.5: Data Migration (DynamoDB backfill)
+
+**Must be run after Phase 1 deploy and before Phase 2 deploy.** Phase 2 scopes all queries by `household_id` — if existing records don't have it, they become invisible.
+
+This phase only backfills the DynamoDB attribute. S3 path migration (moving objects to `{household_id}/...` prefixes) and labels table PK rewrite are deferred to Phase 3 when S3 paths actually change.
+
+### Migration Script
+
+A standalone CLI script (or one-shot Lambda) that:
+
+1. Creates a `hh-default` household in `snout-spotter-households`
+2. Auto-provisions the current Okta user(s) with `hh-default` membership (on next login via existing middleware — or via a direct DDB write for known users)
+3. Scans each table and stamps `household_id = "hh-default"` on every record that doesn't have one:
+   - `snout-spotter-clips` — scan, UpdateItem SET household_id
+   - `snout-spotter-labels` — scan, UpdateItem SET household_id
+   - `snout-spotter-exports` — scan, UpdateItem SET household_id
+   - `snout-spotter-training-jobs` — scan, UpdateItem SET household_id
+   - `snout-spotter-models` — scan, UpdateItem SET household_id
+4. Updates `snout-spotter-pets` — existing records use `household_id = "default"`, needs re-keying to `"hh-default"` (delete + re-insert since it's the PK)
+
+The script must be **idempotent** — safe to re-run if interrupted. Each UpdateItem uses a `ConditionExpression: attribute_not_exists(household_id)` so already-migrated records are skipped.
+
+### Verification
+
+After running, spot-check:
+- `aws dynamodb scan --table snout-spotter-clips --filter-expression "attribute_not_exists(household_id)" --select COUNT` should return 0
+- Same for labels, exports, training-jobs, models
+- `GET /api/pets` still returns pets (re-keyed from `"default"` to `"hh-default"`)
+
+**New file:** `scripts/migrate-household-backfill.sh` (or `.cs` / `.py`)
+
+---
+
 ## Phase 2: DynamoDB — Household Scoping
 
 Every table needs a `household_id` attribute and a GSI for querying by household.
@@ -383,25 +416,17 @@ If the user belongs to multiple households, show a simple picker page (or sideba
 
 ---
 
-## Phase 7: Data Migration
+## Phase 7: S3 & Labels PK Migration
 
-### Default Household
+**Note:** DynamoDB `household_id` backfill is handled in Phase 1.5 (prerequisite for Phase 2). This phase covers S3 path migration and the labels PK rewrite needed for Phase 3.
 
-- Create a `hh-default` record in the households table
-- Create user records for existing Okta users with `hh-default` in their `households` list
-- Backfill `household_id` on all existing clips, exports, training jobs, models
-- Update device registrations with household_id
-- Update pets table: change hardcoded `"default"` household_id to `"hh-default"` (PK change — requires delete + re-insert)
-
-### Labels Table Migration (PK change required)
+### Labels Table PK Rewrite
 
 The labels table uses `keyframe_key` (an S3 path like `keyframes/2026/03/27/frame.jpg`) as its PK. Once S3 paths become `{household_id}/keyframes/...`, the PK values must change. **DynamoDB does not allow updating a PK** — every label record must be deleted and re-inserted with the new key. This is more expensive than a simple attribute backfill.
 
-Additionally, `household_id` can be added as a new attribute during the re-insert.
-
 ### S3 Migration
 
-This is the highest-effort part — every S3 object needs copying to a new key:
+Every S3 object needs copying to a new key:
 ```
 raw-clips/device/2026/... → hh-default/raw-clips/device/2026/...
 keyframes/device/2026/... → hh-default/keyframes/device/2026/...
@@ -411,6 +436,10 @@ models/dog-classifier/... → hh-default/models/dog-classifier/...
 Can be done with a migration script using `aws s3 cp --recursive` or a Lambda.
 
 DynamoDB records that store S3 keys (`s3_key`, `keyframe_keys`, `export_s3_key`, `model_s3_key`, `checkpoint_s3_key`) also need updating to include the household prefix.
+
+### Device Re-registration
+
+Update existing IoT thing attributes with `household_id`. Push `household_id` to Pi `config.yaml` via shadow config or OTA update.
 
 ---
 
@@ -424,17 +453,20 @@ DynamoDB records that store S3 keys (`s3_key`, `keyframe_keys`, `export_s3_key`,
 
 ## Effort Estimate
 
-| Phase | Description | Effort |
-|-------|------------|--------|
-| 1 | Auth (users table, middleware, households API, auto-provisioning) | 2-3 days |
-| 2 | DynamoDB scoping (7 tables + all queries) | 3-5 days |
-| 3 | S3 path prefixing (all Lambdas + API + EventBridge + SQS messages) | 3-4 days |
-| 4 | IoT device → household + stream validation | 1-2 days |
-| 5 | Per-household models + inference + training agent | 2-3 days |
-| 6 | Frontend household context | 1 day |
-| 7 | Data migration (incl. labels PK re-insert + S3 key updates in DDB) | 2-3 days |
-| 8 | Documentation | 1 day |
-| | **Total** | **~19-25 days** |
+| Phase | Description | Deploy independently? | Effort |
+|-------|------------|----------------------|--------|
+| 1 | Auth (users table, middleware, households API, auto-provisioning) | Yes — middleware is non-blocking | 2-3 days |
+| 1.5 | DynamoDB backfill (`household_id` on all existing records) | Yes — run after Phase 1 | 0.5 day |
+| 2 | DynamoDB scoping (7 tables + all queries) | Yes — after Phase 1.5 | 3-5 days |
+| 3 | S3 path prefixing (all Lambdas + API + EventBridge + SQS messages) | After Phase 7 (S3 migration) | 3-4 days |
+| 4 | IoT device → household + stream validation | Yes — after Phase 2 | 1-2 days |
+| 5 | Per-household models + inference + training agent | After Phase 3 | 2-3 days |
+| 6 | Frontend household context (picker, sidebar, header) | After Phase 2 | 1 day |
+| 7 | S3 & labels PK migration | Run before Phase 3 | 2-3 days |
+| 8 | Documentation | Any time | 1 day |
+| | **Total** | | **~19-25 days** |
+
+**Safe deploy order:** 1 → 1.5 → 2 → 4 → 6 → 7 → 3 → 5 → 8
 
 This is on top of the multi-pet profiles work (~7 phases, prerequisite).
 
