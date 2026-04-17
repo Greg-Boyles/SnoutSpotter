@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -23,6 +24,7 @@ public class ExportsController : ControllerBase
         try
         {
             var exportId = await _exportService.TriggerExportAsync(
+                HttpContext.GetHouseholdId(),
                 request?.MaxPerClass,
                 request?.IncludeBackground ?? true,
                 request?.BackgroundRatio ?? 1.0f,
@@ -40,7 +42,7 @@ public class ExportsController : ControllerBase
     [HttpGet("exports")]
     public async Task<ActionResult> ListExports()
     {
-        var exports = await _exportService.ListExportsAsync();
+        var exports = await _exportService.ListExportsAsync(HttpContext.GetHouseholdId());
         return Ok(new { exports });
     }
 

@@ -22,7 +22,7 @@ public class ExportService : IExportService
         _config = config.Value;
     }
 
-    public async Task<string> TriggerExportAsync(int? maxPerClass = null, bool includeBackground = true,
+    public async Task<string> TriggerExportAsync(string householdId, int? maxPerClass = null, bool includeBackground = true,
         float backgroundRatio = 1.0f, string exportType = "detection", float cropPadding = 0.1f,
         bool mergeClasses = false)
     {
@@ -47,6 +47,7 @@ public class ExportService : IExportService
         await _dynamoDb.PutItemAsync(_config.ExportsTable, new Dictionary<string, AttributeValue>
         {
             ["export_id"] = new() { S = exportId },
+            ["household_id"] = new() { S = householdId },
             ["status"] = new() { S = "running" },
             ["created_at"] = new() { S = now },
             ["config"] = new() { M = configMap },
@@ -61,6 +62,7 @@ public class ExportService : IExportService
             Payload = JsonSerializer.Serialize(new
             {
                 ExportId = exportId,
+                HouseholdId = householdId,
                 MaxPerClass = maxPerClass,
                 IncludeBackground = includeBackground,
                 BackgroundRatio = backgroundRatio,
@@ -73,11 +75,16 @@ public class ExportService : IExportService
         return exportId;
     }
 
-    public async Task<List<Dictionary<string, string>>> ListExportsAsync()
+    public async Task<List<Dictionary<string, string>>> ListExportsAsync(string householdId)
     {
         var response = await _dynamoDb.ScanAsync(new ScanRequest
         {
-            TableName = _config.ExportsTable
+            TableName = _config.ExportsTable,
+            FilterExpression = "household_id = :hid",
+            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            {
+                [":hid"] = new() { S = householdId }
+            }
         });
 
         return response.Items
