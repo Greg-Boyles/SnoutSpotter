@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Controllers;
@@ -10,16 +11,18 @@ namespace SnoutSpotter.Api.Controllers;
 public class DevicesController : ControllerBase
 {
     private readonly IPiUpdateService _piUpdateService;
+    private readonly IDeviceOwnershipService _ownership;
 
-    public DevicesController(IPiUpdateService piUpdateService)
+    public DevicesController(IPiUpdateService piUpdateService, IDeviceOwnershipService ownership)
     {
         _piUpdateService = piUpdateService;
+        _ownership = ownership;
     }
 
     [HttpGet("devices")]
     public async Task<ActionResult> GetDevices()
     {
-        var thingNames = await _piUpdateService.ListPisAsync();
+        var thingNames = await _piUpdateService.ListPisAsync(HttpContext.GetHouseholdId());
         var latestVersion = await _piUpdateService.GetLatestVersionAsync();
 
         var devices = new List<object>();
@@ -58,9 +61,17 @@ public class DevicesController : ControllerBase
         return Ok(new { devices, latestVersion });
     }
 
+    private async Task<ActionResult?> ValidateOwnership(string thingName)
+    {
+        if (!await _ownership.DeviceBelongsToHouseholdAsync(thingName, HttpContext.GetHouseholdId()))
+            return Forbid();
+        return null;
+    }
+
     [HttpGet("{thingName}/shadow")]
     public async Task<ActionResult> GetRawShadow(string thingName)
     {
+        if (await ValidateOwnership(thingName) is { } denied) return denied;
         var json = await _piUpdateService.GetRawShadowAsync(thingName);
         if (json == null) return NotFound(new { error = "Device shadow not found" });
         return Content(json, "application/json");
@@ -69,6 +80,7 @@ public class DevicesController : ControllerBase
     [HttpGet("{thingName}/status")]
     public async Task<ActionResult> GetStatus(string thingName)
     {
+        if (await ValidateOwnership(thingName) is { } denied) return denied;
         var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
         var latestVersion = await _piUpdateService.GetLatestVersionAsync();
         var piOnline = shadow?.LastHeartbeat != null &&
@@ -101,6 +113,7 @@ public class DevicesController : ControllerBase
     [HttpGet("{thingName}/config")]
     public async Task<ActionResult> GetConfig(string thingName)
     {
+        if (await ValidateOwnership(thingName) is { } denied) return denied;
         var shadow = await _piUpdateService.GetPiShadowAsync(thingName);
         if (shadow == null) return NotFound(new { error = "Device shadow not found" });
         return Ok(new { config = shadow.Config, configErrors = shadow.ConfigErrors });
@@ -110,6 +123,7 @@ public class DevicesController : ControllerBase
     public async Task<ActionResult> UpdateConfig(
         string thingName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> changes)
     {
+        if (await ValidateOwnership(thingName) is { } denied) return denied;
         if (changes == null || changes.Count == 0)
             return BadRequest(new { error = "No changes provided" });
 

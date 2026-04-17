@@ -40,7 +40,7 @@ public class StatsController : ControllerBase
         var todayClips = await _clipService.GetClipsAsync(hhId, date: today, limit: 1000);
         var detections = await _clipService.GetDetectionsAsync(hhId, limit: 1000);
 
-        var thingNames = await _piUpdateService.ListPisAsync();
+        var thingNames = await _piUpdateService.ListPisAsync(hhId);
         var piOnlineCount = 0;
         string? lastUploadAcrossAll = null;
 
@@ -107,7 +107,7 @@ public class StatsController : ControllerBase
     [HttpGet("health")]
     public async Task<ActionResult<object>> GetHealth()
     {
-        var thingNames = await _piUpdateService.ListPisAsync();
+        var thingNames = await _piUpdateService.ListPisAsync(HttpContext.GetHouseholdId());
         var latestVersion = await _piUpdateService.GetLatestVersionAsync();
 
         var devices = new List<object>();

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -11,15 +12,19 @@ namespace SnoutSpotter.Api.Controllers;
 public class DeviceUpdatesController : ControllerBase
 {
     private readonly IPiUpdateService _piUpdateService;
+    private readonly IDeviceOwnershipService _ownership;
 
-    public DeviceUpdatesController(IPiUpdateService piUpdateService)
+    public DeviceUpdatesController(IPiUpdateService piUpdateService, IDeviceOwnershipService ownership)
     {
         _piUpdateService = piUpdateService;
+        _ownership = ownership;
     }
 
     [HttpPost("{thingName}/update")]
     public async Task<ActionResult> TriggerUpdate(string thingName, [FromBody] UpdateRequest? request = null)
     {
+        if (!await _ownership.DeviceBelongsToHouseholdAsync(thingName, HttpContext.GetHouseholdId()))
+            return Forbid();
         try
         {
             await _piUpdateService.TriggerUpdateAsync(thingName, request?.Version);
@@ -36,8 +41,9 @@ public class DeviceUpdatesController : ControllerBase
     {
         try
         {
-            await _piUpdateService.TriggerUpdateAllAsync(request?.Version);
-            var devices = await _piUpdateService.ListPisAsync();
+            var hhId = HttpContext.GetHouseholdId();
+            await _piUpdateService.TriggerUpdateAllAsync(hhId, request?.Version);
+            var devices = await _piUpdateService.ListPisAsync(hhId);
             return Ok(new { message = "Update triggered for all devices", deviceCount = devices.Count, version = request?.Version ?? await _piUpdateService.GetLatestVersionAsync() });
         }
         catch (InvalidOperationException ex)
