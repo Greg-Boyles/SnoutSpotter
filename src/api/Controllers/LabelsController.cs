@@ -36,11 +36,11 @@ public class LabelsController : ControllerBase
     private static bool IsValidLabel(string label) =>
         label == "other_dog" || label == "no_dog" || label.StartsWith("pet-");
 
-    private async Task<bool> ValidatePetLabelAsync(string label)
+    private async Task<bool> ValidatePetLabelAsync(string label, string householdId)
     {
         if (label is "other_dog" or "no_dog") return true;
         if (!label.StartsWith("pet-")) return false;
-        return await _petService.ExistsAsync(label);
+        return await _petService.ExistsAsync(label, householdId);
     }
 
     [HttpPost("auto-label")]
@@ -63,7 +63,7 @@ public class LabelsController : ControllerBase
         var cached = await _statsCache.GetCachedLabelStatsAsync();
         if (cached != null) return Ok(cached);
 
-        var stats = await _labelService.GetStatsAsync();
+        var stats = await _labelService.GetStatsAsync(HttpContext.GetHouseholdId());
         return Ok(stats);
     }
 
@@ -77,7 +77,7 @@ public class LabelsController : ControllerBase
         [FromQuery] int limit = 50,
         [FromQuery] string? nextPageKey = null)
     {
-        var (items, nextKey) = await _labelService.GetLabelsAsync(reviewed, label, confirmedLabel, breed, device, limit, nextPageKey);
+        var (items, nextKey) = await _labelService.GetLabelsAsync(HttpContext.GetHouseholdId(), reviewed, label, confirmedLabel, breed, device, limit, nextPageKey);
 
         // Add presigned URLs for each keyframe
         var enriched = items.Select(item =>
@@ -128,7 +128,7 @@ public class LabelsController : ControllerBase
         if (!IsValidLabel(request.ConfirmedLabel))
             return BadRequest(new { error = "confirmedLabel must be a pet ID (pet-*), 'other_dog', or 'no_dog'" });
 
-        if (!await ValidatePetLabelAsync(request.ConfirmedLabel))
+        if (!await ValidatePetLabelAsync(request.ConfirmedLabel, HttpContext.GetHouseholdId()))
             return BadRequest(new { error = $"Pet '{request.ConfirmedLabel}' not found" });
 
         await _labelService.UpdateLabelAsync(keyframeKey, request.ConfirmedLabel, request.Breed);
@@ -144,7 +144,7 @@ public class LabelsController : ControllerBase
         if (!IsValidLabel(request.ConfirmedLabel))
             return BadRequest(new { error = "confirmedLabel must be a pet ID (pet-*), 'other_dog', or 'no_dog'" });
 
-        if (!await ValidatePetLabelAsync(request.ConfirmedLabel))
+        if (!await ValidatePetLabelAsync(request.ConfirmedLabel, HttpContext.GetHouseholdId()))
             return BadRequest(new { error = $"Pet '{request.ConfirmedLabel}' not found" });
 
         await _labelService.BulkConfirmAsync(request.KeyframeKeys, request.ConfirmedLabel, request.Breed);
@@ -159,7 +159,7 @@ public class LabelsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Breed))
             return BadRequest(new { error = "breed is required" });
 
-        var count = await _labelService.BackfillBreedAsync(request.ConfirmedLabel, request.Breed);
+        var count = await _labelService.BackfillBreedAsync(HttpContext.GetHouseholdId(), request.ConfirmedLabel, request.Breed);
         return Ok(new { message = $"Updated {count} labels with breed '{request.Breed}'" , updated = count });
     }
 
@@ -172,7 +172,7 @@ public class LabelsController : ControllerBase
         if (confirmedLabel != null && confirmedLabel != "other_dog" && !confirmedLabel.StartsWith("pet-"))
             return BadRequest(new { error = "confirmedLabel must be a pet ID (pet-*) or 'other_dog'" });
 
-        var result = await _labelService.BackfillBoundingBoxesAsync(confirmedLabel, keys);
+        var result = await _labelService.BackfillBoundingBoxesAsync(HttpContext.GetHouseholdId(), confirmedLabel, keys);
         return Ok(result);
     }
 
@@ -211,7 +211,7 @@ public class LabelsController : ControllerBase
             try
             {
                 var result = await _labelService.UploadTrainingImageAsync(
-                    file.OpenReadStream(), file.FileName, label, breed);
+                    HttpContext.GetHouseholdId(), file.OpenReadStream(), file.FileName, label, breed);
                 results.Add(result);
             }
             catch (Exception ex)
