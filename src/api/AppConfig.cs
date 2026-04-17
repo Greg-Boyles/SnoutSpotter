@@ -22,6 +22,8 @@ public class AppConfig
     public string StatsTable { get; set; } = "snout-spotter-stats";
     public string PetsTable { get; set; } = "snout-spotter-pets";
     public string StatsRefreshFunctionName { get; set; } = "snout-spotter-stats-refresh";
+    public string UsersTable { get; set; } = "snout-spotter-users";
+    public string HouseholdsTable { get; set; } = "snout-spotter-households";
     public string OktaIssuer { get; set; } = "";
     public string AllowedOrigin { get; set; } = "";
 }
