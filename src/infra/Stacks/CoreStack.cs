@@ -30,6 +30,8 @@ public class CoreStack : Stack
     public Repository StatsRefreshEcrRepo { get; }
     public Table StatsTable { get; }
     public Table PetsTable { get; }
+    public Table UsersTable { get; }
+    public Table HouseholdsTable { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -365,6 +367,26 @@ public class CoreStack : Stack
             TableName = "snout-spotter-pets",
             PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "household_id", Type = AttributeType.STRING },
             SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "pet_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.RETAIN,
+            PointInTimeRecovery = true
+        });
+
+        // DynamoDB table for user accounts (maps Okta sub to household memberships)
+        UsersTable = new Table(this, "UsersTable", new TableProps
+        {
+            TableName = "snout-spotter-users",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "user_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.RETAIN,
+            PointInTimeRecovery = true
+        });
+
+        // DynamoDB table for household metadata
+        HouseholdsTable = new Table(this, "HouseholdsTable", new TableProps
+        {
+            TableName = "snout-spotter-households",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "household_id", Type = AttributeType.STRING },
             BillingMode = BillingMode.PAY_PER_REQUEST,
             RemovalPolicy = RemovalPolicy.RETAIN,
             PointInTimeRecovery = true
