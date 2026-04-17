@@ -245,7 +245,7 @@ public class LabelsController : ControllerBase
             var entries = batch.Select((clipId, i) => new Amazon.SQS.Model.SendMessageBatchRequestEntry
             {
                 Id = i.ToString(),
-                MessageBody = System.Text.Json.JsonSerializer.Serialize(new InferenceMessage(clipId))
+                MessageBody = System.Text.Json.JsonSerializer.Serialize(new InferenceMessage(clipId, HttpContext.GetHouseholdId()))
             }).ToList();
 
             await sqsClient.SendMessageBatchAsync(new Amazon.SQS.Model.SendMessageBatchRequest

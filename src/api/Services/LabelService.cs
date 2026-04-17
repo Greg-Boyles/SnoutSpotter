@@ -534,7 +534,7 @@ public class LabelService : ILabelService
             await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
             {
                 QueueUrl = _config.BackfillQueueUrl,
-                MessageBody = JsonSerializer.Serialize(new BackfillMessage(batch))
+                MessageBody = JsonSerializer.Serialize(new BackfillMessage(batch, householdId))
             });
 
             batches++;

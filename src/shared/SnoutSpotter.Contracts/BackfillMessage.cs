@@ -5,4 +5,4 @@ namespace SnoutSpotter.Contracts;
 /// Produced by API (LabelService), consumed by AutoLabel Lambda.
 /// Queue: snout-spotter-backfill-boxes
 /// </summary>
-public record BackfillMessage(List<string> KeyframeKeys);
+public record BackfillMessage(List<string> KeyframeKeys, string? HouseholdId = null);

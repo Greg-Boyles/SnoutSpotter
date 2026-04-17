@@ -5,4 +5,4 @@ namespace SnoutSpotter.Contracts;
 /// Produced by API (LabelsController), consumed by RunInference Lambda.
 /// Queue: snout-spotter-rerun-inference
 /// </summary>
-public record InferenceMessage(string ClipId);
+public record InferenceMessage(string ClipId, string? HouseholdId = null);

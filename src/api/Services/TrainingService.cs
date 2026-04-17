@@ -214,7 +214,8 @@ public partial class TrainingService : ITrainingService
                 Workers: request.Workers,
                 ModelBase: request.ModelBase,
                 ResumeFrom: request.ResumeFrom),
-            JobType: request.JobType);
+            JobType: request.JobType,
+            HouseholdId: householdId);
 
         await sqsClient.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
         {
