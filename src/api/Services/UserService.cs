@@ -46,12 +46,12 @@ public class UserService : Interfaces.IUserService
             var item = new Dictionary<string, AttributeValue>
             {
                 ["user_id"] = new() { S = userId },
-                ["email"] = new() { S = email ?? "" },
-                ["name"] = new() { S = name ?? "" },
                 ["households"] = new() { L = new List<AttributeValue>() },
                 ["created_at"] = new() { S = now },
                 ["last_login_at"] = new() { S = now }
             };
+            if (!string.IsNullOrEmpty(email)) item["email"] = new() { S = email };
+            if (!string.IsNullOrEmpty(name)) item["name"] = new() { S = name };
 
             await _dynamoDb.PutItemAsync(_tableName, item);
             user = FromItem(item);
