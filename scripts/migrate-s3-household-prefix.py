@@ -58,51 +58,73 @@ def should_skip(key):
 
 
 def migrate_s3(session, household_id, dry_run):
-    """Copy S3 objects to household-prefixed paths."""
+    """Copy S3 objects to household-prefixed paths using parallel threads."""
+    import concurrent.futures
+    import threading
+
     s3 = session.client("s3")
     paginator = s3.get_paginator("list_objects_v2")
 
     total_copied = 0
     total_skipped = 0
     total_errors = 0
+    lock = threading.Lock()
+    progress_count = 0
+
+    def copy_one(key):
+        nonlocal progress_count
+        new_key = prefix_key(key, household_id)
+        try:
+            thread_s3 = session.client("s3")
+            thread_s3.copy_object(
+                Bucket=BUCKET,
+                CopySource={"Bucket": BUCKET, "Key": key},
+                Key=new_key,
+            )
+            with lock:
+                progress_count += 1
+                if progress_count % 500 == 0:
+                    print(f"    ... {progress_count} copied")
+            return True
+        except Exception as e:
+            print(f"    ERROR copying {key}: {e}")
+            return False
 
     for prefix in S3_PREFIXES_TO_MIGRATE:
         print(f"\n  Prefix: {prefix}")
-        copied = 0
-        skipped = 0
+        keys_to_copy = []
 
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-
                 if is_already_prefixed(key, household_id) or should_skip(key):
-                    skipped += 1
+                    total_skipped += 1
                     continue
+                keys_to_copy.append(key)
 
-                new_key = prefix_key(key, household_id)
+        if dry_run:
+            for key in keys_to_copy[:3]:
+                print(f"    [DRY RUN] {key} → {prefix_key(key, household_id)}")
+            if len(keys_to_copy) > 3:
+                print(f"    ... ({len(keys_to_copy)} total)")
+            total_copied += len(keys_to_copy)
+            continue
 
-                if dry_run:
-                    if copied < 3:
-                        print(f"    [DRY RUN] {key} → {new_key}")
-                    elif copied == 3:
-                        print(f"    ... (more)")
+        copied = 0
+        errors = 0
+        progress_count = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            results = executor.map(copy_one, keys_to_copy)
+            for ok in results:
+                if ok:
                     copied += 1
-                    continue
+                else:
+                    errors += 1
 
-                try:
-                    s3.copy_object(
-                        Bucket=BUCKET,
-                        CopySource={"Bucket": BUCKET, "Key": key},
-                        Key=new_key,
-                    )
-                    copied += 1
-                except Exception as e:
-                    print(f"    ERROR copying {key}: {e}")
-                    total_errors += 1
-
-        print(f"  {prefix}: {copied} copied, {skipped} skipped")
+        print(f"  {prefix}: {copied} copied, {errors} errors")
         total_copied += copied
-        total_skipped += skipped
+        total_errors += errors
 
     print(f"\n  S3 total: {total_copied} copied, {total_skipped} skipped, {total_errors} errors")
     return total_errors
@@ -165,44 +187,62 @@ def migrate_clips(dynamodb, household_id, dry_run):
 
 def migrate_labels(dynamodb, household_id, dry_run):
     """Delete + re-insert labels with prefixed keyframe_key (PK change)."""
+    import concurrent.futures
+    import threading
+
     table = dynamodb.Table("snout-spotter-labels")
     print(f"\n  Migrating snout-spotter-labels (PK re-key)...")
-    migrated = 0
+
+    items_to_migrate = []
     skipped = 0
-    errors = 0
 
     scan_kwargs = {}
     while True:
         response = table.scan(**scan_kwargs)
         for item in response.get("Items", []):
             old_key = item["keyframe_key"]
-
             if is_already_prefixed(old_key, household_id):
                 skipped += 1
-                continue
-
-            new_key = prefix_key(old_key, household_id)
-
-            if dry_run:
-                if migrated < 3:
-                    print(f"    [DRY RUN] {old_key} → {new_key}")
-                elif migrated == 3:
-                    print(f"    ... (more)")
-                migrated += 1
-                continue
-
-            try:
-                new_item = {**item, "keyframe_key": new_key}
-                table.put_item(Item=new_item)
-                table.delete_item(Key={"keyframe_key": old_key})
-                migrated += 1
-            except Exception as e:
-                print(f"    ERROR migrating label {old_key}: {e}")
-                errors += 1
+            else:
+                items_to_migrate.append(item)
 
         if "LastEvaluatedKey" not in response:
             break
         scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+    if dry_run:
+        for item in items_to_migrate[:3]:
+            old_key = item["keyframe_key"]
+            print(f"    [DRY RUN] {old_key} → {prefix_key(old_key, household_id)}")
+        if len(items_to_migrate) > 3:
+            print(f"    ... ({len(items_to_migrate)} total)")
+        print(f"  snout-spotter-labels: {len(items_to_migrate)} to re-key, {skipped} already done")
+        return 0
+
+    migrated = 0
+    errors = 0
+    lock = threading.Lock()
+
+    def rekey_one(item):
+        nonlocal migrated
+        old_key = item["keyframe_key"]
+        new_key = prefix_key(old_key, household_id)
+        try:
+            new_item = {**item, "keyframe_key": new_key}
+            table.put_item(Item=new_item)
+            table.delete_item(Key={"keyframe_key": old_key})
+            with lock:
+                migrated += 1
+                if migrated % 500 == 0:
+                    print(f"    ... {migrated} re-keyed")
+            return True
+        except Exception as e:
+            print(f"    ERROR migrating label {old_key}: {e}")
+            return False
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        results = list(executor.map(rekey_one, items_to_migrate))
+        errors = results.count(False)
 
     print(f"  snout-spotter-labels: {migrated} re-keyed, {skipped} already done, {errors} errors")
     return errors
