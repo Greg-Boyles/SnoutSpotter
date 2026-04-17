@@ -241,7 +241,7 @@ public class ApiStack : Stack
             {
                 AllowOrigins = new[] { props.AllowedOrigin },
                 AllowMethods = new[] { "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" },
-                AllowHeaders = new[] { "Authorization", "Content-Type" },
+                AllowHeaders = new[] { "Authorization", "Content-Type", "X-Household-Id" },
                 MaxAge = 3600
             }
         });
