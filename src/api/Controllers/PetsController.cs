@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -20,14 +21,14 @@ public class PetsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        var pets = await _petService.ListAsync();
+        var pets = await _petService.ListAsync(HttpContext.GetHouseholdId());
         return Ok(pets);
     }
 
     [HttpGet("{petId}")]
     public async Task<IActionResult> Get(string petId)
     {
-        var pet = await _petService.GetAsync(petId);
+        var pet = await _petService.GetAsync(petId, HttpContext.GetHouseholdId());
         if (pet is null) return NotFound();
         return Ok(pet);
     }
@@ -38,7 +39,7 @@ public class PetsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest("Pet name is required.");
 
-        var pet = await _petService.CreateAsync(request);
+        var pet = await _petService.CreateAsync(request, HttpContext.GetHouseholdId());
         return CreatedAtAction(nameof(Get), new { petId = pet.PetId }, pet);
     }
 
@@ -50,7 +51,7 @@ public class PetsController : ControllerBase
 
         try
         {
-            var pet = await _petService.UpdateAsync(petId, request);
+            var pet = await _petService.UpdateAsync(petId, request, HttpContext.GetHouseholdId());
             return Ok(pet);
         }
         catch (Amazon.DynamoDBv2.Model.ConditionalCheckFailedException)
@@ -64,7 +65,7 @@ public class PetsController : ControllerBase
     {
         try
         {
-            await _petService.DeleteAsync(petId);
+            await _petService.DeleteAsync(petId, HttpContext.GetHouseholdId());
             return NoContent();
         }
         catch (InvalidOperationException ex)
