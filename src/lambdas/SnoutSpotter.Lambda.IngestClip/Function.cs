@@ -48,8 +48,9 @@ public class Function
         
         context.Logger.LogInformation($"Processing: {s3Key}");
 
-        // Parse metadata from key: raw-clips/{device}/YYYY/MM/DD/timestamp_durations.mp4
-        var (clipId, timestamp, durationSeconds, date, device) = ParseS3Key(s3Key);
+        // Parse metadata from key: {household_id}/raw-clips/{device}/YYYY/MM/DD/timestamp_durations.mp4
+        // or legacy: raw-clips/{device}/YYYY/MM/DD/timestamp_durations.mp4
+        var (clipId, timestamp, durationSeconds, date, device, householdId) = ParseS3Key(s3Key);
 
         // Download the video to /tmp for keyframe extraction
         var localVideoPath = $"/tmp/{clipId}.mp4";
@@ -63,19 +64,20 @@ public class Function
 
         // Upload keyframes to S3
         var keyframeKeys = new List<string>();
+        var keyframePrefix = string.IsNullOrEmpty(householdId) ? "keyframes" : $"{householdId}/keyframes";
         foreach (var keyframePath in keyframePaths)
         {
             var frameNum = Path.GetFileNameWithoutExtension(keyframePath).Split('_').Last();
             var keyframeKey = string.IsNullOrEmpty(device)
-                ? $"keyframes/{date}/{clipId}_{frameNum}.jpg"
-                : $"keyframes/{device}/{date}/{clipId}_{frameNum}.jpg";
+                ? $"{keyframePrefix}/{date}/{clipId}_{frameNum}.jpg"
+                : $"{keyframePrefix}/{device}/{date}/{clipId}_{frameNum}.jpg";
             await UploadToS3(keyframePath, keyframeKey);
             keyframeKeys.Add(keyframeKey);
             File.Delete(keyframePath);
         }
 
         // Write metadata to DynamoDB
-        await WriteClipMetadata(clipId, s3Key, timestamp, durationSeconds, date, device, keyframeKeys);
+        await WriteClipMetadata(clipId, s3Key, timestamp, durationSeconds, date, device, keyframeKeys, householdId);
 
         // Cleanup
         File.Delete(localVideoPath);
@@ -84,33 +86,42 @@ public class Function
             $"Ingested clip {clipId}: {keyframeKeys.Count} keyframes extracted");
     }
 
-    private static (string clipId, long timestamp, int durationSeconds, string date, string device) ParseS3Key(string key)
+    private static (string clipId, long timestamp, int durationSeconds, string date, string device, string? householdId) ParseS3Key(string key)
     {
-        // New format: raw-clips/{device}/YYYY/MM/DD/filename.mp4
-        // Old format: raw-clips/YYYY/MM/DD/filename.mp4
-        var fileName = Path.GetFileNameWithoutExtension(key);
-        var parts = fileName.Split('_');
+        // Household-prefixed: {household_id}/raw-clips/{device}/YYYY/MM/DD/filename.mp4
+        // Legacy: raw-clips/{device}/YYYY/MM/DD/filename.mp4
+        // Oldest: raw-clips/YYYY/MM/DD/filename.mp4
+        var pathParts = key.Split('/');
+        string? householdId = null;
 
-        var timestampStr = parts[0]; // ISO-ish timestamp
-        var durationStr = parts.Length > 1 ? parts[1].TrimEnd('s') : "0";
+        // Detect household prefix: first segment doesn't start with "raw-clips"
+        if (pathParts.Length >= 2 && pathParts[0] != "raw-clips")
+        {
+            householdId = pathParts[0];
+            pathParts = pathParts[1..]; // strip the household prefix for downstream parsing
+        }
+
+        var fileName = Path.GetFileNameWithoutExtension(key);
+        var nameParts = fileName.Split('_');
+
+        var timestampStr = nameParts[0];
+        var durationStr = nameParts.Length > 1 ? nameParts[1].TrimEnd('s') : "0";
 
         var clipId = fileName;
         int.TryParse(durationStr, out var durationSeconds);
 
-        // Extract device and date from path
-        var pathParts = key.Split('/');
         string date;
         string device;
 
         if (pathParts.Length >= 5)
         {
-            // New format: raw-clips/{device}/YYYY/MM/DD/filename
+            // raw-clips/{device}/YYYY/MM/DD/filename
             device = pathParts[1];
             date = $"{pathParts[2]}/{pathParts[3]}/{pathParts[4]}";
         }
         else if (pathParts.Length >= 4)
         {
-            // Old format: raw-clips/YYYY/MM/DD/filename
+            // raw-clips/YYYY/MM/DD/filename
             device = "";
             date = $"{pathParts[1]}/{pathParts[2]}/{pathParts[3]}";
         }
@@ -127,7 +138,7 @@ public class Function
             timestamp = new DateTimeOffset(parsed, TimeSpan.Zero).ToUnixTimeSeconds();
         }
 
-        return (clipId, timestamp, durationSeconds, date, device);
+        return (clipId, timestamp, durationSeconds, date, device, householdId);
     }
 
     private async Task DownloadFromS3(string key, string localPath)
@@ -187,7 +198,7 @@ public class Function
 
     private async Task WriteClipMetadata(
         string clipId, string s3Key, long timestamp, int durationSeconds,
-        string date, string device, List<string> keyframeKeys)
+        string date, string device, List<string> keyframeKeys, string? householdId)
     {
         var item = new Dictionary<string, AttributeValue>
         {
@@ -206,6 +217,9 @@ public class Function
 
         if (!string.IsNullOrEmpty(device))
             item["device"] = new() { S = device };
+
+        if (!string.IsNullOrEmpty(householdId))
+            item["household_id"] = new() { S = householdId };
 
         await _dynamoClient.PutItemAsync(new PutItemRequest
         {

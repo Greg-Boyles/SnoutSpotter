@@ -73,7 +73,11 @@ public class InferenceStack : Stack
                     },
                     ["object"] = new Dictionary<string, object>
                     {
-                        ["key"] = new[] { new Dictionary<string, string> { ["prefix"] = "keyframes/" } }
+                        ["key"] = new object[]
+                        {
+                            new Dictionary<string, string> { ["prefix"] = "keyframes/" },
+                            new Dictionary<string, string> { ["wildcard"] = "*/keyframes/*" }
+                        }
                     }
                 }
             }

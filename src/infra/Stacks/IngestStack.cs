@@ -68,7 +68,11 @@ public class IngestStack : Stack
                     },
                     ["object"] = new Dictionary<string, object>
                     {
-                        ["key"] = new[] { new Dictionary<string, string> { ["prefix"] = "raw-clips/" } }
+                        ["key"] = new object[]
+                        {
+                            new Dictionary<string, string> { ["prefix"] = "raw-clips/" },
+                            new Dictionary<string, string> { ["wildcard"] = "*/raw-clips/*" }
+                        }
                     }
                 }
             }
