@@ -26,26 +26,27 @@ public class ClipService : IClipService
         _config = config.Value;
     }
 
-    public async Task<ClipListResponse> GetClipsAsync(string? date = null, string? device = null, string? detectionType = null, int limit = 20, string? nextPageKey = null)
+    public async Task<ClipListResponse> GetClipsAsync(string householdId, string? date = null, string? device = null, string? detectionType = null, int limit = 20, string? nextPageKey = null)
     {
         if (date != null)
         {
-            return await QueryByDateAsync(date, device, detectionType, limit, nextPageKey);
+            return await QueryByDateAsync(householdId, date, device, detectionType, limit, nextPageKey);
         }
 
         if (detectionType != null)
         {
-            return await QueryByDetectionTypeAsync(detectionType, device, limit, nextPageKey);
+            return await QueryByDetectionTypeAsync(householdId, detectionType, device, limit, nextPageKey);
         }
 
         if (!string.IsNullOrEmpty(device))
         {
-            return await QueryByDeviceAsync(device, limit, nextPageKey);
+            return await QueryByDeviceAsync(householdId, device, limit, nextPageKey);
         }
 
         var exprValues = new Dictionary<string, AttributeValue>
         {
-            [":pk"] = new() { S = "CLIP" }
+            [":pk"] = new() { S = "CLIP" },
+            [":hid"] = new() { S = householdId }
         };
 
         Dictionary<string, AttributeValue>? exclusiveStartKey = null;
@@ -72,6 +73,7 @@ public class ClipService : IClipService
             TableName = TableName,
             IndexName = "all-by-time",
             KeyConditionExpression = "pk = :pk",
+            FilterExpression = "household_id = :hid",
             ExpressionAttributeValues = exprValues,
             ScanIndexForward = false,
             Limit = limit,
@@ -83,7 +85,7 @@ public class ClipService : IClipService
         return new ClipListResponse(result, resultKey, response.Count);
     }
 
-    private async Task<ClipListResponse> QueryByDeviceAsync(string device, int limit, string? nextPageKey)
+    private async Task<ClipListResponse> QueryByDeviceAsync(string householdId, string device, int limit, string? nextPageKey)
     {
         var exprValues = new Dictionary<string, AttributeValue>
         {
@@ -108,11 +110,14 @@ public class ClipService : IClipService
             }
         }
 
+        exprValues[":hid"] = new() { S = householdId };
+
         var response = await _dynamoClient.QueryAsync(new QueryRequest
         {
             TableName = TableName,
             IndexName = "by-device",
             KeyConditionExpression = "device = :device",
+            FilterExpression = "household_id = :hid",
             ExpressionAttributeValues = exprValues,
             ScanIndexForward = false,
             Limit = limit,
@@ -136,21 +141,20 @@ public class ClipService : IClipService
     }
 
     public async Task<List<DetectionSummary>> GetDetectionsAsync(
-        string? detectionType = null, string? dateFrom = null, string? dateTo = null, int limit = 50)
+        string householdId, string? detectionType = null, string? dateFrom = null, string? dateTo = null, int limit = 50)
     {
         if (detectionType != null)
         {
-            return await QueryDetectionsByTypeAsync(detectionType, limit);
+            return await QueryDetectionsByTypeAsync(householdId, detectionType, limit);
         }
 
-        // No specific type — query all pet IDs + other_dog + legacy my_dog via GSI, merge results
-        var pets = await _petService.ListAsync();
+        var pets = await _petService.ListAsync(householdId);
         var typesToQuery = pets.Select(p => p.PetId)
             .Append("other_dog")
-            .Append("my_dog") // legacy compat until migrated
+            .Append("my_dog")
             .ToList();
 
-        var tasks = typesToQuery.Select(t => QueryDetectionsByTypeAsync(t, limit));
+        var tasks = typesToQuery.Select(t => QueryDetectionsByTypeAsync(householdId, t, limit));
         var results = await Task.WhenAll(tasks);
 
         return results
@@ -160,16 +164,18 @@ public class ClipService : IClipService
             .ToList();
     }
 
-    private async Task<List<DetectionSummary>> QueryDetectionsByTypeAsync(string type, int limit)
+    private async Task<List<DetectionSummary>> QueryDetectionsByTypeAsync(string householdId, string type, int limit)
     {
         var response = await _dynamoClient.QueryAsync(new QueryRequest
         {
             TableName = TableName,
             IndexName = "by-detection",
             KeyConditionExpression = "detection_type = :dt",
+            FilterExpression = "household_id = :hid",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
-                [":dt"] = new() { S = type }
+                [":dt"] = new() { S = type },
+                [":hid"] = new() { S = householdId }
             },
             ScanIndexForward = false,
             Limit = limit
@@ -178,7 +184,7 @@ public class ClipService : IClipService
         return response.Items.Select(MapToDetectionSummary).ToList();
     }
 
-    public async Task<int> GetClipCountForDateAsync(string date)
+    public async Task<int> GetClipCountForDateAsync(string householdId, string date)
     {
         int total = 0;
         Dictionary<string, AttributeValue>? lastKey = null;
@@ -189,10 +195,12 @@ public class ClipService : IClipService
                 TableName = TableName,
                 IndexName = "by-date",
                 KeyConditionExpression = "#d = :date",
+                FilterExpression = "household_id = :hid",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
-                    [":date"] = new() { S = date }
+                    [":date"] = new() { S = date },
+                    [":hid"] = new() { S = householdId }
                 },
                 Select = "COUNT",
                 ExclusiveStartKey = lastKey
@@ -204,19 +212,21 @@ public class ClipService : IClipService
         return total;
     }
 
-    private async Task<ClipListResponse> QueryByDetectionTypeAsync(string detectionType, string? device, int limit, string? nextPageKey)
+    private async Task<ClipListResponse> QueryByDetectionTypeAsync(string householdId, string detectionType, string? device, int limit, string? nextPageKey)
     {
         var exprValues = new Dictionary<string, AttributeValue>
         {
-            [":dt"] = new() { S = detectionType }
+            [":dt"] = new() { S = detectionType },
+            [":hid"] = new() { S = householdId }
         };
 
-        string? filterExpression = null;
+        var filterParts = new List<string> { "household_id = :hid" };
         if (!string.IsNullOrEmpty(device))
         {
-            filterExpression = "device = :device";
+            filterParts.Add("device = :device");
             exprValues[":device"] = new() { S = device };
         }
+        var filterExpression = string.Join(" AND ", filterParts);
 
         Dictionary<string, AttributeValue>? exclusiveStartKey = null;
         if (nextPageKey != null)
@@ -236,54 +246,38 @@ public class ClipService : IClipService
             }
         }
 
-        if (filterExpression != null)
+        var items = new List<Dictionary<string, AttributeValue>>();
+        var lastKey = exclusiveStartKey;
+        do
         {
-            var items = new List<Dictionary<string, AttributeValue>>();
-            var lastKey = exclusiveStartKey;
-            do
+            var resp = await _dynamoClient.QueryAsync(new QueryRequest
             {
-                var resp = await _dynamoClient.QueryAsync(new QueryRequest
-                {
-                    TableName = TableName,
-                    IndexName = "by-detection",
-                    KeyConditionExpression = "detection_type = :dt",
-                    FilterExpression = filterExpression,
-                    ExpressionAttributeValues = exprValues,
-                    ScanIndexForward = false,
-                    Limit = 100,
-                    ExclusiveStartKey = lastKey
-                });
-                items.AddRange(resp.Items);
-                lastKey = resp.LastEvaluatedKey;
-            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
+                TableName = TableName,
+                IndexName = "by-detection",
+                KeyConditionExpression = "detection_type = :dt",
+                FilterExpression = filterExpression,
+                ExpressionAttributeValues = exprValues,
+                ScanIndexForward = false,
+                Limit = 100,
+                ExclusiveStartKey = lastKey
+            });
+            items.AddRange(resp.Items);
+            lastKey = resp.LastEvaluatedKey;
+        } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
 
-            var clips = items.Take(limit).Select(MapToClipSummary).ToList();
-            var nextKey = items.Count > limit ? items[limit - 1].GetValueOrDefault("clip_id")?.S
-                : lastKey?.GetValueOrDefault("clip_id")?.S;
-            return new ClipListResponse(clips, nextKey, clips.Count);
-        }
-
-        var response = await _dynamoClient.QueryAsync(new QueryRequest
-        {
-            TableName = TableName,
-            IndexName = "by-detection",
-            KeyConditionExpression = "detection_type = :dt",
-            ExpressionAttributeValues = exprValues,
-            ScanIndexForward = false,
-            Limit = limit,
-            ExclusiveStartKey = exclusiveStartKey
-        });
-        var result = response.Items.Select(MapToClipSummary).ToList();
-        var resultKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
-        return new ClipListResponse(result, resultKey, response.Count);
+        var clips = items.Take(limit).Select(MapToClipSummary).ToList();
+        var nextKey = items.Count > limit ? items[limit - 1].GetValueOrDefault("clip_id")?.S
+            : lastKey?.GetValueOrDefault("clip_id")?.S;
+        return new ClipListResponse(clips, nextKey, clips.Count);
     }
 
-    private async Task<ClipListResponse> QueryByDateAsync(string date, string? device, string? detectionType, int limit, string? nextPageKey)
+    private async Task<ClipListResponse> QueryByDateAsync(string householdId, string date, string? device, string? detectionType, int limit, string? nextPageKey)
     {
-        var filterParts = new List<string>();
+        var filterParts = new List<string> { "household_id = :hid" };
         var exprValues = new Dictionary<string, AttributeValue>
         {
-            [":date"] = new() { S = date }
+            [":date"] = new() { S = date },
+            [":hid"] = new() { S = householdId }
         };
 
         if (!string.IsNullOrEmpty(device))
@@ -298,48 +292,30 @@ public class ClipService : IClipService
             exprValues[":dtt"] = new() { S = detectionType };
         }
 
-        string? filterExpression = filterParts.Count > 0 ? string.Join(" AND ", filterParts) : null;
+        var filterExpression = string.Join(" AND ", filterParts);
 
-        if (filterExpression != null)
+        var items = new List<Dictionary<string, AttributeValue>>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+        do
         {
-            var items = new List<Dictionary<string, AttributeValue>>();
-            Dictionary<string, AttributeValue>? lastKey = null;
-            do
+            var resp = await _dynamoClient.QueryAsync(new QueryRequest
             {
-                var resp = await _dynamoClient.QueryAsync(new QueryRequest
-                {
-                    TableName = TableName,
-                    IndexName = "by-date",
-                    KeyConditionExpression = "#d = :date",
-                    FilterExpression = filterExpression,
-                    ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
-                    ExpressionAttributeValues = exprValues,
-                    ScanIndexForward = false,
-                    Limit = 100,
-                    ExclusiveStartKey = lastKey
-                });
-                items.AddRange(resp.Items);
-                lastKey = resp.LastEvaluatedKey;
-            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
+                TableName = TableName,
+                IndexName = "by-date",
+                KeyConditionExpression = "#d = :date",
+                FilterExpression = filterExpression,
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
+                ExpressionAttributeValues = exprValues,
+                ScanIndexForward = false,
+                Limit = 100,
+                ExclusiveStartKey = lastKey
+            });
+            items.AddRange(resp.Items);
+            lastKey = resp.LastEvaluatedKey;
+        } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
 
-            var clips = items.Take(limit).Select(MapToClipSummary).ToList();
-            return new ClipListResponse(clips, null, clips.Count);
-        }
-
-        var response = await _dynamoClient.QueryAsync(new QueryRequest
-        {
-            TableName = TableName,
-            IndexName = "by-date",
-            KeyConditionExpression = "#d = :date",
-            ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
-            ExpressionAttributeValues = exprValues,
-            ScanIndexForward = false,
-            Limit = limit
-        });
-        var clips2 = response.Items.Select(MapToClipSummary).ToList();
-        var lastKey2 = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
-
-        return new ClipListResponse(clips2, lastKey2, response.Count);
+        var clips = items.Take(limit).Select(MapToClipSummary).ToList();
+        return new ClipListResponse(clips, null, clips.Count);
     }
 
     public async Task DeleteClipAsync(string clipId)
@@ -404,13 +380,12 @@ public class ClipService : IClipService
             new Dictionary<string, AttributeValue> { ["clip_id"] = new() { S = clipId } });
     }
 
-    public async Task<List<string>> GetClipIdsForDateRangeAsync(string? dateFrom, string? dateTo)
+    public async Task<List<string>> GetClipIdsForDateRangeAsync(string householdId, string? dateFrom, string? dateTo)
     {
         var clipIds = new List<string>();
 
         if (dateFrom == null && dateTo == null)
         {
-            // All clips — query all-by-time GSI, project clip_id only
             Dictionary<string, AttributeValue>? lastKey = null;
             do
             {
@@ -419,11 +394,13 @@ public class ClipService : IClipService
                     TableName = TableName,
                     IndexName = "all-by-time",
                     KeyConditionExpression = "pk = :pk",
+                    FilterExpression = "household_id = :hid",
                     ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                     {
-                        [":pk"] = new() { S = "CLIP" }
+                        [":pk"] = new() { S = "CLIP" },
+                        [":hid"] = new() { S = householdId }
                     },
-                    ProjectionExpression = "clip_id",
+                    ProjectionExpression = "clip_id, household_id",
                     ExclusiveStartKey = lastKey
                 });
                 clipIds.AddRange(response.Items.Select(i => i["clip_id"].S));
@@ -448,11 +425,13 @@ public class ClipService : IClipService
                         IndexName = "by-date",
                         KeyConditionExpression = "#d = :date",
                         ExpressionAttributeNames = new Dictionary<string, string> { ["#d"] = "date" },
+                        FilterExpression = "household_id = :hid",
                         ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                         {
-                            [":date"] = new() { S = dateStr }
+                            [":date"] = new() { S = dateStr },
+                            [":hid"] = new() { S = householdId }
                         },
-                        ProjectionExpression = "clip_id",
+                        ProjectionExpression = "clip_id, household_id",
                         ExclusiveStartKey = lastKey
                     });
                     clipIds.AddRange(response.Items.Select(i => i["clip_id"].S));

@@ -3,6 +3,7 @@ using Amazon.SQS.Model;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -34,9 +35,10 @@ public class StatsController : ControllerBase
 
         var today = DateTime.UtcNow.ToString("yyyy/MM/dd");
 
-        var allClips = await _clipService.GetClipsAsync(limit: 1000);
-        var todayClips = await _clipService.GetClipsAsync(date: today, limit: 1000);
-        var detections = await _clipService.GetDetectionsAsync(limit: 1000);
+        var hhId = HttpContext.GetHouseholdId();
+        var allClips = await _clipService.GetClipsAsync(hhId, limit: 1000);
+        var todayClips = await _clipService.GetClipsAsync(hhId, date: today, limit: 1000);
+        var detections = await _clipService.GetDetectionsAsync(hhId, limit: 1000);
 
         var thingNames = await _piUpdateService.ListPisAsync();
         var piOnlineCount = 0;
@@ -95,7 +97,7 @@ public class StatsController : ControllerBase
             .Select(async d => new
             {
                 date = d.ToString("yyyy-MM-dd"),
-                count = await _clipService.GetClipCountForDateAsync(d.ToString("yyyy/MM/dd"))
+                count = await _clipService.GetClipCountForDateAsync(HttpContext.GetHouseholdId(), d.ToString("yyyy/MM/dd"))
             });
 
         var activity = await Task.WhenAll(tasks);

@@ -31,16 +31,18 @@ public class ModelService : IModelService
         _bucketName = config.Value.BucketName;
     }
 
-    public async Task<(string? ActiveVersion, List<ModelRecord> Versions)> ListModelsAsync(string type)
+    public async Task<(string? ActiveVersion, List<ModelRecord> Versions)> ListModelsAsync(string householdId, string type)
     {
         var response = await _dynamoDb.QueryAsync(new QueryRequest
         {
             TableName = _tableName,
             IndexName = "by-type",
             KeyConditionExpression = "model_type = :type",
+            FilterExpression = "household_id = :hid",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
-                [":type"] = new() { S = type }
+                [":type"] = new() { S = type },
+                [":hid"] = new() { S = householdId }
             },
             ScanIndexForward = false
         });
@@ -68,7 +70,7 @@ public class ModelService : IModelService
         return response.IsItemSet ? FromItem(response.Item) : null;
     }
 
-    public async Task<ModelRecord> RegisterModelAsync(RegisterModelRequest request)
+    public async Task<ModelRecord> RegisterModelAsync(string householdId, RegisterModelRequest request)
     {
         var modelId = $"{request.ModelType}#{request.Version}";
         var now = DateTime.UtcNow.ToString("O");
@@ -83,6 +85,7 @@ public class ModelService : IModelService
             ["status"] = new() { S = "uploaded" },
             ["created_at"] = new() { S = now },
             ["source"] = new() { S = request.Source },
+            ["household_id"] = new() { S = householdId },
         };
 
         if (request.TrainingJobId != null)
@@ -104,7 +107,7 @@ public class ModelService : IModelService
         return FromItem(item);
     }
 
-    public async Task ActivateModelAsync(string type, string version)
+    public async Task ActivateModelAsync(string householdId, string type, string version)
     {
         var modelId = $"{type}#{version}";
 
@@ -113,8 +116,8 @@ public class ModelService : IModelService
         if (model == null)
             throw new InvalidOperationException($"Model {type}/{version} not found");
 
-        // Find current active model and deactivate it
-        var (currentActive, _) = await ListModelsAsync(type);
+        // Find current active model and deactivate it (scoped to household)
+        var (currentActive, _) = await ListModelsAsync(householdId, type);
         if (currentActive != null && currentActive != version)
         {
             var oldModelId = $"{type}#{currentActive}";
@@ -163,7 +166,7 @@ public class ModelService : IModelService
         }
     }
 
-    public async Task DeleteModelAsync(string type, string version)
+    public async Task DeleteModelAsync(string householdId, string type, string version)
     {
         var model = await GetModelAsync(type, version);
         if (model == null)
@@ -184,7 +187,7 @@ public class ModelService : IModelService
         catch { /* best effort — S3 object may already be gone */ }
     }
 
-    public async Task<(string UploadUrl, string S3Key)> GetUploadUrlAsync(string type, string version)
+    public async Task<(string UploadUrl, string S3Key)> GetUploadUrlAsync(string householdId, string type, string version)
     {
         if (!TypePaths.TryGetValue(type, out var paths))
             throw new ArgumentException($"Unknown model type: {type}");
@@ -193,7 +196,7 @@ public class ModelService : IModelService
         var uploadUrl = _presignService.GeneratePresignedPutUrl(s3Key, "application/octet-stream");
 
         // Pre-register the model in DynamoDB (size will be 0 until upload completes)
-        await RegisterModelAsync(new RegisterModelRequest(
+        await RegisterModelAsync(householdId, new RegisterModelRequest(
             ModelType: type,
             Version: version,
             S3Key: s3Key,

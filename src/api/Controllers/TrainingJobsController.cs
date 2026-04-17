@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Controllers;
@@ -22,14 +23,14 @@ public class TrainingJobsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.ExportId) || string.IsNullOrWhiteSpace(request.ExportS3Key))
             return BadRequest(new { error = "ExportId and ExportS3Key are required" });
 
-        var jobId = await _trainingService.SubmitJobAsync(request);
+        var jobId = await _trainingService.SubmitJobAsync(HttpContext.GetHouseholdId(), request);
         return Ok(new { jobId });
     }
 
     [HttpGet("jobs")]
     public async Task<ActionResult> ListJobs([FromQuery] string? status = null, [FromQuery] int limit = 50)
     {
-        var jobs = await _trainingService.ListJobsAsync(status, limit);
+        var jobs = await _trainingService.ListJobsAsync(HttpContext.GetHouseholdId(), status, limit);
         return Ok(new { jobs });
     }
 

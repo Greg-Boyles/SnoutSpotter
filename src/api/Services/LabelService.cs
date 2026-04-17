@@ -40,14 +40,14 @@ public class LabelService : ILabelService
         return new { message = "Auto-label started", statusCode = (int)response.StatusCode };
     }
 
-    public async Task<object> GetStatsAsync()
+    public async Task<object> GetStatsAsync(string householdId)
     {
-        var total = await CountAsync(null, null);
-        var dogs = await CountAsync("by-label", "dog");
-        var noDogs = await CountAsync("by-label", "no_dog");
-        var unreviewed = await CountAsync("by-review", "false");
-        var reviewed = await CountAsync("by-review", "true");
-        var (confirmedCounts, breedCounts, withBoxes, withoutBoxes) = await CountConfirmedLabelsAsync();
+        var total = await CountAsync(householdId, null, null);
+        var dogs = await CountAsync(householdId, "by-label", "dog");
+        var noDogs = await CountAsync(householdId, "by-label", "no_dog");
+        var unreviewed = await CountAsync(householdId, "by-review", "false");
+        var reviewed = await CountAsync(householdId, "by-review", "true");
+        var (confirmedCounts, breedCounts, withBoxes, withoutBoxes) = await CountConfirmedLabelsAsync(householdId);
 
         // Separate pet-* counts from fixed labels
         var petCounts = confirmedCounts
@@ -79,7 +79,7 @@ public class LabelService : ILabelService
         };
     }
 
-    private async Task<(Dictionary<string, int> labels, Dictionary<string, int> breeds, Dictionary<string, int> withBoxes, Dictionary<string, int> withoutBoxes)> CountConfirmedLabelsAsync()
+    private async Task<(Dictionary<string, int> labels, Dictionary<string, int> breeds, Dictionary<string, int> withBoxes, Dictionary<string, int> withoutBoxes)> CountConfirmedLabelsAsync(string householdId)
     {
         var counts = new Dictionary<string, int> { ["other_dog"] = 0, ["no_dog"] = 0 };
         var breedCounts = new Dictionary<string, int>();
@@ -94,9 +94,11 @@ public class LabelService : ILabelService
                 TableName = _config.LabelsTable,
                 IndexName = "by-review",
                 KeyConditionExpression = "reviewed = :rev",
+                FilterExpression = "household_id = :hid",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
-                    [":rev"] = new() { S = "true" }
+                    [":rev"] = new() { S = "true" },
+                    [":hid"] = new() { S = householdId }
                 },
                 ProjectionExpression = "confirmed_label, breed, bounding_boxes",
                 ExclusiveStartKey = lastKey
@@ -140,41 +142,59 @@ public class LabelService : ILabelService
         return (counts, breedCounts, withBoxes, withoutBoxes);
     }
 
-    private async Task<int> CountAsync(string? indexName, string? pkValue)
+    private async Task<int> CountAsync(string householdId, string? indexName, string? pkValue)
     {
         if (indexName == null)
         {
             var scan = await _dynamoDb.ScanAsync(new ScanRequest
             {
                 TableName = _config.LabelsTable,
+                FilterExpression = "household_id = :hid",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":hid"] = new() { S = householdId }
+                },
                 Select = Select.COUNT
             });
             return scan.Count;
         }
 
         var pkField = indexName == "by-label" ? "auto_label" : "reviewed";
-        var query = await _dynamoDb.QueryAsync(new QueryRequest
+        int total = 0;
+        Dictionary<string, AttributeValue>? lastKey = null;
+        do
         {
-            TableName = _config.LabelsTable,
-            IndexName = indexName,
-            KeyConditionExpression = $"{pkField} = :val",
-            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            var query = await _dynamoDb.QueryAsync(new QueryRequest
             {
-                [":val"] = new() { S = pkValue! }
-            },
-            Select = Select.COUNT
-        });
-        return query.Count;
+                TableName = _config.LabelsTable,
+                IndexName = indexName,
+                KeyConditionExpression = $"{pkField} = :val",
+                FilterExpression = "household_id = :hid",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":val"] = new() { S = pkValue! },
+                    [":hid"] = new() { S = householdId }
+                },
+                Select = Select.COUNT,
+                ExclusiveStartKey = lastKey
+            });
+            total += query.Count;
+            lastKey = query.LastEvaluatedKey;
+        } while (lastKey != null && lastKey.Count > 0);
+        return total;
     }
 
     public async Task<(List<Dictionary<string, string>> items, string? nextPageKey)> GetLabelsAsync(
-        string? reviewed, string? label, string? confirmedLabel, string? breed, string? device, int limit, string? nextPageKey)
+        string householdId, string? reviewed, string? label, string? confirmedLabel, string? breed, string? device, int limit, string? nextPageKey)
     {
         string? indexName = null;
         string? pkField = null;
         string? pkValue = null;
-        var filterParts = new List<string>();
-        var filterValues = new Dictionary<string, AttributeValue>();
+        var filterParts = new List<string> { "household_id = :hid" };
+        var filterValues = new Dictionary<string, AttributeValue>
+        {
+            [":hid"] = new() { S = householdId }
+        };
 
         if (confirmedLabel != null)
         {
@@ -208,7 +228,7 @@ public class LabelService : ILabelService
             filterValues[":device"] = new() { S = device };
         }
 
-        var filterExpression = filterParts.Count > 0 ? string.Join(" AND ", filterParts) : null;
+        var filterExpression = string.Join(" AND ", filterParts);
 
         Dictionary<string, AttributeValue>? exclusiveStartKey = null;
         if (!string.IsNullOrEmpty(nextPageKey))
@@ -230,55 +250,43 @@ public class LabelService : ILabelService
             foreach (var kv in filterValues)
                 exprValues[kv.Key] = kv.Value;
 
-            // When using FilterExpression, DynamoDB Limit applies before filtering.
-            // We must loop until we collect enough results or exhaust the index.
-            if (filterExpression != null)
-            {
-                items = new List<Dictionary<string, AttributeValue>>();
-                lastKey = exclusiveStartKey;
-                do
-                {
-                    var response = await _dynamoDb.QueryAsync(new QueryRequest
-                    {
-                        TableName = _config.LabelsTable,
-                        IndexName = indexName,
-                        KeyConditionExpression = $"{pkField} = :val",
-                        FilterExpression = filterExpression,
-                        ExpressionAttributeValues = exprValues,
-                        ScanIndexForward = false,
-                        Limit = 100,
-                        ExclusiveStartKey = lastKey
-                    });
-                    items.AddRange(response.Items);
-                    lastKey = response.LastEvaluatedKey;
-                } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
-            }
-            else
+            items = new List<Dictionary<string, AttributeValue>>();
+            lastKey = exclusiveStartKey;
+            do
             {
                 var response = await _dynamoDb.QueryAsync(new QueryRequest
                 {
                     TableName = _config.LabelsTable,
                     IndexName = indexName,
                     KeyConditionExpression = $"{pkField} = :val",
+                    FilterExpression = filterExpression,
                     ExpressionAttributeValues = exprValues,
                     ScanIndexForward = false,
-                    Limit = limit,
-                    ExclusiveStartKey = exclusiveStartKey
+                    Limit = 100,
+                    ExclusiveStartKey = lastKey
                 });
-                items = response.Items;
+                items.AddRange(response.Items);
                 lastKey = response.LastEvaluatedKey;
-            }
+            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
         }
         else
         {
-            var response = await _dynamoDb.ScanAsync(new ScanRequest
+            var allFilterValues = new Dictionary<string, AttributeValue>(filterValues);
+            items = new List<Dictionary<string, AttributeValue>>();
+            lastKey = exclusiveStartKey;
+            do
             {
-                TableName = _config.LabelsTable,
-                Limit = limit,
-                ExclusiveStartKey = exclusiveStartKey
-            });
-            items = response.Items;
-            lastKey = response.LastEvaluatedKey;
+                var response = await _dynamoDb.ScanAsync(new ScanRequest
+                {
+                    TableName = _config.LabelsTable,
+                    FilterExpression = filterExpression,
+                    ExpressionAttributeValues = allFilterValues,
+                    Limit = 100,
+                    ExclusiveStartKey = lastKey
+                });
+                items.AddRange(response.Items);
+                lastKey = response.LastEvaluatedKey;
+            } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
         }
 
         var result = items.Select(item =>
@@ -355,7 +363,7 @@ public class LabelService : ILabelService
         });
     }
 
-    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(Stream imageStream, string fileName, string confirmedLabel, string? breed = null)
+    public async Task<Dictionary<string, string>> UploadTrainingImageAsync(string householdId, Stream imageStream, string fileName, string confirmedLabel, string? breed = null)
     {
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         if (ext is not (".jpg" or ".jpeg" or ".png"))
@@ -379,6 +387,7 @@ public class LabelService : ILabelService
         {
             ["keyframe_key"] = new() { S = s3Key },
             ["clip_id"] = new() { S = "uploaded" },
+            ["household_id"] = new() { S = householdId },
             ["auto_label"] = new() { S = autoLabelValue },
             ["confirmed_label"] = new() { S = confirmedLabel },
             ["confidence"] = new() { N = "1" },
@@ -408,7 +417,7 @@ public class LabelService : ILabelService
         return result;
     }
 
-    public async Task<int> BackfillBreedAsync(string confirmedLabel, string breed)
+    public async Task<int> BackfillBreedAsync(string householdId, string confirmedLabel, string breed)
     {
         var updated = 0;
         Dictionary<string, AttributeValue>? lastKey = null;
@@ -420,11 +429,12 @@ public class LabelService : ILabelService
                 TableName = _config.LabelsTable,
                 IndexName = "by-review",
                 KeyConditionExpression = "reviewed = :rev",
-                FilterExpression = "confirmed_label = :cl AND attribute_not_exists(breed)",
+                FilterExpression = "confirmed_label = :cl AND attribute_not_exists(breed) AND household_id = :hid",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":rev"] = new() { S = "true" },
-                    [":cl"] = new() { S = confirmedLabel }
+                    [":cl"] = new() { S = confirmedLabel },
+                    [":hid"] = new() { S = householdId }
                 },
                 ProjectionExpression = "keyframe_key",
                 ExclusiveStartKey = lastKey
@@ -453,7 +463,7 @@ public class LabelService : ILabelService
         return updated;
     }
 
-    public async Task<object> BackfillBoundingBoxesAsync(string? confirmedLabel, List<string>? keys = null)
+    public async Task<object> BackfillBoundingBoxesAsync(string householdId, string? confirmedLabel, List<string>? keys = null)
     {
         List<string> allKeys;
 
@@ -471,7 +481,7 @@ public class LabelService : ILabelService
             }
             else
             {
-                var pets = await _petService.ListAsync();
+                var pets = await _petService.ListAsync(householdId);
                 labelsToProcess = pets.Select(p => p.PetId)
                     .Append("other_dog")
                     .Append("my_dog") // legacy compat until migrated

@@ -9,8 +9,8 @@ public interface ITrainingService
     Task TriggerAgentUpdateAsync(string thingName, string version);
     Task<List<TrainingAgentRelease>> ListAgentReleasesAsync();
     Task<string?> GetLatestAgentVersionAsync();
-    Task<string> SubmitJobAsync(TrainingJobRequest request);
-    Task<List<TrainingJobSummary>> ListJobsAsync(string? status = null, int limit = 50);
+    Task<string> SubmitJobAsync(string householdId, TrainingJobRequest request);
+    Task<List<TrainingJobSummary>> ListJobsAsync(string householdId, string? status = null, int limit = 50);
     Task<TrainingJobDetail?> GetJobAsync(string jobId);
     Task CancelJobAsync(string jobId);
     Task DeleteJobAsync(string jobId);

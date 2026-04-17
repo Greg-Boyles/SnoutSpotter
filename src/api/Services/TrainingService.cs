@@ -166,7 +166,7 @@ public partial class TrainingService : ITrainingService
         return releases.OrderByDescending(r => r.ImagePushedAt).ToList();
     }
 
-    public async Task<string> SubmitJobAsync(TrainingJobRequest request)
+    public async Task<string> SubmitJobAsync(string householdId, TrainingJobRequest request)
     {
         var jobId = $"tj-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString()[..4]}";
         var now = DateTime.UtcNow.ToString("O");
@@ -186,12 +186,13 @@ public partial class TrainingService : ITrainingService
         var item = new Dictionary<string, AttributeValue>
         {
             ["job_id"]       = new() { S = jobId },
+            ["household_id"] = new() { S = householdId },
             ["status"]       = new() { S = "pending" },
             ["export_id"]    = new() { S = request.ExportId },
             ["export_s3_key"]= new() { S = request.ExportS3Key },
             ["config"]       = new() { M = ToMap(jobParams) },
             ["created_at"]   = new() { S = now },
-            ["notes"]        = new() { S = request.Notes ?? "" },
+            ["notes"]        = new() { S = string.IsNullOrEmpty(request.Notes) ? "-" : request.Notes },
             ["job_type"]     = new() { S = request.JobType }
         };
 
@@ -224,7 +225,7 @@ public partial class TrainingService : ITrainingService
         return jobId;
     }
 
-    public async Task<List<TrainingJobSummary>> ListJobsAsync(string? status = null, int limit = 50)
+    public async Task<List<TrainingJobSummary>> ListJobsAsync(string householdId, string? status = null, int limit = 50)
     {
         List<Dictionary<string, AttributeValue>> items;
 
@@ -235,10 +236,12 @@ public partial class TrainingService : ITrainingService
                 TableName = _config.TrainingJobsTable,
                 IndexName = "by-status",
                 KeyConditionExpression = "#s = :status",
+                FilterExpression = "household_id = :hid",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#s"] = "status" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
-                    [":status"] = new() { S = status }
+                    [":status"] = new() { S = status },
+                    [":hid"] = new() { S = householdId }
                 },
                 ScanIndexForward = false,
                 Limit = limit
@@ -250,6 +253,11 @@ public partial class TrainingService : ITrainingService
             var response = await _dynamoDb.ScanAsync(new ScanRequest
             {
                 TableName = _config.TrainingJobsTable,
+                FilterExpression = "household_id = :hid",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":hid"] = new() { S = householdId }
+                },
                 Limit = limit
             });
             items = response.Items;

@@ -4,6 +4,7 @@ using Amazon.Lambda.Model;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -33,7 +34,7 @@ public class ClipsController : ControllerBase
         [FromQuery] int limit = 20,
         [FromQuery] string? nextPageKey = null)
     {
-        var result = await _clipService.GetClipsAsync(date, device, detectionType, limit, nextPageKey);
+        var result = await _clipService.GetClipsAsync(HttpContext.GetHouseholdId(), date, device, detectionType, limit, nextPageKey);
         return Ok(result);
     }
 
