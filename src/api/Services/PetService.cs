@@ -125,7 +125,7 @@ public partial class PetService : IPetService
     public async Task DeleteAsync(string petId, string householdId = "default")
     {
         // Check if pet is referenced in the active model's class_map
-        if (await IsPetInActiveClassMap(petId))
+        if (await IsPetInActiveClassMap(petId, householdId))
             throw new InvalidOperationException(
                 $"Cannot delete pet '{petId}' — it is referenced in the active model's class_map. " +
                 "Retrain the model without this pet first.");
@@ -158,14 +158,14 @@ public partial class PetService : IPetService
         return response.Item?.Count > 0;
     }
 
-    private async Task<bool> IsPetInActiveClassMap(string petId)
+    private async Task<bool> IsPetInActiveClassMap(string petId, string householdId)
     {
         try
         {
             var response = await _s3.GetObjectAsync(new GetObjectRequest
             {
                 BucketName = _bucketName,
-                Key = "models/dog-classifier/class_map.json"
+                Key = $"{householdId}/models/dog-classifier/class_map.json"
             });
 
             using var reader = new StreamReader(response.ResponseStream);

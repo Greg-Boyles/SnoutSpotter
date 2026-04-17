@@ -371,7 +371,7 @@ public class LabelService : ILabelService
 
         var timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ss");
         var id = Guid.NewGuid().ToString("N")[..8];
-        var s3Key = $"training-uploads/{timestamp}_{id}{ext}";
+        var s3Key = $"{householdId}/training-uploads/{timestamp}_{id}{ext}";
 
         await _s3.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest
         {
