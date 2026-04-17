@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Services.Interfaces;
 
 namespace SnoutSpotter.Api.Controllers;
@@ -19,7 +20,7 @@ public class ModelsController : ControllerBase
     [HttpGet("models")]
     public async Task<ActionResult> ListModels([FromQuery] string type = "classifier")
     {
-        var (activeVersion, versions) = await _modelService.ListModelsAsync(type);
+        var (activeVersion, versions) = await _modelService.ListModelsAsync(HttpContext.GetHouseholdId(), type);
 
         return Ok(new
         {
@@ -45,7 +46,7 @@ public class ModelsController : ControllerBase
         if (string.IsNullOrWhiteSpace(version))
             return BadRequest(new { error = "version is required" });
 
-        var (uploadUrl, s3Key) = await _modelService.GetUploadUrlAsync(type, version);
+        var (uploadUrl, s3Key) = await _modelService.GetUploadUrlAsync(HttpContext.GetHouseholdId(), type, version);
 
         return Ok(new { uploadUrl, s3Key, version, expiresIn = 3600 });
     }
@@ -58,7 +59,7 @@ public class ModelsController : ControllerBase
 
         try
         {
-            await _modelService.ActivateModelAsync(type, version);
+            await _modelService.ActivateModelAsync(HttpContext.GetHouseholdId(), type, version);
         }
         catch (InvalidOperationException ex)
         {
@@ -73,7 +74,7 @@ public class ModelsController : ControllerBase
     {
         try
         {
-            await _modelService.DeleteModelAsync(type, version);
+            await _modelService.DeleteModelAsync(HttpContext.GetHouseholdId(), type, version);
         }
         catch (InvalidOperationException ex)
         {
