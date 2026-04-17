@@ -75,6 +75,7 @@ builder.Services.AddSingleton<IS3UrlService, S3UrlService>();
 builder.Services.AddSingleton<IClipService, ClipService>();
 builder.Services.AddSingleton<IS3PresignService, S3PresignService>();
 builder.Services.AddSingleton<IHealthService, HealthService>();
+builder.Services.AddSingleton<IDeviceOwnershipService, DeviceOwnershipService>();
 builder.Services.AddSingleton<IPiUpdateService, PiUpdateService>();
 builder.Services.AddSingleton<ILogService, LogService>();
 builder.Services.AddSingleton<ILabelService, LabelService>();

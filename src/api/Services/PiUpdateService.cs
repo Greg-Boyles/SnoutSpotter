@@ -18,6 +18,7 @@ public class PiUpdateService : IPiUpdateService
     private readonly IAmazonIotData _iotData;
     private readonly IAmazonS3 _s3Client;
     private readonly IAmazonDynamoDB _dynamoDb;
+    private readonly IDeviceOwnershipService _ownership;
     private readonly AppConfig _config;
 
     private string? _cachedLatestVersion;
@@ -25,16 +26,17 @@ public class PiUpdateService : IPiUpdateService
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public PiUpdateService(IAmazonIoT iot, IAmazonIotData iotData, IAmazonS3 s3Client,
-        IAmazonDynamoDB dynamoDb, IOptions<AppConfig> config)
+        IAmazonDynamoDB dynamoDb, IDeviceOwnershipService ownership, IOptions<AppConfig> config)
     {
         _iot = iot;
         _iotData = iotData;
         _s3Client = s3Client;
         _dynamoDb = dynamoDb;
+        _ownership = ownership;
         _config = config.Value;
     }
 
-    public async Task<List<string>> ListPisAsync()
+    public async Task<List<string>> ListPisAsync(string? householdId = null)
     {
         try
         {
@@ -42,7 +44,17 @@ public class PiUpdateService : IPiUpdateService
             {
                 ThingGroupName = _config.IoTThingGroup
             });
-            return response.Things;
+
+            if (householdId == null)
+                return response.Things;
+
+            var filtered = new List<string>();
+            foreach (var thingName in response.Things)
+            {
+                if (await _ownership.DeviceBelongsToHouseholdAsync(thingName, householdId))
+                    filtered.Add(thingName);
+            }
+            return filtered;
         }
         catch
         {
@@ -371,9 +383,9 @@ public class PiUpdateService : IPiUpdateService
         });
     }
 
-    public async Task TriggerUpdateAllAsync(string? version = null)
+    public async Task TriggerUpdateAllAsync(string householdId, string? version = null)
     {
-        var things = await ListPisAsync();
+        var things = await ListPisAsync(householdId);
         version ??= await GetLatestVersionAsync()
             ?? throw new InvalidOperationException("No version available for update");
 

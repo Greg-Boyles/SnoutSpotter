@@ -132,11 +132,11 @@ public class ApiStack : Stack
             Resources = new[] { $"arn:aws:logs:{Region}:{Account}:log-group:/snoutspotter/pi-logs:*" }
         }));
 
-        // IoT Device Shadow permissions (all snoutspotter things)
+        // IoT Device Shadow + Thing attribute permissions (all snoutspotter things)
         apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
-            Actions = new[] { "iot:GetThingShadow", "iot:UpdateThingShadow" },
+            Actions = new[] { "iot:GetThingShadow", "iot:UpdateThingShadow", "iot:DescribeThing", "iot:UpdateThing" },
             Resources = new[] { $"arn:aws:iot:{Region}:{Account}:thing/snoutspotter-*" }
         }));
 

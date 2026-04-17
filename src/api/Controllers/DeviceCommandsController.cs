@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SnoutSpotter.Api.Extensions;
 using SnoutSpotter.Api.Models;
 using SnoutSpotter.Api.Services.Interfaces;
 
@@ -12,16 +13,20 @@ public class DeviceCommandsController : ControllerBase
 {
     private readonly IPiUpdateService _piUpdateService;
     private readonly ILogService _logService;
+    private readonly IDeviceOwnershipService _ownership;
 
-    public DeviceCommandsController(IPiUpdateService piUpdateService, ILogService logService)
+    public DeviceCommandsController(IPiUpdateService piUpdateService, ILogService logService, IDeviceOwnershipService ownership)
     {
         _piUpdateService = piUpdateService;
         _logService = logService;
+        _ownership = ownership;
     }
 
     [HttpPost("{thingName}/command")]
     public async Task<ActionResult> SendCommand(string thingName, [FromBody] CommandRequest request)
     {
+        if (!await _ownership.DeviceBelongsToHouseholdAsync(thingName, HttpContext.GetHouseholdId()))
+            return Forbid();
         if (string.IsNullOrWhiteSpace(request.Action))
             return BadRequest(new { error = "Action is required" });
 
@@ -62,6 +67,8 @@ public class DeviceCommandsController : ControllerBase
     [HttpGet("{thingName}/commands")]
     public async Task<ActionResult> GetCommandHistory(string thingName, [FromQuery] int limit = 50)
     {
+        if (!await _ownership.DeviceBelongsToHouseholdAsync(thingName, HttpContext.GetHouseholdId()))
+            return Forbid();
         var commands = await _piUpdateService.GetCommandHistoryAsync(thingName, limit);
         return Ok(new { commands, thingName });
     }
@@ -74,6 +81,8 @@ public class DeviceCommandsController : ControllerBase
         [FromQuery] string? service = null,
         [FromQuery] int limit = 200)
     {
+        if (!await _ownership.DeviceBelongsToHouseholdAsync(thingName, HttpContext.GetHouseholdId()))
+            return Forbid();
         var logs = await _logService.GetLogsAsync(thingName, minutes, level, service, limit);
         return Ok(new { logs, thingName, queryMinutes = minutes });
     }
