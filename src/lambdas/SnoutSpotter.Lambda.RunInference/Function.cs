@@ -67,20 +67,30 @@ public class Function
             return;
         }
 
+        var householdId = clipItem.TryGetValue("household_id", out var hhAttr) ? hhAttr.S : null;
+
         var pipelineMode = await _settings.GetStringAsync(ServerSettings.InferencePipelineMode);
         var confidenceThreshold = await _settings.GetFloatAsync(ServerSettings.InferenceConfidenceThreshold);
         var inputSize = await _settings.GetIntAsync(ServerSettings.InferenceInputSize);
 
         var isTwoStage = pipelineMode == "two_stage";
 
+        // Construct household-specific model keys (COCO detector stays global)
+        var hhSingleStageModelKey = string.IsNullOrEmpty(householdId)
+            ? _singleStageModelKey
+            : $"{householdId}/{_singleStageModelKey}";
+        var hhClassifierModelKey = string.IsNullOrEmpty(householdId)
+            ? _classifierModelKey
+            : $"{householdId}/{_classifierModelKey}";
+
         if (isTwoStage)
         {
             await EnsureDetectorLoaded(_detectorModelKey, context);
-            await EnsureClassifierLoaded(context);
+            await EnsureClassifierLoaded(hhClassifierModelKey, householdId, context);
         }
         else
         {
-            await EnsureDetectorLoaded(_singleStageModelKey, context);
+            await EnsureDetectorLoaded(hhSingleStageModelKey, context);
         }
 
         var classifierConfidence = isTwoStage
@@ -264,28 +274,33 @@ public class Function
         _detectorSession = new InferenceSession(modelPath);
         _loadedDetectorKey = modelKey;
 
-        // Load class_map.json for single-stage model (alongside best.onnx)
-        if (modelKey == _singleStageModelKey)
-            _singleStageClassNames = await LoadClassMapAsync("models/dog-classifier/class_map.json", context);
+        // Load class_map.json for single-stage model (alongside best.onnx in the same prefix)
+        if (modelKey != _detectorModelKey)
+        {
+            var classMapKey = modelKey.Replace("best.onnx", "class_map.json")
+                .Replace(Path.GetFileName(modelKey), "class_map.json");
+            var classMapDir = modelKey[..modelKey.LastIndexOf('/')];
+            _singleStageClassNames = await LoadClassMapAsync($"{classMapDir}/class_map.json", context);
+        }
     }
 
-    private async Task EnsureClassifierLoaded(ILambdaContext context)
+    private async Task EnsureClassifierLoaded(string classifierKey, string? householdId, ILambdaContext context)
     {
-        if (_classifierSession != null && _loadedClassifierKey == _classifierModelKey) return;
-        if (_classifierSession != null && _loadedClassifierKey != _classifierModelKey)
+        if (_classifierSession != null && _loadedClassifierKey == classifierKey) return;
+        if (_classifierSession != null && _loadedClassifierKey != classifierKey)
         {
             context.Logger.LogInformation($"Classifier model changed — reloading");
             _classifierSession.Dispose();
             _classifierSession = null;
         }
 
-        context.Logger.LogInformation($"Loading classifier model: {_classifierModelKey}");
-        var modelPath = await DownloadModel(_classifierModelKey);
+        context.Logger.LogInformation($"Loading classifier model: {classifierKey}");
+        var modelPath = await DownloadModel(classifierKey, householdId);
         _classifierSession = new InferenceSession(modelPath);
-        _loadedClassifierKey = _classifierModelKey;
+        _loadedClassifierKey = classifierKey;
 
-        // Load class_map.json for classifier
-        _classifierClassNames = await LoadClassMapAsync("models/dog-classifier/class_map.json", context);
+        var classMapDir = classifierKey[..classifierKey.LastIndexOf('/')];
+        _classifierClassNames = await LoadClassMapAsync($"{classMapDir}/class_map.json", context);
     }
 
     private async Task<string[]?> LoadClassMapAsync(string s3Key, ILambdaContext context)
@@ -309,9 +324,10 @@ public class Function
         return null;
     }
 
-    private async Task<string> DownloadModel(string modelKey)
+    private async Task<string> DownloadModel(string modelKey, string? householdId = null)
     {
-        var localPath = $"/tmp/{Path.GetFileName(modelKey)}";
+        var cachePrefix = string.IsNullOrEmpty(householdId) ? "" : $"{householdId}_";
+        var localPath = $"/tmp/{cachePrefix}{Path.GetFileName(modelKey)}";
         if (File.Exists(localPath)) return localPath;
 
         var response = await _s3Client.GetObjectAsync(_bucketName, modelKey);
