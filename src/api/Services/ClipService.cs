@@ -68,21 +68,31 @@ public class ClipService : IClipService
             }
         }
 
-        var response = await _dynamoClient.QueryAsync(new QueryRequest
+        var items = new List<Dictionary<string, AttributeValue>>();
+        var lastKey = exclusiveStartKey;
+        do
         {
-            TableName = TableName,
-            IndexName = "all-by-time",
-            KeyConditionExpression = "pk = :pk",
-            FilterExpression = "household_id = :hid",
-            ExpressionAttributeValues = exprValues,
-            ScanIndexForward = false,
-            Limit = limit,
-            ExclusiveStartKey = exclusiveStartKey
-        });
-        var result = response.Items.Select(MapToClipSummary).ToList();
-        var resultKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
+            var response = await _dynamoClient.QueryAsync(new QueryRequest
+            {
+                TableName = TableName,
+                IndexName = "all-by-time",
+                KeyConditionExpression = "pk = :pk",
+                FilterExpression = "household_id = :hid",
+                ExpressionAttributeValues = exprValues,
+                ScanIndexForward = false,
+                Limit = 100,
+                ExclusiveStartKey = lastKey
+            });
+            items.AddRange(response.Items);
+            lastKey = response.LastEvaluatedKey;
+        } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
 
-        return new ClipListResponse(result, resultKey, response.Count);
+        var result = items.Take(limit).Select(MapToClipSummary).ToList();
+        var resultKey = items.Count > limit
+            ? items[limit - 1].GetValueOrDefault("clip_id")?.S
+            : lastKey?.GetValueOrDefault("clip_id")?.S;
+
+        return new ClipListResponse(result, resultKey, result.Count);
     }
 
     private async Task<ClipListResponse> QueryByDeviceAsync(string householdId, string device, int limit, string? nextPageKey)
@@ -112,21 +122,30 @@ public class ClipService : IClipService
 
         exprValues[":hid"] = new() { S = householdId };
 
-        var response = await _dynamoClient.QueryAsync(new QueryRequest
+        var items = new List<Dictionary<string, AttributeValue>>();
+        var lastKey = exclusiveStartKey;
+        do
         {
-            TableName = TableName,
-            IndexName = "by-device",
-            KeyConditionExpression = "device = :device",
-            FilterExpression = "household_id = :hid",
-            ExpressionAttributeValues = exprValues,
-            ScanIndexForward = false,
-            Limit = limit,
-            ExclusiveStartKey = exclusiveStartKey
-        });
+            var response = await _dynamoClient.QueryAsync(new QueryRequest
+            {
+                TableName = TableName,
+                IndexName = "by-device",
+                KeyConditionExpression = "device = :device",
+                FilterExpression = "household_id = :hid",
+                ExpressionAttributeValues = exprValues,
+                ScanIndexForward = false,
+                Limit = 100,
+                ExclusiveStartKey = lastKey
+            });
+            items.AddRange(response.Items);
+            lastKey = response.LastEvaluatedKey;
+        } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
 
-        var clips = response.Items.Select(MapToClipSummary).ToList();
-        var nextKey = response.LastEvaluatedKey?.GetValueOrDefault("clip_id")?.S;
-        return new ClipListResponse(clips, nextKey, response.Count);
+        var clips = items.Take(limit).Select(MapToClipSummary).ToList();
+        var nextKey = items.Count > limit
+            ? items[limit - 1].GetValueOrDefault("clip_id")?.S
+            : lastKey?.GetValueOrDefault("clip_id")?.S;
+        return new ClipListResponse(clips, nextKey, clips.Count);
     }
 
     public async Task<ClipDetail?> GetClipByIdAsync(string clipId)
@@ -166,22 +185,30 @@ public class ClipService : IClipService
 
     private async Task<List<DetectionSummary>> QueryDetectionsByTypeAsync(string householdId, string type, int limit)
     {
-        var response = await _dynamoClient.QueryAsync(new QueryRequest
+        var items = new List<Dictionary<string, AttributeValue>>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+        do
         {
-            TableName = TableName,
-            IndexName = "by-detection",
-            KeyConditionExpression = "detection_type = :dt",
-            FilterExpression = "household_id = :hid",
-            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            var response = await _dynamoClient.QueryAsync(new QueryRequest
             {
-                [":dt"] = new() { S = type },
-                [":hid"] = new() { S = householdId }
-            },
-            ScanIndexForward = false,
-            Limit = limit
-        });
+                TableName = TableName,
+                IndexName = "by-detection",
+                KeyConditionExpression = "detection_type = :dt",
+                FilterExpression = "household_id = :hid",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":dt"] = new() { S = type },
+                    [":hid"] = new() { S = householdId }
+                },
+                ScanIndexForward = false,
+                Limit = 100,
+                ExclusiveStartKey = lastKey
+            });
+            items.AddRange(response.Items);
+            lastKey = response.LastEvaluatedKey;
+        } while (items.Count < limit && lastKey != null && lastKey.Count > 0);
 
-        return response.Items.Select(MapToDetectionSummary).ToList();
+        return items.Take(limit).Select(MapToDetectionSummary).ToList();
     }
 
     public async Task<int> GetClipCountForDateAsync(string householdId, string date)
