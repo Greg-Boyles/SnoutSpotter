@@ -48,12 +48,15 @@ if [ "$EXIT_CODE" -eq 42 ]; then
         export IMAGE_TAG="v$(cat host-state/pending-version)"
         echo "Agent requested update to $IMAGE_TAG"
         rm -f host-state/pending-version
+        # Persist to .env so the pin survives host reboots
+        sed -i '/^IMAGE_TAG=/d' .env 2>/dev/null
+        echo "IMAGE_TAG=$IMAGE_TAG" >> .env
     fi
     ecr_login
     docker compose pull trainer
 fi
 ```
-Create `host-state/` dir at script start if missing; add to `.gitignore`.
+Create `host-state/` dir at script start if missing; add `host-state/` to `src/training-agent/.gitignore` (create the file if it doesn't exist).
 
 ### 2. API — list training-agent releases
 

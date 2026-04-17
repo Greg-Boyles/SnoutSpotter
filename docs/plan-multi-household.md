@@ -6,64 +6,141 @@ This plan extends SnoutSpotter to support multiple households, each with their o
 
 Currently the system is single-tenant — one Okta login, one S3 bucket, shared DynamoDB tables, one global model, all devices in one IoT thing group. This plan adds `household_id` scoping across every layer.
 
+### What stays global (admin-level)
+
+- **Settings** (`snout-spotter-settings`) — system-wide configuration (inference mode, autolabel model key, etc.). The settings UI is an admin surface.
+- **Stats** (`snout-spotter-stats`) — dashboard metrics remain system-wide. The stats-refresh Lambda and stale-while-revalidate mechanism stay unchanged.
+- **AutoLabel COCO models** — `models/yolov8{n,s,m}.onnx` remain at the bucket root, shared across all households.
+- **Training agents** — agent registration, shadow, and version management stay global. The training agent pool is shared; jobs carry `household_id` to scope data access.
+
+### What gets scoped per household
+
+Clips, labels, pets, models, exports, training jobs, devices, and all S3 data paths.
+
 ## Approach: Household ID on Every Record
 
-Every API request extracts `household_id` from the Okta JWT. Every DynamoDB write includes it. Every query filters by it. S3 paths are prefixed by it. Each household gets its own trained model.
+Every API request resolves the active household from a user record in DynamoDB. Every DynamoDB write includes `household_id`. Every query filters by it. S3 paths are prefixed by it. Each household gets its own trained model.
+
+Okta handles authentication only — identity (who you are), not authorization (which household you belong to). Household membership is managed entirely in DynamoDB, decoupled from the auth provider.
 
 ---
 
-## Phase 1: Auth — Household ID in JWT
+## Phase 1: Auth & User Management
 
-### Okta Configuration
+### Okta — No Changes
 
-**File:** `terraform/okta/main.tf`
+Okta stays as-is. The JWT `sub` claim (already present) identifies the user. No custom profile attributes, no claim mappings, no Okta admin workflow for household assignment.
 
-- Add a custom user profile attribute: `household_id` (String)
-- Add a claim mapping to the authorization server: `household_id` → `user.household_id`
-- Each user is assigned a household_id when provisioned in Okta
+### Users Table
 
-### API Middleware
+**New DynamoDB table:** `snout-spotter-users` (PK: `user_id`)
 
-**File:** `src/api/Program.cs`
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `user_id` (PK) | String | Okta `sub` claim |
+| `email` | String | From Okta JWT `email` claim |
+| `name` | String | From Okta JWT `name` claim |
+| `households` | List of Maps | `[{ householdId, role, joinedAt }]` |
+| `created_at` | String | ISO 8601 |
+| `last_login_at` | String | ISO 8601 |
 
-Add middleware that extracts `household_id` from the JWT on every request:
-
-```csharp
-app.Use(async (context, next) =>
-{
-    var householdId = context.User?.FindFirst("household_id")?.Value;
-    if (string.IsNullOrEmpty(householdId))
-    {
-        context.Response.StatusCode = 403;
-        await context.Response.WriteAsync("Missing household_id claim");
-        return;
-    }
-    context.Items["HouseholdId"] = householdId;
-    await next();
-});
+A user can belong to 1+ households. Each membership entry:
+```json
+{ "householdId": "hh-smith-a3f2", "role": "owner", "joinedAt": "2026-04-17T..." }
 ```
 
-**New file:** `src/api/Extensions/HttpContextExtensions.cs`
+Roles: `owner` (can invite/remove members, delete household) and `member` (standard access). Role enforcement is a future concern — for V1 all members have equal access.
 
-Helper to extract household_id cleanly in controllers/services:
+**Modified files:**
+- `src/infra/Stacks/CoreStack.cs` — add table
 
-```csharp
-public static string GetHouseholdId(this HttpContext context)
-    => context.Items["HouseholdId"] as string
-       ?? throw new UnauthorizedAccessException("No household_id");
-```
-
-### Household Management
+### Households Table
 
 **New DynamoDB table:** `snout-spotter-households` (PK: `household_id`)
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `household_id` | String (PK) | e.g. `hh-smith-a3f2` |
+| `household_id` (PK) | String | e.g. `hh-smith-a3f2` |
 | `name` | String | Display name (e.g. "Smith Family") |
 | `created_at` | String | ISO 8601 |
 
-Simple table — mainly for display names and future metadata. Not strictly required if household_id comes from Okta, but useful for the UI.
+Display names and future metadata (billing, plan tier, etc.).
+
+**Modified files:**
+- `src/infra/Stacks/CoreStack.cs` — add table
+
+### API Middleware
+
+**File:** `src/api/Program.cs`
+
+On every authenticated request:
+
+1. Extract `sub` from the Okta JWT (already available via `context.User`)
+2. Look up the user record from `snout-spotter-users` (cached in-memory per Lambda instance, 5-min TTL — same pattern as `SettingsReader`)
+3. Read the `X-Household-Id` header from the request
+4. Validate the header value is in the user's `households` list
+5. Set `context.Items["HouseholdId"]` for downstream use
+
+```csharp
+app.Use(async (context, next) =>
+{
+    var userId = context.User?.FindFirst("sub")?.Value;
+    if (string.IsNullOrEmpty(userId)) { context.Response.StatusCode = 401; return; }
+
+    var user = await userService.GetOrCreateAsync(userId, context.User);
+    var householdId = context.Request.Headers["X-Household-Id"].FirstOrDefault();
+
+    if (string.IsNullOrEmpty(householdId) && user.Households.Count == 1)
+        householdId = user.Households[0].HouseholdId;
+
+    if (string.IsNullOrEmpty(householdId) || !user.Households.Any(h => h.HouseholdId == householdId))
+    {
+        context.Response.StatusCode = 403;
+        await context.Response.WriteAsync("Invalid or missing household");
+        return;
+    }
+
+    context.Items["HouseholdId"] = householdId;
+    context.Items["UserId"] = userId;
+    await next();
+});
+```
+
+If the user has exactly one household, the header is optional (auto-selected). If they have multiple, the frontend must send it.
+
+### User Auto-Provisioning
+
+**New service:** `src/api/Services/UserService.cs`
+
+`GetOrCreateAsync(userId, claimsPrincipal)`:
+- `GetItem` on the users table (with in-memory cache)
+- If no record exists, create one from JWT claims (`email`, `name`) with an empty `households` list
+- Update `last_login_at` on each call (debounced — skip if last update was <1 hour ago)
+
+This means the first login creates the user record automatically. Household assignment is a separate step (admin API or future self-service).
+
+### Household Management API
+
+**New controller:** `src/api/Controllers/HouseholdsController.cs`
+
+- `GET /api/households` — list the current user's households (from their user record)
+- `POST /api/households` — create a new household, add the current user as `owner`
+- `GET /api/households/{householdId}/members` — list members (query users table — or denormalise into households table)
+- `POST /api/households/{householdId}/members` — invite a user by email (admin/owner only, future)
+
+V1 only needs the first two. Member management can come later.
+
+**New file:** `src/api/Extensions/HttpContextExtensions.cs`
+
+```csharp
+public static string GetHouseholdId(this HttpContext context)
+    => context.Items["HouseholdId"] as string
+       ?? throw new UnauthorizedAccessException("No household_id");
+
+public static string GetUserId(this HttpContext context)
+    => context.Items["UserId"] as string
+       ?? throw new UnauthorizedAccessException("No user_id");
+```
 
 ---
 
@@ -100,12 +177,11 @@ All existing GSIs (`all-by-time`, `by-date`, `by-detection`, `by-device`) remain
 
 ### Pets Table (`snout-spotter-pets`)
 
-**New GSI:** `by-household` — PK: `household_id`, SK: `created_at`
-
-Pets already have a small dataset — a scan with filter works, but a GSI is cleaner.
+**No schema change needed.** Already uses `household_id` as PK and `pet_id` as SK. `PetService.cs` already queries by `household_id`. Currently hardcoded to `"default"` — just needs to accept the real value from the JWT.
 
 **Modified files:**
-- `src/api/Services/PetService.cs` — ListPets queries by household_id
+- `src/api/Services/PetService.cs` — replace hardcoded `"default"` with real household_id from context
+- `src/api/Controllers/PetsController.cs` — extract household_id, pass to service
 
 ### Exports Table (`snout-spotter-exports`)
 
@@ -118,6 +194,19 @@ Exports scoped to household — each household exports only their labels.
 **New attribute:** `household_id` (String)
 
 Training jobs scoped — a household trains on their own data.
+
+### Models Table (`snout-spotter-models`)
+
+**New attribute:** `household_id` (String)
+
+Currently PK: `model_id`, GSI: `by-type` (PK: `model_type`, SK: `created_at`). Models need household scoping so each household trains, uploads, and activates their own models independently.
+
+**New GSI:** `by-household-type` — PK: `household_id`, SK: `created_at` with filter on `model_type`. Or compound PK: `household_id#model_type`.
+
+**Modified files:**
+- `src/infra/Stacks/CoreStack.cs` — add GSI
+- `src/api/Services/ModelService.cs` — all queries/writes scoped by household_id
+- `src/api/Controllers/ModelsController.cs` — extract household_id, pass to service
 
 ### Commands Table (`snout-spotter-commands`)
 
@@ -157,11 +246,35 @@ All S3 keys gain a household prefix. This is the highest-effort change.
 | `src/api/Services/LabelService.cs` | `training-uploads/` path |
 | `src/api/Services/ExportService.cs` | `training-exports/` path |
 
+### EventBridge Prefix Filters (breaking change)
+
+Both `IngestStack.cs` and `InferenceStack.cs` use EventBridge rules with S3 prefix filters (`raw-clips/`, `keyframes/`). Once paths become `{household_id}/raw-clips/...`, **these filters will no longer match**.
+
+**Options:**
+- Remove the prefix filter and match on suffix instead (e.g. `.mp4`, `.jpg`) — simpler but noisier
+- Use a broader prefix filter and let the Lambda parse the key to extract household_id and the path type
+- Use multiple EventBridge rules — impractical with dynamic household IDs
+
+**Recommended:** Remove the prefix-based filter. Instead, filter by suffix (`.mp4` for ingest, `.jpg` for inference) and have the Lambda parse the household_id from the S3 key's first path segment.
+
+**Modified files:**
+- `src/infra/Stacks/IngestStack.cs` — update EventBridge rule
+- `src/infra/Stacks/InferenceStack.cs` — update EventBridge rule
+
+### SQS Message Types
+
+`src/shared/SnoutSpotter.Contracts/Messages.cs` defines `InferenceMessage(ClipId)`, `BackfillMessage(KeyframeKeys)`, and `TrainingJobMessage`. None carry `household_id`. Either:
+- Add `household_id` to each message type (preferred — avoids extra DynamoDB lookups in consumers)
+- Or have consuming Lambdas resolve household from the clip/job record
+
+**Modified file:** `src/shared/SnoutSpotter.Contracts/Messages.cs`
+
 ### How Lambdas Know the Household
 
-- **IngestClip**: Triggered by S3 event. The S3 key already contains the device name. A device→household lookup (DynamoDB or IoT Thing attribute) resolves the household.
-- **RunInference**: Receives clip_id. Reads the clip record from DynamoDB which has `household_id`. Uses it to construct the model S3 path.
+- **IngestClip**: Triggered by S3 event. Parse household_id from the S3 key's first segment (`{household_id}/raw-clips/...`). Write it to the clip's DynamoDB record.
+- **RunInference**: Receives clip_id (+ household_id if added to SQS message). Reads the clip record from DynamoDB which has `household_id`. Uses it to construct the model S3 path.
 - **ExportDataset**: Receives household_id as input parameter (passed by the API when triggering export).
+- **Training agent**: Receives household_id in the `TrainingJobMessage`. Uses it for model upload S3 prefix.
 
 ### Pi Device Upload Path
 
@@ -169,9 +282,13 @@ The Pi `uploader.py` needs to know its household_id to construct the correct S3 
 - Store `household_id` in the device's `config.yaml` (set during registration)
 - Or: the device uploads to a staging prefix (`uploads/{device}/`) and IngestClip moves it to the household path
 
+**Note:** Phase 4 (IoT device registration) must be completed before Pi devices can upload to household-prefixed paths — see dependency note below.
+
 ---
 
 ## Phase 4: IoT — Devices Belong to Households
+
+**Dependency:** Phase 3 (S3 paths) requires the Pi to know its `household_id`, which comes from registration in this phase. Implement Phase 4 device registration before Phase 3 Pi upload path changes, or use the staging prefix approach as a bridge.
 
 ### Device Registration
 
@@ -192,6 +309,10 @@ The Pi `uploader.py` needs to know its household_id to construct the correct S3 
 
 - Shadow read/write scoped: API only accesses shadows for devices in the user's household
 - Validate `thingName` belongs to household before any shadow operation
+
+### Stream Access
+
+`StreamService.cs` constructs KVS stream names as `snoutspotter-{thingName}-live`. Stream names are globally unique (tied to thing name), so no naming change is needed. However, the API must validate that the device belongs to the requesting household before starting/stopping a stream — add household ownership check in the stream endpoints.
 
 ---
 
@@ -225,24 +346,40 @@ Each household has its own model directory in S3:
 
 - ExportDataset: exports only the household's labels
 - Training jobs: scoped to household, use household's export
-- Training agent: receives household_id in job config, uploads model to household's S3 prefix
+- Training agent: receives household_id in `TrainingJobMessage` (added in Phase 3), uses it to construct the model upload S3 prefix (`{household_id}/models/...`)
+
+**Modified files for training agent:**
+- `src/shared/SnoutSpotter.Shared.Training/TrainingJobDesired.cs` — add `HouseholdId` field
+- `src/training-agent/SnoutSpotter.TrainingAgent/JobRunner.cs` — use household prefix for model/class_map upload paths
 
 ---
 
 ## Phase 6: Frontend — Household Context
 
-### Single Household Per Login (Recommended for V1)
+### Login Flow
 
-- JWT contains household_id — everything auto-scoped
-- User never sees other households' data
-- No household switcher needed
-- Household name shown in sidebar header
+1. User authenticates via Okta (unchanged)
+2. Frontend calls `GET /api/households` to get the user's household list
+3. If one household → auto-select, store in localStorage
+4. If multiple → show a household picker before loading the dashboard
+5. All subsequent API calls include `X-Household-Id` header
 
-### Future: Household Switcher
+**Modified files:**
+- `src/web/src/api.ts` — add `X-Household-Id` header to all requests (read from localStorage or context)
+- `src/web/src/App.tsx` — add household resolution step after auth, before rendering routes
 
-- User can belong to multiple households (Okta group per household)
-- Dropdown in sidebar to switch active household
-- Requires the API to accept household_id as a header/parameter rather than always from JWT
+### Household Picker
+
+If the user belongs to multiple households, show a simple picker page (or sidebar dropdown):
+- List household names from `GET /api/households`
+- Selected household stored in `localStorage` as `activeHouseholdId`
+- Switching households reloads the dashboard data
+
+### Sidebar
+
+- Show household name in the sidebar header (below the logo)
+- If multi-household, show a switcher dropdown
+- User name/email from `GET /api/households` response (or JWT claims already available client-side)
 
 ---
 
@@ -250,14 +387,21 @@ Each household has its own model directory in S3:
 
 ### Default Household
 
-- Create a default household for existing data (e.g. `hh-default`)
-- Backfill `household_id` on all existing clips, labels, exports, training jobs, pets
-- Update all existing S3 keys to include the household prefix (S3 copy + delete)
+- Create a `hh-default` record in the households table
+- Create user records for existing Okta users with `hh-default` in their `households` list
+- Backfill `household_id` on all existing clips, exports, training jobs, models
 - Update device registrations with household_id
+- Update pets table: change hardcoded `"default"` household_id to `"hh-default"` (PK change — requires delete + re-insert)
+
+### Labels Table Migration (PK change required)
+
+The labels table uses `keyframe_key` (an S3 path like `keyframes/2026/03/27/frame.jpg`) as its PK. Once S3 paths become `{household_id}/keyframes/...`, the PK values must change. **DynamoDB does not allow updating a PK** — every label record must be deleted and re-inserted with the new key. This is more expensive than a simple attribute backfill.
+
+Additionally, `household_id` can be added as a new attribute during the re-insert.
 
 ### S3 Migration
 
-This is the most expensive part — every S3 object needs copying to a new key:
+This is the highest-effort part — every S3 object needs copying to a new key:
 ```
 raw-clips/device/2026/... → hh-default/raw-clips/device/2026/...
 keyframes/device/2026/... → hh-default/keyframes/device/2026/...
@@ -266,7 +410,7 @@ models/dog-classifier/... → hh-default/models/dog-classifier/...
 
 Can be done with a migration script using `aws s3 cp --recursive` or a Lambda.
 
-DynamoDB records that store S3 keys (`s3_key`, `keyframe_keys`) also need updating.
+DynamoDB records that store S3 keys (`s3_key`, `keyframe_keys`, `export_s3_key`, `model_s3_key`, `checkpoint_s3_key`) also need updating to include the household prefix.
 
 ---
 
@@ -282,15 +426,15 @@ DynamoDB records that store S3 keys (`s3_key`, `keyframe_keys`) also need updati
 
 | Phase | Description | Effort |
 |-------|------------|--------|
-| 1 | Auth (Okta claim + middleware) | 1-2 days |
-| 2 | DynamoDB scoping (6 tables + all queries) | 3-4 days |
-| 3 | S3 path prefixing (all Lambdas + API) | 2-3 days |
-| 4 | IoT device → household | 1 day |
-| 5 | Per-household models + inference | 2 days |
+| 1 | Auth (users table, middleware, households API, auto-provisioning) | 2-3 days |
+| 2 | DynamoDB scoping (7 tables + all queries) | 3-5 days |
+| 3 | S3 path prefixing (all Lambdas + API + EventBridge + SQS messages) | 3-4 days |
+| 4 | IoT device → household + stream validation | 1-2 days |
+| 5 | Per-household models + inference + training agent | 2-3 days |
 | 6 | Frontend household context | 1 day |
-| 7 | Data migration | 1-2 days |
+| 7 | Data migration (incl. labels PK re-insert + S3 key updates in DDB) | 2-3 days |
 | 8 | Documentation | 1 day |
-| | **Total** | **~15-20 days** |
+| | **Total** | **~19-25 days** |
 
 This is on top of the multi-pet profiles work (~7 phases, prerequisite).
 
@@ -299,15 +443,17 @@ This is on top of the multi-pet profiles work (~7 phases, prerequisite).
 ## Prerequisites
 
 1. **Multi-pet profiles** (`plan-multi-pet-profiles.md`) must be completed first. The dynamic pet_id system and class_map.json approach are designed to be household-ready.
-2. **Okta access** to add custom user profile attributes and claim mappings.
 
 ## Risks
 
 - **S3 migration volume** — moving thousands of objects is slow and error-prone. Need idempotent migration with progress tracking.
+- **Labels table PK migration** — `keyframe_key` is an S3 path that changes with household prefixing. Every label record must be deleted and re-inserted (DynamoDB doesn't allow PK updates). Must be atomic per-record to avoid data loss.
+- **EventBridge filter change** — removing S3 prefix filters means Lambdas may be invoked for unrelated S3 events (e.g. release tarballs, terraform state). Lambda code must validate the key structure and exit early for non-matching paths.
 - **RunInference multi-model caching** — Lambda `/tmp` is 512MB-10GB. Multiple household models may not fit. Need eviction strategy or ephemeral storage.
 - **Cross-household data leaks** — every query must be audited for household filtering. A single missed filter = data leak. Consider automated tests that verify household isolation.
 - **Pi device re-provisioning** — existing devices need their config updated with household_id. May require a Pi OTA update + config push.
-- **Okta user management** — assigning users to households requires admin workflow. No self-service household creation initially.
+- **User without a household** — after auto-provisioning, a new user has an empty households list. The API must handle this gracefully (403 with a clear message, or a "no household" landing page). Admin assigns them to a household, or self-service creation is added later.
+- **Phase ordering dependency** — Pi devices can't upload to household-prefixed S3 paths (Phase 3) until they know their household_id (Phase 4). Either implement Phase 4 registration first, or use a staging prefix as a bridge.
 
 ## Future Extensions
 
