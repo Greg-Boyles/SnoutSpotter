@@ -24,7 +24,7 @@ import SubmitTraining from "./pages/SubmitTraining";
 import TrainingJobDetail from "./pages/TrainingJobDetail";
 import TrainingAgentDetail from "./pages/TrainingAgentDetail";
 import Pets from "./pages/Pets";
-import { setAuthGetter } from "./api";
+import { setAuthGetter, setHouseholdGetter } from "./api";
 
 type NavItem = { to: string; icon: React.ElementType; label: string };
 type NavGroup = { heading: string; items: NavItem[] };
@@ -86,6 +86,7 @@ export default function App() {
 
   useEffect(() => {
     setAuthGetter(() => oktaAuth.getAccessToken());
+    setHouseholdGetter(() => localStorage.getItem("activeHouseholdId") ?? undefined);
   }, [oktaAuth]);
 
   // Close sidebar on navigation (mobile)
