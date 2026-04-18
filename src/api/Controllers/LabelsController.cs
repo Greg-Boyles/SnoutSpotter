@@ -48,7 +48,7 @@ public class LabelsController : ControllerBase
     {
         try
         {
-            var result = await _labelService.TriggerAutoLabelAsync(date);
+            var result = await _labelService.TriggerAutoLabelAsync(HttpContext.GetHouseholdId(), date);
             return Ok(result);
         }
         catch (Exception ex)

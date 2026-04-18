@@ -18,8 +18,9 @@ namespace SnoutSpotter.Lambda.AutoLabel;
 
 public class AutoLabelRequest
 {
-    public string? Date { get; set; } // Optional: "YYYY/MM/DD" to scope to a specific day
-    public List<string>? ReprocessKeys { get; set; } // Optional: reprocess specific keys to backfill bounding boxes
+    public string? Date { get; set; }
+    public List<string>? ReprocessKeys { get; set; }
+    public string? HouseholdId { get; set; }
 }
 
 public class Function
@@ -73,9 +74,12 @@ public class Function
         if (autoLabelRequest.ReprocessKeys != null && autoLabelRequest.ReprocessKeys.Count > 0)
             return await ReprocessHandler(autoLabelRequest.ReprocessKeys, context);
 
-        var prefix = "keyframes/";
-        if (!string.IsNullOrEmpty(autoLabelRequest.Date))
-            prefix = $"keyframes/{autoLabelRequest.Date}/";
+        var keyframeRoot = string.IsNullOrEmpty(autoLabelRequest.HouseholdId)
+            ? "keyframes"
+            : $"{autoLabelRequest.HouseholdId}/keyframes";
+        var prefix = string.IsNullOrEmpty(autoLabelRequest.Date)
+            ? $"{keyframeRoot}/"
+            : $"{keyframeRoot}/{autoLabelRequest.Date}/";
 
         // List all keyframes
         var keyframes = new List<string>();
