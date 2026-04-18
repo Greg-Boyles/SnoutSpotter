@@ -34,6 +34,7 @@ SnoutSpotter/
 │   │   │   ├── DeviceUpdatesController.cs  # POST /api/device/{thingName}/update, releases
 │   │   │   ├── DeviceCommandsController.cs # POST /api/device/{thingName}/command, logs
 │   │   │   ├── ExportsController.cs        # POST /api/ml/export, GET/DELETE /api/ml/exports
+│   │   │   ├── HouseholdsController.cs    # GET/POST /api/households
 │   │   │   ├── LabelsController.cs         # GET/PUT /api/ml/labels, auto-label, upload, rerun-inference
 │   │   │   ├── ModelsController.cs         # GET /api/ml/models, activate, upload-url
 │   │   │   ├── PetsController.cs           # GET/POST/PUT/DELETE /api/pets
@@ -41,6 +42,8 @@ SnoutSpotter/
 │   │   │   ├── TrainingJobsController.cs   # POST/GET /api/training/jobs, cancel, delete
 │   │   │   └── StatsController.cs          # GET /api/stats, GET /api/stats/activity, GET /api/stats/health
 │   │   ├── Models/ClipModels.cs       # Record types for API responses
+│   │   ├── Extensions/
+│   │   │   └── HttpContextExtensions.cs  # GetHouseholdId(), GetUserId() helper methods
 │   │   ├── Services/
 │   │   │   ├── ClipService.cs         # DynamoDB queries for clips (scoped by household_id)
 │   │   │   ├── DeviceOwnershipService.cs # IoT Thing household_id attribute lookup + cache
@@ -86,8 +89,8 @@ SnoutSpotter/
 │   │   ├── SnoutSpotter.Lambda.RunInference/  # Triggered by S3 keyframes upload OR SQS rerun queue
 │   │   │   ├── Function.cs                    # Two-stage inference: COCO YOLO dog detector + MobileNetV3 classifier (or single-stage legacy mode)
 │   │   │   └── Dockerfile
-│   │   ├── SnoutSpotter.Lambda.AutoLabel/     # COCO-pretrained YOLOv8 dog detection on keyframes
-│   │   │   ├── Function.cs                    # ONNX inference (model key from server settings), writes labels to DynamoDB
+│   │   ├── SnoutSpotter.Lambda.AutoLabel/     # COCO-pretrained YOLOv8 dog detection on keyframes (household-scoped)
+│   │   │   ├── Function.cs                    # ONNX inference (model key from server settings), writes labels with household_id to DynamoDB
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.ExportDataset/ # Training dataset packaging
 │   │   │   ├── Function.cs                    # Queries labels, balances classes; detection (YOLO) or classification (crops) export; mergeClasses for single-class detector
@@ -130,10 +133,13 @@ SnoutSpotter/
 │   │   │   │   └── CommandHistory.tsx # Per-device command history
 │   │   │   ├── constants.ts            # Shared constants: DOG_BREEDS
 │   │   │   ├── hooks/
-│   │   │   │   └── usePets.ts          # Module-level cache of pet list + invalidate() + petName() lookup
+│   │   │   │   ├── usePets.ts          # Module-level cache of pet list + invalidate() + petName() lookup
+│   │   │   │   └── useHousehold.ts     # Active household context, switcher, user info
 │   │   │   └── components/
 │   │   │       ├── BoundingBoxOverlay.tsx
 │   │   │       ├── ErrorBoundary.tsx   # Global error boundary with fallback UI
+│   │   │       ├── HouseholdProvider.tsx # Resolves household after auth, auto-selects or shows picker
+│   │   │       ├── HouseholdPicker.tsx  # Household selection/creation UI for multi-household users
 │   │   │       ├── LabelBadge.tsx      # Shared LabelBadge and DetectionBadge components
 │   │   │       └── health/            # Shared: StatusBadge, UsageBar, AddDeviceDialog, formatUptime
 │   │   ├── vite.config.ts
@@ -442,7 +448,8 @@ All main API endpoints require a valid Okta JWT Bearer token. Most endpoints als
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `clip_id` (PK) | String | ISO timestamp identifier |
-| `s3_key` | String | S3 key for the raw clip |
+| `household_id` | String | Household that owns this clip (e.g. `hh-default`). All queries filter by this. |
+| `s3_key` | String | S3 key for the raw clip (household-prefixed, e.g. `hh-default/raw-clips/...`) |
 | `timestamp` | Number | Unix timestamp |
 | `duration_s` | Number | Clip duration in seconds |
 | `date` | String | `YYYY/MM/DD` |
@@ -484,7 +491,8 @@ Label values match `detection_type`: any `pet-*` ID, `other_dog`, `no_dog`, or l
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `keyframe_key` (PK) | String | S3 key for the keyframe image |
+| `keyframe_key` (PK) | String | S3 key for the keyframe image (household-prefixed, e.g. `hh-default/keyframes/...`) |
+| `household_id` | String | Household that owns this label. All queries filter by this. |
 | `clip_id` | String | Source clip reference (or "uploaded" for manual uploads) |
 | `auto_label` | String | `dog`, `no_dog` (COCO ML detection result — stays binary; individual pet identification happens on confirm) |
 | `confirmed_label` | String | Pet ID (`pet-{slug}-{rand}`), `other_dog`, or `no_dog` (human review). Legacy records may still contain `my_dog` until migrated. |
@@ -551,6 +559,7 @@ Named pet profiles. Composite key scoped by household.
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `export_id` (PK) | String | Unique export identifier |
+| `household_id` | String | Household that owns this export. List queries filter by this. |
 | `status` | String | `running`, `complete`, `failed` |
 | `created_at` | String | ISO 8601 timestamp |
 | `config` | Map (M) | Export options: `include_background` (BOOL), `background_ratio` (N), `max_per_class` (N, optional) |
@@ -574,6 +583,7 @@ Named pet profiles. Composite key scoped by household.
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `job_id` (PK) | String | Unique job identifier (`tj-YYYYMMDD-HHmmss-xxxx`) |
+| `household_id` | String | Household that owns this job. Submit writes it, list queries filter by it. |
 | `status` | String | `pending`, `downloading`, `scanning`, `training`, `uploading`, `complete`, `failed`, `cancelled` |
 | `agent_thing_name` | String | IoT thing name of the agent running the job |
 | `export_id` | String | Source dataset export ID |
@@ -598,6 +608,7 @@ Named pet profiles. Composite key scoped by household.
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `model_id` (PK) | String | `{type}#{version}` e.g. `detector#v20250413-120345` |
+| `household_id` | String | Household that owns this model. List/activate queries filter by this. |
 | `model_type` | String | `"detector"` or `"classifier"` |
 | `version` | String | e.g. `v20250413-120345` or `v2.0` |
 | `s3_key` | String | Full S3 key to the `.onnx` file |
@@ -708,7 +719,7 @@ Holds pre-computed dashboard metrics. Written by `snout-spotter-stats-refresh` L
 
 **Pi version bumping:** `package-pi.yml` reads the current version from the S3 manifest and increments the patch number — guarantees a unique version every run.
 
-### Remote Config (29 settings)
+### Remote Config (30 settings)
 
 Settings are validated in two places: API-side (`PiUpdateService.ConfigurableKeys`) and Pi-side (`config_schema.CONFIGURABLE_KEYS`). Both must match.
 
@@ -717,7 +728,7 @@ Settings are validated in two places: API-side (`PiUpdateService.ConfigurableKey
 | Motion | `threshold`, `blur_kernel`, `min_area` |
 | Camera | `detection_fps`, `preview_resolution`, `record_resolution`, `record_fps`, `encoding_bitrate` |
 | Recording | `max_clip_length`, `pre_buffer`, `pre_buffer_enabled`, `post_motion_buffer`, `ffmpeg_timeout_seconds` |
-| Upload | `max_retries`, `retry_delay`, `delete_after_upload`, `file_stability_seconds`, `min_free_disk_mb`, `ledger_retention_days` |
+| Upload | `max_retries`, `retry_delay`, `delete_after_upload`, `file_stability_seconds`, `min_free_disk_mb`, `ledger_retention_days`, `prefix` |
 | Health | `interval_seconds` |
 | Log Shipping | `enabled`, `batch_interval_seconds`, `max_lines_per_batch`, `min_level` |
 | Streaming | `timeout_seconds`, `resolution`, `framerate`, `bitrate` |
