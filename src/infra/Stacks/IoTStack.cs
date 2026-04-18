@@ -54,6 +54,7 @@ public class IoTStack : Stack
         });
 
         props.DataBucket.GrantPut(piCredentialsRole, "raw-clips/*");
+        props.DataBucket.GrantPut(piCredentialsRole, "*/raw-clips/*");
         props.DataBucket.GrantRead(piCredentialsRole, "releases/*");
         piCredentialsRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
         {
@@ -165,8 +166,10 @@ public class IoTStack : Stack
         });
 
         props.DataBucket.GrantRead(trainerCredentialsRole, "training-exports/*");
+        props.DataBucket.GrantRead(trainerCredentialsRole, "*/training-exports/*");
         props.DataBucket.GrantRead(trainerCredentialsRole, "releases/ml-training/*");
         props.DataBucket.GrantPut(trainerCredentialsRole, "models/*");
+        props.DataBucket.GrantPut(trainerCredentialsRole, "*/models/*");
 
         // SQS permissions for polling the training job queue
         trainerCredentialsRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
