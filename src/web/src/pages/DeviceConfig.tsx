@@ -42,6 +42,7 @@ const CONFIG_SECTIONS: {
       { key: "upload.retry_delay", label: "Retry delay", type: "int", min: 1, max: 60, unit: "s", description: "Seconds between upload retry attempts" },
       { key: "upload.delete_after_upload", label: "Delete after upload", type: "bool", description: "Remove local clip file after successful upload" },
       { key: "upload.file_stability_seconds", label: "File stability wait", type: "int", min: 1, max: 60, unit: "s", description: "Wait for file to stop being written before uploading — increase for slow storage" },
+      { key: "upload.prefix", label: "S3 prefix", type: "str", description: "S3 key prefix for uploads (e.g. hh-default/raw-clips)" },
     ],
   },
   {
