@@ -270,7 +270,8 @@ class Uploader:
                     CONFIG_RELOAD_FLAG.unlink(missing_ok=True)
                     new_config = load_config()
                     self.config = new_config["upload"]
-                    logger.info("Config reloaded (uploader)")
+                    self.prefix = self.config["prefix"]
+                    logger.info(f"Config reloaded (uploader) prefix={self.prefix}")
                 except Exception as e:
                     logger.warning(f"Failed to reload config: {e}")
 
