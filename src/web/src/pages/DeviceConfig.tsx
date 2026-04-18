@@ -265,6 +265,17 @@ export default function DeviceConfig() {
                               <option key={c} value={c}>{c}</option>
                             ))}
                           </select>
+                        ) : type === "str" ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={value as string ?? ""}
+                              onChange={(e) => updateDraft(key, e.target.value)}
+                              className={`w-48 px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                                changed ? "border-blue-400 bg-blue-50" : "border-gray-300"
+                              }`}
+                            />
+                          </div>
                         ) : (
                           <div className="flex items-center gap-1">
                             <input
