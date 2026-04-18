@@ -129,6 +129,8 @@ public class Function
                 var clipId = ExtractClipId(keyframeKey);
                 var device = ExtractDevice(keyframeKey);
 
+                var householdId = ExtractHouseholdId(keyframeKey);
+
                 var item = new Dictionary<string, AttributeValue>
                 {
                     ["keyframe_key"] = new() { S = keyframeKey },
@@ -140,6 +142,8 @@ public class Function
                     ["labelled_at"] = new() { S = DateTime.UtcNow.ToString("O") },
                 };
 
+                if (!string.IsNullOrEmpty(householdId))
+                    item["household_id"] = new() { S = householdId };
                 if (!string.IsNullOrEmpty(device))
                     item["device"] = new() { S = device };
 
@@ -301,9 +305,22 @@ public class Function
 
     private static string ExtractDevice(string keyframeKey)
     {
+        // Household-prefixed: {hh}/keyframes/{device}/YYYY/MM/DD/filename.jpg
         // New format: keyframes/{device}/YYYY/MM/DD/filename.jpg (5+ parts)
         // Old format: keyframes/YYYY/MM/DD/filename.jpg (4 parts)
         var parts = keyframeKey.Split('/');
+        if (parts.Length >= 2 && parts[0] != "keyframes")
+            parts = parts[1..]; // strip household prefix
         return parts.Length >= 5 ? parts[1] : "";
+    }
+
+    private static string? ExtractHouseholdId(string keyframeKey)
+    {
+        // {household_id}/keyframes/... → extract first segment
+        // keyframes/... → no household
+        var firstSlash = keyframeKey.IndexOf('/');
+        if (firstSlash < 0) return null;
+        var firstSegment = keyframeKey[..firstSlash];
+        return firstSegment == "keyframes" ? null : firstSegment;
     }
 }
