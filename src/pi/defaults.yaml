@@ -24,7 +24,7 @@ recording:
 upload:
   bucket_name: ""
   region: eu-west-1
-  prefix: hh-default/raw-clips
+  prefix: raw-clips
   max_retries: 5
   retry_delay: 5
   delete_after_upload: true

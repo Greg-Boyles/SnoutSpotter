@@ -85,6 +85,10 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "type": int, "min": 1, "max": 90,
         "affects": "uploader",
     },
+    "upload.prefix": {
+        "type": str,
+        "affects": "uploader",
+    },
     "health.interval_seconds": {
         "type": int, "min": 60, "max": 3600,
         "affects": "agent",
