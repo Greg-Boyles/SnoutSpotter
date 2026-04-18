@@ -318,7 +318,7 @@ public class LabelService : ILabelService
         var autoLabelValue = confirmedLabel == "no_dog" ? "no_dog" : "dog";
 
         var updateExpr = "SET confirmed_label = :label, reviewed = :rev, reviewed_at = :at, " +
-                         "original_auto_label = if_not_exists(original_auto_label, auto_label), " +
+                         "original_auto_label = if_not_exists(original_auto_label, if_not_exists(auto_label, :auto)), " +
                          "auto_label = :auto";
         var exprValues = new Dictionary<string, AttributeValue>
         {
