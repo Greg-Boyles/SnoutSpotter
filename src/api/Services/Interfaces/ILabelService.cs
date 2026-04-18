@@ -2,7 +2,7 @@ namespace SnoutSpotter.Api.Services.Interfaces;
 
 public interface ILabelService
 {
-    Task<object> TriggerAutoLabelAsync(string? date);
+    Task<object> TriggerAutoLabelAsync(string householdId, string? date);
     Task<object> GetStatsAsync(string householdId);
     Task<(List<Dictionary<string, string>> items, string? nextPageKey)> GetLabelsAsync(
         string householdId, string? reviewed, string? label, string? confirmedLabel, string? breed, string? device, int limit, string? nextPageKey);

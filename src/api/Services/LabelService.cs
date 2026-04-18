@@ -25,10 +25,10 @@ public class LabelService : ILabelService
         _config = config.Value;
     }
 
-    public async Task<object> TriggerAutoLabelAsync(string? date)
+    public async Task<object> TriggerAutoLabelAsync(string householdId, string? date)
     {
         var client = new AmazonLambdaClient();
-        var payload = JsonSerializer.Serialize(new { Date = date });
+        var payload = JsonSerializer.Serialize(new { Date = date, HouseholdId = householdId });
 
         var response = await client.InvokeAsync(new InvokeRequest
         {
