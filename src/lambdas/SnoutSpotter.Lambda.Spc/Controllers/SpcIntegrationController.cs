@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using SnoutSpotter.Lambda.Spc.Extensions;
 using SnoutSpotter.Lambda.Spc.Models;
 using SnoutSpotter.Lambda.Spc.Services;
+using SnoutSpotter.Lambda.Spc.Services.Interfaces;
 
 namespace SnoutSpotter.Lambda.Spc.Controllers;
 

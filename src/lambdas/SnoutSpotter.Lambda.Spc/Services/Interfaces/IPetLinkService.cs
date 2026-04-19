@@ -1,4 +1,4 @@
-namespace SnoutSpotter.Lambda.Spc.Services;
+namespace SnoutSpotter.Lambda.Spc.Services.Interfaces;
 
 public interface IPetLinkService
 {
