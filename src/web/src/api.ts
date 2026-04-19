@@ -2,7 +2,7 @@ import type { Clip, Detection, LogEntry, Pet, StatsOverview, StreamStartResult, 
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
-const SPC_BASE = import.meta.env.VITE_SPC_URL || "";
+const SPC_INTEGRATION_BASE = import.meta.env.VITE_SPC_INTEGRATION_URL || "";
 
 let getAccessToken: (() => string | undefined) | null = null;
 let getHouseholdId: (() => string | undefined) | null = null;
@@ -93,7 +93,7 @@ export class SpcApiError extends Error {
 }
 
 async function spcFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${SPC_BASE}${path}`, {
+  const res = await fetch(`${SPC_INTEGRATION_BASE}${path}`, {
     ...init,
     headers: {
       ...(init.body ? { "Content-Type": "application/json" } : {}),
