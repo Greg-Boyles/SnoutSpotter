@@ -5,6 +5,7 @@ using Polly;
 using Polly.Extensions.Http;
 using SnoutSpotter.Lambda.Spc;
 using SnoutSpotter.Lambda.Spc.Services;
+using SnoutSpotter.Lambda.Spc.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -111,7 +112,7 @@ app.Use(async (context, next) =>
         return;
     }
 
-    if (user == null || !user.Households.Any(h => h.HouseholdId == householdId))
+    if (user == null || user.Households.All(h => h.HouseholdId != householdId))
     {
         context.Response.StatusCode = 403;
         context.Response.ContentType = "application/json";

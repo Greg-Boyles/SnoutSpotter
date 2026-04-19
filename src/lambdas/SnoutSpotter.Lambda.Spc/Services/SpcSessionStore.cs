@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Caching.Memory;
 using SnoutSpotter.Lambda.Spc.Models;
+using SnoutSpotter.Lambda.Spc.Services.Interfaces;
 
 namespace SnoutSpotter.Lambda.Spc.Services;
 

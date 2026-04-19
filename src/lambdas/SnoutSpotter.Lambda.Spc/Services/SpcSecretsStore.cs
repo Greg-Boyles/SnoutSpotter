@@ -2,6 +2,7 @@ using System.Text.Json;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using SnoutSpotter.Lambda.Spc.Models;
+using SnoutSpotter.Lambda.Spc.Services.Interfaces;
 
 namespace SnoutSpotter.Lambda.Spc.Services;
 

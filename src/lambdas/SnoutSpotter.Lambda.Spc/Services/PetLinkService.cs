@@ -2,6 +2,7 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Microsoft.Extensions.Options;
 using SnoutSpotter.Lambda.Spc.Models;
+using SnoutSpotter.Lambda.Spc.Services.Interfaces;
 
 namespace SnoutSpotter.Lambda.Spc.Services;
 
