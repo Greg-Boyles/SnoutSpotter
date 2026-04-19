@@ -33,6 +33,7 @@ jobs:
       export-dataset: ${{ steps.filter.outputs.export-dataset }}
       update-training-progress: ${{ steps.filter.outputs.update-training-progress }}
       stats-refresh: ${{ steps.filter.outputs.stats-refresh }}
+      spc: ${{ steps.filter.outputs.spc }}
       web: ${{ steps.filter.outputs.web }}
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +72,9 @@ jobs:
               - 'src/infra/**'
             stats-refresh:
               - 'src/lambdas/SnoutSpotter.Lambda.StatsRefresh/**'
+              - 'src/infra/**'
+            spc:
+              - 'src/lambdas/SnoutSpotter.Lambda.Spc/**'
               - 'src/infra/**'
             web:
               - 'src/web/**'
@@ -184,6 +188,16 @@ jobs:
     uses: ./.github/workflows/build-stats-refresh-image.yml
     secrets: inherit
 
+  build-spc-image:
+    name: Build SPC connector image
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.spc == 'true' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-spc-image.yml
+    secrets: inherit
+
   # Stage 3: Deploy application stacks
   deploy-api:
     name: Deploy API
@@ -283,6 +297,16 @@ jobs:
       !failure() && !cancelled() &&
       needs.build-stats-refresh-image.result == 'success'
     uses: ./.github/workflows/deploy-stats-refresh.yml
+    secrets: inherit
+
+  deploy-spc:
+    name: Deploy SPC connector
+    needs: build-spc-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-spc-image.result == 'success'
+    uses: ./.github/workflows/deploy-spc.yml
     secrets: inherit
 
   deploy-web:
