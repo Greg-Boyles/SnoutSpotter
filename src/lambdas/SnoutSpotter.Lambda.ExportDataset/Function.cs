@@ -332,6 +332,10 @@ public class Function
                 .GroupBy(l => l.ConfirmedLabel)
                 .ToDictionary(g => g.Key, g => g.Count());
 
+            // Only include classes that actually have data — pets with no labels are dropped
+            classMap = classMap.Where(c => petCounts.ContainsKey(c)).ToArray();
+            context.Logger.LogInformation($"Effective class map: [{string.Join(", ", classMap)}]");
+
             var exportPrefix = string.IsNullOrEmpty(request.HouseholdId) ? "training-exports" : $"{request.HouseholdId}/training-exports";
             var s3Key = $"{exportPrefix}/{exportId}.zip";
 
