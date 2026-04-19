@@ -25,8 +25,8 @@ provider "okta" {
 resource "okta_app_oauth" "snoutspotter" {
   label                      = "SnoutSpotter"
   type                       = "browser"
-  grant_types                = ["authorization_code", "refresh_token"]
-  response_types             = ["code", "token"]
+  grant_types                = ["authorization_code"]
+  response_types             = ["code"]
   token_endpoint_auth_method = "none"
   pkce_required              = true
   authentication_policy      = okta_app_signon_policy.snoutspotter.id
@@ -84,9 +84,8 @@ resource "okta_auth_server_policy_rule" "snoutspotter" {
   policy_id             = okta_auth_server_policy.snoutspotter.id
   name                  = "Allow SPA access"
   priority              = 1
-  grant_type_whitelist          = ["authorization_code", "refresh_token"]
-  scope_whitelist               = ["openid", "profile", "email", "offline_access"]
-  group_whitelist               = [okta_group.snoutspotter_users.id]
+  grant_type_whitelist  = ["authorization_code"]
+  scope_whitelist       = ["openid", "profile", "email"]
+  group_whitelist       = [okta_group.snoutspotter_users.id]
   access_token_lifetime_minutes = 60
-  refresh_token_lifetime_minutes = 10080
 }
