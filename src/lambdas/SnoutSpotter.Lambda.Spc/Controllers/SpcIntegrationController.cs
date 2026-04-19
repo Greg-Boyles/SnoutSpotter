@@ -40,10 +40,11 @@ public class SpcIntegrationController : ControllerBase
         var householdId = HttpContext.GetHouseholdId();
         var state = await _households.GetAsync(householdId, ct);
         if (state == null)
-            return Ok(new StatusResponse("unlinked", null, null, null, null, null));
+            return Ok(new StatusResponse("unlinked", null, null, null, null, null, null));
         return Ok(new StatusResponse(
             state.Status,
             state.SpcUserEmail,
+            state.SpcHouseholdId,
             state.SpcHouseholdName,
             state.LinkedAt,
             state.LastSyncAt,

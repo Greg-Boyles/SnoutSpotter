@@ -37,6 +37,7 @@ public record LinkResponse(string Status, int MappedCount);
 public record StatusResponse(
     string Status,
     string? SpcUserEmail,
+    string? SpcHouseholdId,
     string? SpcHouseholdName,
     string? LinkedAt,
     string? LastSyncAt,

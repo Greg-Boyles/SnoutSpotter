@@ -189,7 +189,17 @@ export default function Pets() {
                     <PawPrint className="w-5 h-5 text-amber-600" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-gray-900">{pet.name}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-900">{pet.name}</h3>
+                      {pet.spcPetId && (
+                        <span
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
+                          title={`Linked to Sure Pet Care${pet.spcPetName ? ` as ${pet.spcPetName}` : ""}`}
+                        >
+                          SPC
+                        </span>
+                      )}
+                    </div>
                     {pet.breed && (
                       <p className="text-sm text-gray-500">{pet.breed}</p>
                     )}
