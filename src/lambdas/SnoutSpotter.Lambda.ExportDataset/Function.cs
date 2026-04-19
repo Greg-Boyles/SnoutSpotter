@@ -330,6 +330,10 @@ public class Function
                 .GroupBy(l => l.ConfirmedLabel)
                 .ToDictionary(g => g.Key, g => g.Count());
 
+            // Only include classes that actually have data — pets with no labels are dropped
+            classMap = classMap.Where(c => petCounts.ContainsKey(c)).ToArray();
+            context.Logger.LogInformation($"Effective class map: [{string.Join(", ", classMap)}]");
+
             var zipPath = $"/tmp/{exportId}.zip";
             if (File.Exists(zipPath)) File.Delete(zipPath);
 
