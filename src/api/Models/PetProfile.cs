@@ -6,7 +6,9 @@ public record PetProfile(
     string Name,
     string? Breed,
     string? PhotoUrl,
-    string CreatedAt);
+    string CreatedAt,
+    string? SpcPetId = null,
+    string? SpcPetName = null);
 
 public record CreatePetRequest(string Name, string? Breed = null);
 
