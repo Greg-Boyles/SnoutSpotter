@@ -1,0 +1,50 @@
+name: Deploy SPC connector
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  DOTNET_VERSION: "8.0.x"
+  AWS_REGION: "eu-west-1"
+  ECR_REPOSITORY: "snout-spotter-spc"
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install AWS CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build CDK
+        run: dotnet build --configuration Release
+        working-directory: src/infra
+
+      - name: CDK deploy SPC connector stack
+        run: cdk deploy SnoutSpotter-Spc --require-approval never --method=direct
+        working-directory: src/infra
+        env:
+          IMAGE_TAG: ${{ github.sha }}

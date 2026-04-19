@@ -38,6 +38,7 @@ jobs:
         working-directory: src/web
         env:
           VITE_API_URL: ${{ secrets.API_URL }}
+          VITE_SPC_URL: ${{ secrets.SPC_URL }}
           VITE_OKTA_ISSUER: ${{ vars.OKTA_ISSUER }}
           VITE_OKTA_CLIENT_ID: ${{ vars.SNOUTSPOTTER_OKTA_CLIENT_ID }}
 
