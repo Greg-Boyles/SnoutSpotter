@@ -141,7 +141,8 @@ public class SpcConnectorStack : Stack
             SourceArn = $"arn:aws:execute-api:{Region}:{Account}:{httpApi.Ref}/*"
         });
 
-        var apiUrl = $"https://{httpApi.AttrApiEndpoint}";
+        // CfnApi.AttrApiEndpoint already returns the full https://{id}.execute-api.{region}.amazonaws.com URL.
+        var apiUrl = httpApi.AttrApiEndpoint;
 
         _ = new StringParameter(this, "SpcApiUrlParam", new StringParameterProps
         {
