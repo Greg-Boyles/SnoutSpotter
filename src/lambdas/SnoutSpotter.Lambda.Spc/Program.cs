@@ -1,4 +1,5 @@
 using Amazon.DynamoDBv2;
+using Amazon.SecretsManager;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Polly;
 using Polly.Extensions.Http;
@@ -18,8 +19,12 @@ builder.Services.Configure<AppConfig>(cfg =>
 });
 
 builder.Services.AddSingleton<IAmazonDynamoDB, AmazonDynamoDBClient>();
+builder.Services.AddSingleton<IAmazonSecretsManager, AmazonSecretsManagerClient>();
 builder.Services.AddSingleton<IUserMembershipService, UserMembershipService>();
 builder.Services.AddSingleton<ISpcSessionStore, SpcSessionStore>();
+builder.Services.AddSingleton<ISpcSecretsStore, SpcSecretsStore>();
+builder.Services.AddSingleton<IHouseholdIntegrationService, HouseholdIntegrationService>();
+builder.Services.AddSingleton<IPetLinkService, PetLinkService>();
 builder.Services.AddMemoryCache();
 
 // Typed HttpClient for Sure Pet Care with Polly resilience:
