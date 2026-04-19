@@ -64,6 +64,15 @@ var piMgmtStack = new PiMgmtStack(app, "SnoutSpotter-PiMgmt", new PiMgmtStackPro
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
 });
 
+var spcStack = new SpcConnectorStack(app, "SnoutSpotter-Spc", new SpcConnectorStackProps
+{
+    Env = env,
+    SpcEcrRepo = coreStack.SpcEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
+    OktaIssuer = oktaIssuer,
+    AllowedOrigin = allowedOrigin
+});
+
 var trainingProgressStack = new TrainingProgressStack(app, "SnoutSpotter-TrainingProgress", new TrainingProgressStackProps
 {
     Env = env,

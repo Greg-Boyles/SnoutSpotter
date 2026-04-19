@@ -28,6 +28,7 @@ public class CoreStack : Stack
     public Repository TrainingAgentEcrRepo { get; }
     public Repository UpdateTrainingProgressEcrRepo { get; }
     public Repository StatsRefreshEcrRepo { get; }
+    public Repository SpcEcrRepo { get; }
     public Table StatsTable { get; }
     public Table PetsTable { get; }
     public Table UsersTable { get; }
@@ -435,6 +436,39 @@ public class CoreStack : Stack
                     Description = "Keep only 3 most recent images"
                 }
             }
+        });
+
+        // ECR repository for SPC (Sure Pet Care) connector Lambda
+        SpcEcrRepo = new Repository(this, "SpcEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-spc",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
+        _ = new StringParameter(this, "HouseholdsTableNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/households-table-name",
+            StringValue = HouseholdsTable.TableName
+        });
+
+        _ = new StringParameter(this, "PetsTableNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/pets-table-name",
+            StringValue = PetsTable.TableName
+        });
+
+        _ = new StringParameter(this, "UsersTableNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/users-table-name",
+            StringValue = UsersTable.TableName
         });
 
         // Outputs

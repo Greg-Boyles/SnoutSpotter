@@ -185,7 +185,9 @@ public partial class PetService : IPetService
         Name: item["name"].S,
         Breed: item.TryGetValue("breed", out var b) ? b.S : null,
         PhotoUrl: item.TryGetValue("photo_url", out var p) ? p.S : null,
-        CreatedAt: item["created_at"].S);
+        CreatedAt: item["created_at"].S,
+        SpcPetId: item.TryGetValue("spc_pet_id", out var sid) ? sid.S : null,
+        SpcPetName: item.TryGetValue("spc_pet_name", out var sname) ? sname.S : null);
 
     private record ClassMap(string[]? Classes);
 
