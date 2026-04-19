@@ -8,6 +8,8 @@ SnoutSpotter is a motion-triggered video capture system running on Raspberry Pi 
 
 **Multi-household:** All data is scoped by `household_id`. Users belong to 1+ households (stored in `snout-spotter-users`). The API middleware validates the `X-Household-Id` header against user memberships. S3 paths are prefixed with `{household_id}/`. Settings, stats, and training agents are global.
 
+**Sure Pet Care (SPC) connector:** Households can optionally link to a Sure Pet Care account so SnoutSpotter pets are paired to SPC pets (1:1 mapping). A dedicated `snout-spotter-spc` Lambda proxies requests to `app-api.beta.surehub.io`: the user's SPC email+password are exchanged once for an access token, stored per-household in AWS Secrets Manager (`snoutspotter/spc/{household_id}`), and used to read SPC households, pets, and device inventory. The UI has an `/integrations` page with a 4-step setup wizard. Linked state lives on the household record (`spc_integration` map) and the pet record (`spc_pet_id` / `spc_pet_name`). Phase 2 (event ingestion — feeding/drinking/door events via SPC's `/api/timeline` feed, replacing mobile push notifications) is designed in `docs/plan-spc-event-ingestion.md` but not yet built.
+
 **Region:** `eu-west-1`
 
 ---
@@ -72,6 +74,7 @@ SnoutSpotter/
 │   │       ├── InferenceStack.cs      # RunInference Lambda + S3 event trigger
 │   │       ├── ApiStack.cs            # API Lambda + HTTP API Gateway + Okta JWT env vars
 │   │       ├── PiMgmtStack.cs         # Pi Management Lambda + HTTP API Gateway (no auth)
+│   │       ├── SpcConnectorStack.cs   # Sure Pet Care connector Lambda + HTTP API Gateway (Okta JWT)
 │   │       ├── WebStack.cs            # S3 static site + CloudFront distribution
 │   │       ├── MonitoringStack.cs     # CloudWatch alarms
 │   │       └── CiCdStack.cs           # OIDC role for GitHub Actions
@@ -97,18 +100,28 @@ SnoutSpotter/
 │   │   │   └── Dockerfile
 │   │   ├── SnoutSpotter.Lambda.UpdateTrainingProgress/ # IoT Rule target for trainer MQTT progress
 │   │   │   └── Function.cs                    # Deserialises TrainingProgressMessage, patches snout-spotter-training-jobs DynamoDB table
-│   │   └── SnoutSpotter.Lambda.PiMgmt/        # Pi device + trainer registration API (no Okta auth)
-│   │       ├── Controllers/DevicesController.cs
-│   │       ├── Controllers/TrainersController.cs  # POST /api/trainers/register, DELETE, GET
-│   │       ├── Services/DeviceProvisioningService.cs
+│   │   ├── SnoutSpotter.Lambda.PiMgmt/        # Pi device + trainer registration API (no Okta auth)
+│   │   │   ├── Controllers/DevicesController.cs
+│   │   │   ├── Controllers/TrainersController.cs  # POST /api/trainers/register, DELETE, GET
+│   │   │   ├── Services/DeviceProvisioningService.cs
+│   │   │   ├── Program.cs
+│   │   │   └── Dockerfile
+│   │   └── SnoutSpotter.Lambda.Spc/            # Sure Pet Care connector API (Okta JWT + X-Household-Id)
+│   │       ├── Controllers/SpcIntegrationController.cs  # /api/integrations/spc/* — validate, link, unlink, devices, pet-links
+│   │       ├── Services/SpcApiClient.cs                 # Typed HttpClient + Polly retry/breaker; only place that calls surehub.io
+│   │       ├── Services/SpcSecretsStore.cs              # Secrets Manager wrapper (snoutspotter/spc/{household_id})
+│   │       ├── Services/HouseholdIntegrationService.cs  # Reads/writes spc_integration map on household record
+│   │       ├── Services/PetLinkService.cs               # Writes/clears spc_pet_id + spc_pet_name across pets
+│   │       ├── Services/SpcSessionStore.cs              # IMemoryCache 10-min wizard session (access token between /validate and /link)
+│   │       ├── Services/UserMembershipService.cs        # Copied household-membership check (mirrors main API middleware)
 │   │       ├── Program.cs
 │   │       └── Dockerfile
 │   │
 │   ├── web/                           # React frontend
 │   │   ├── src/
 │   │   │   ├── App.tsx                # Router, sidebar, auth gates, logout
-│   │   │   ├── api.ts                 # API client with Bearer token injection
-│   │   │   ├── types.ts               # TypeScript interfaces (Clip, PiDevice, CameraStatus, etc.)
+│   │   │   ├── api.ts                 # API client with Bearer token injection. Three base URLs: BASE (main API), PI_MGMT_BASE, SPC_INTEGRATION_BASE. SPC_INTEGRATION_BASE comes from VITE_SPC_INTEGRATION_URL (GitHub secret SPC_INTEGRATION_URL) and hosts the api.spc.* namespace. SpcApiError preserves backend error codes (invalid_credentials, token_expired, session_expired, etc.).
+│   │   │   ├── types.ts               # TypeScript interfaces (Clip, PiDevice, CameraStatus, etc.). Pet has optional spcPetId/spcPetName for SPC linkage.
 │   │   │   ├── auth/
 │   │   │   │   └── oktaConfig.ts      # OktaAuth instance (PKCE, scopes)
 │   │   │   ├── pages/
@@ -117,7 +130,8 @@ SnoutSpotter/
 │   │   │   │   ├── ClipDetail.tsx     # Video player + keyframes + detections
 │   │   │   │   ├── Detections.tsx     # Detection results list
 │   │   │   │   ├── Labels.tsx         # ML label review: auto/manual labels, breed, bulk actions (dynamic per-pet filters)
-│   │   │   │   ├── Pets.tsx           # Pet profile CRUD
+│   │   │   │   ├── Pets.tsx           # Pet profile CRUD (shows "SPC" badge on pets linked to Sure Pet Care)
+│   │   │   │   ├── Integrations.tsx   # Connector list (Sure Pet Care) with setup wizard + manage dialog
 │   │   │   │   ├── TrainingExports.tsx# Training dataset export: config form (class balancing, background), list, download
 │   │   │   │   ├── Models.tsx         # YOLOv8 detection model version management: upload, list, activate
 │   │   │   │   ├── SubmitTraining.tsx # New training job form: dataset, hyperparams, prefill from prev job
@@ -141,7 +155,8 @@ SnoutSpotter/
 │   │   │       ├── HouseholdProvider.tsx # Resolves household after auth, auto-selects or shows picker
 │   │   │       ├── HouseholdPicker.tsx  # Household selection/creation UI for multi-household users
 │   │   │       ├── LabelBadge.tsx      # Shared LabelBadge and DetectionBadge components
-│   │   │       └── health/            # Shared: StatusBadge, UsageBar, AddDeviceDialog, formatUptime
+│   │   │       ├── health/            # Shared: StatusBadge, UsageBar, AddDeviceDialog, formatUptime
+│   │   │       └── integrations/     # Sure Pet Care connector UI: SpcConnectorCard, SpcSetupWizard (4-step modal), SpcManageDialog, SpcDevicesPanel
 │   │   ├── vite.config.ts
 │   │   └── package.json
 │   │
@@ -208,10 +223,12 @@ SnoutSpotter/
     ├── build-ingest-image.yml
     ├── build-inference-image.yml
     ├── build-pi-mgmt-image.yml
+    ├── build-spc-image.yml            # SPC connector Lambda image build
     ├── deploy-api.yml                 # CDK deploy ApiStack
     ├── deploy-ingest.yml
     ├── deploy-inference.yml
     ├── deploy-pi-mgmt.yml
+    ├── deploy-spc.yml                 # CDK deploy SpcConnectorStack
     ├── deploy-web.yml                 # npm build → S3 sync → CloudFront invalidation
     ├── deploy-ml.yml                  # Package models → S3
     ├── deploy-okta.yml                # Terraform apply for Okta resources (S3 remote state)
@@ -326,9 +343,10 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 7. **TrainingStack** — depends on CoreStack (SQS queue, UpdateTrainingProgress Lambda, IoT Rule)
 8. **ApiStack** — depends on CoreStack, reads CDK context + SSM params from other stacks
 9. **PiMgmtStack** — depends on CoreStack
-10. **WebStack** — standalone (S3 + CloudFront)
-11. **MonitoringStack** — depends on CoreStack
-12. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
+10. **SpcConnectorStack** — depends on CoreStack (reads households/pets/users table names via SSM)
+11. **WebStack** — standalone (S3 + CloudFront)
+12. **MonitoringStack** — depends on CoreStack
+13. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
 
 **IMPORTANT — No cross-stack dependencies between Lambda stacks.** Each Lambda stack must only depend on CoreStack (for ECR repos, tables, buckets). Never pass outputs from one Lambda stack to another via CDK props — this creates deploy-time coupling where deploying stack A forces CDK to also deploy stack B, which fails if stack B's Docker image wasn't built for the current commit. Instead, use SSM parameters: the source stack writes to `/snoutspotter/{stack}/{param}` and the consuming stack reads via `StringParameter.ValueForStringParameter()`, which resolves at CloudFormation deploy time without a CDK dependency. See IoTStack → PiMgmtStack and AutoLabelStack → ApiStack for examples.
 
@@ -336,10 +354,11 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 
 | Stack | Resources |
 |-------|-----------|
-| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs` + `snout-spotter-stats` + `snout-spotter-pets` (PK: household_id, SK: pet_id) + `snout-spotter-users` (PK: user_id) + `snout-spotter-households` (PK: household_id), ECR repos |
+| CoreStack | S3 `snout-spotter-{account}`, DynamoDB `snout-spotter-clips` + `snout-spotter-labels` + `snout-spotter-exports` + `snout-spotter-settings` + `snout-spotter-training-jobs` + `snout-spotter-stats` + `snout-spotter-pets` (PK: household_id, SK: pet_id) + `snout-spotter-users` (PK: user_id) + `snout-spotter-households` (PK: household_id), ECR repos (`snout-spotter-api`, `-ingest`, `-inference`, `-pi-mgmt`, `-auto-label`, `-export-dataset`, `-update-training-progress`, `-stats-refresh`, `-log-ingestion`, `-command-ack`, `-spc`). SSM: `/snoutspotter/core/{data-bucket-name,settings-table-name,stats-table-name,households-table-name,pets-table-name,users-table-name}`. |
 | IoTStack | Thing Group `snoutspotter-pis`, IoT Policy `snoutspotter-pi-policy`, IAM Role `snoutspotter-pi-credentials`, Role Alias `snoutspotter-pi-role-alias`, CloudWatch Log Group `/snoutspotter/pi-logs`, IoT Topic Rule `snoutspotter_pi_logs` |
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars; also hosts `snout-spotter-stats-refresh` Lambda (same image, `APP_MODE=stats-refresh`) invoked on-demand |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
+| SpcConnectorStack | Docker Lambda `snout-spotter-spc`, HTTP API Gateway (Okta JWT + `X-Household-Id` CORS). IAM: Secrets Manager CRUD on `snoutspotter/spc/*`; DynamoDB GetItem+UpdateItem on households, Query+UpdateItem+BatchWriteItem on pets, GetItem on users. Writes `/snoutspotter/spc/api-url` SSM param consumed by the web build as `VITE_SPC_INTEGRATION_URL`. |
 | IngestStack | Docker Lambda triggered by S3 events (wildcard matches `raw-clips/` and `*/raw-clips/`). Parses `household_id` from S3 key prefix. |
 | InferenceStack | Docker Lambda triggered by S3 events (wildcard matches `keyframes/` and `*/keyframes/`) + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3). Loads models from `{household_id}/models/`. |
 | WebStack | S3 static site bucket, CloudFront distribution |
@@ -439,6 +458,19 @@ All main API endpoints require a valid Okta JWT Bearer token. Most endpoints als
 - `POST /api/trainers/register` — register new training agent (`{"name": "gregs-pc"}`) → returns certs + endpoints; thing name: `snoutspotter-trainer-{name}`
 - `DELETE /api/trainers/{thingName}` — deregister training agent
 
+### SPC Connector API (`snout-spotter-spc` Lambda — Okta JWT + `X-Household-Id`)
+
+Separate API Gateway; frontend reaches it via `VITE_SPC_INTEGRATION_URL`. All endpoints authenticate the user the same way as the main API, then use per-household credentials stored in Secrets Manager to call `app-api.beta.surehub.io` on their behalf. Errors use `{ "error": "<code>" }` envelopes; the frontend surfaces `invalid_credentials`, `token_expired`, `session_expired`, `session_invalid`, `upstream_unavailable`, `duplicate_spc_pet_mapping`, etc.
+
+- `GET /api/integrations/spc/status` — `{ status: "unlinked"|"linked"|"token_expired"|"error", spcUserEmail?, spcHouseholdId?, spcHouseholdName?, linkedAt?, lastSyncAt?, lastError? }`
+- `POST /api/integrations/spc/validate` — body `{ email, password }`. Exchanges credentials for an SPC token, caches it in an in-memory 10-min session, returns `{ sessionId, spcUserEmail, expiresAt }`. Password is never persisted. Reuses the stored `client_uid` if a previous link exists so SPC sees a stable client.
+- `GET /api/integrations/spc/spc-households?session={sessionId}` — proxy list of SPC households for the validated session (wizard step 2)
+- `GET /api/integrations/spc/spc-pets?session={sessionId}&spcHouseholdId={id}` — proxy list of SPC pets (wizard step 3). All species surfaced — no filter.
+- `POST /api/integrations/spc/link` — body `{ sessionId, spcHouseholdId, mappings: [{ petId, spcPetId|null, spcPetName|null }] }`. Validates 1:1 mapping (every SnoutSpotter pet explicit, no duplicate SPC pet ids), persists secret + household map + pet attributes. Returns `{ status, mappedCount }`.
+- `GET /api/integrations/spc/devices` — list SPC device inventory (bowls, feeders, pet doors, hubs) using the stored token. Marks household `token_expired` and returns 409 on SPC 401.
+- `PUT /api/integrations/spc/pet-links` — body `{ mappings: [...] }`. Edit mapping post-setup with the same duplicate/unknown-pet validation.
+- `DELETE /api/integrations/spc` — unlink: deletes Secrets Manager secret (7-day recovery window), clears `spc_integration` map, batch-REMOVEs `spc_pet_id`/`spc_pet_name` from every pet in the household.
+
 ---
 
 ## DynamoDB Schema
@@ -522,8 +554,10 @@ Named pet profiles. Composite key scoped by household.
 | `breed` | String | (optional) Breed — removed via UpdateItem `REMOVE breed` when set to null/empty |
 | `photo_url` | String | (optional) future use |
 | `created_at` | String | ISO 8601. **Drives YOLO class ordering** — pets sorted by `created_at` become class 0..N-1, with `other_dog` as the last class. |
+| `spc_pet_id` | String | (optional) SPC pet id (stringified int) this pet is linked to. Written by the SPC connector Lambda during `POST /api/integrations/spc/link` and cleared on unlink. |
+| `spc_pet_name` | String | (optional) Cached SPC pet display name for rendering the "SPC" badge without a round-trip. |
 
-**Service:** `PetService.cs` handles CRUD. Pet deletion is refused with a 409 Conflict if the pet ID appears in `{household_id}/models/dog-classifier/class_map.json` — retrain the model without the pet first.
+**Service:** `PetService.cs` handles CRUD. Pet deletion is refused with a 409 Conflict if the pet ID appears in `{household_id}/models/dog-classifier/class_map.json` — retrain the model without the pet first. `PetService.FromItem` reads the optional `spc_pet_id` / `spc_pet_name` attributes so the Pets page can render the SPC badge.
 
 ### Users Table
 
@@ -549,8 +583,9 @@ Named pet profiles. Composite key scoped by household.
 | `household_id` (PK) | String | e.g. `hh-default`, `hh-smith-a3f2` |
 | `name` | String | Display name (e.g. "Default Household") |
 | `created_at` | String | ISO 8601 |
+| `spc_integration` | Map (M) | (optional) Sure Pet Care link state. Set atomically on `POST /api/integrations/spc/link` and REMOVE-d on `DELETE /api/integrations/spc`. Shape: `{ status: "linked"\|"token_expired"\|"error", spc_household_id, spc_household_name, spc_user_email, secret_arn, linked_at, last_sync_at?, last_error? }`. The access token itself lives in AWS Secrets Manager at `snoutspotter/spc/{household_id}` — this record only tracks public metadata. |
 
-**Service:** `HouseholdService.cs` handles creation (generates `hh-{slug}-{rand}` ID) and listing.
+**Service:** `HouseholdService.cs` handles creation (generates `hh-{slug}-{rand}` ID) and listing. The SPC connector's `HouseholdIntegrationService.cs` reads/writes `spc_integration` and flips `status = token_expired` on SPC 401.
 
 ### Exports Table
 
@@ -874,6 +909,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 | `src/lambdas/Ingest/**` | build ingest image → deploy ingest |
 | `src/lambdas/RunInference/**` | build inference image → deploy inference |
 | `src/lambdas/PiMgmt/**` | build pi-mgmt image → deploy pi-mgmt |
+| `src/lambdas/SnoutSpotter.Lambda.Spc/**` | build spc image → deploy spc |
 | `src/pi/**` | nothing (handled by `package-pi.yml`) |
 | `terraform/okta/**` | nothing (handled by `deploy-okta.yml`) |
 
@@ -885,6 +921,7 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 | `WEB_BUCKET_NAME` | S3 bucket for frontend assets |
 | `CLOUDFRONT_DISTRIBUTION_ID` | For cache invalidation |
 | `API_URL` | Main API Gateway URL |
+| `SPC_INTEGRATION_URL` | SnoutSpotter's own SPC-connector API Gateway URL (read by `deploy-web.yml` → `VITE_SPC_INTEGRATION_URL`). Value is the `snout-spotter-spc` Gateway endpoint; auto-written to SSM at `/snoutspotter/spc/api-url` by `SpcConnectorStack`. |
 | `DATA_BUCKET_NAME` | Data S3 bucket name |
 | `OKTA_API_TOKEN` | Okta API token for Terraform |
 
@@ -998,3 +1035,13 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 43. **Multi-household data isolation** — Every DynamoDB table that stores user data has a `household_id` attribute. Every query must filter by it. S3 paths are prefixed with `{household_id}/`. Settings (`snout-spotter-settings`), stats (`snout-spotter-stats`), and training agents are global — not scoped. IoT device ownership is tracked via a `household_id` attribute on the IoT Thing (checked by `DeviceOwnershipService` with 5-min cache). The `HouseholdProvider` React component resolves the active household after auth — if a user has no households, they see a creation form. New user records are auto-provisioned on first login from the JWT `sub` claim.
 
 44. **Legacy `my_dog` fallbacks are everywhere on purpose** — Until `POST /api/pets/migrate` has been run, pre-migration labels, clips, stats cache entries, and exports may still contain `my_dog`. Backward-compat shims live in: `ClipService.GetDetectionsAsync` (queries `my_dog` alongside pet IDs), `LabelService.CountConfirmedLabelsAsync` + stats refresh (count `my_dog` into `myDog` totals), `StatsRefreshService` (reads `my_dog_detections` fallback when `known_pet_detections` absent), RunInference (`_classifierClassNames` defaults to `["my_dog", "other_dog"]` when no `class_map.json`), JobRunner (same fallback for `TrainingResult.Classes`), and several frontend renderers (`Dashboard.tsx` export summary, `ClipDetail` detection SVG, `LabelBadge`, `usePets.petName`). Removing any of these before the user has run the migration will make legacy data invisible or incorrectly labelled. After migration, they can be pruned — but do a grep for `my_dog` before touching any of them and understand which branch you're in.
+
+45. **SPC connector has two auth layers — don't confuse them** — Layer 1: frontend → `snout-spotter-spc` Lambda uses Okta JWT + `X-Household-Id` exactly like the main API (the household-membership middleware is copied from `src/api/Program.cs`). Layer 2: `snout-spotter-spc` Lambda → `app-api.beta.surehub.io` uses a per-household access token stored in AWS Secrets Manager at `snoutspotter/spc/{household_id}`. The incoming Okta header is **replaced**, not forwarded, on outbound SPC calls. SPC never sees our JWT, Okta never sees SPC's.
+
+46. **SPC `client_uid` must be stable per household** — SPC's `POST /api/auth/login` requires a `client_uid` (random GUID — `device_id` is deprecated and should not be sent). We generate it on first link and persist it inside the Secrets Manager secret; the validate endpoint reads the existing secret and reuses the existing `client_uid` on re-link. Using a fresh GUID on every validate would make SPC see a new "client" each time and could trigger their rate-limit / suspicious-login heuristics.
+
+47. **`CfnApi.AttrApiEndpoint` already includes the `https://` scheme** — Every HTTP API Gateway endpoint returned by `attr_api_endpoint` is already a full URL. `ApiStack.cs` and `PiMgmtStack.cs` use the `$"https://{httpApi.AttrApiEndpoint}"` pattern for their `CfnOutput` (display-only, so nobody noticed the double `https://`). `SpcConnectorStack.cs` originally did the same and also wrote to an SSM parameter consumed by the web build — which produced `https://https://...execute-api...` in `VITE_SPC_INTEGRATION_URL`. The fix is to use `httpApi.AttrApiEndpoint` verbatim for any value that will be consumed programmatically. Don't copy the `https://` prefix pattern into new stacks.
+
+48. **`SPC_INTEGRATION_URL` is SnoutSpotter's own SPC-connector Gateway URL** — not Sure Pet Care's URL. The secret name is deliberately `SPC_INTEGRATION_URL` (GitHub secret) / `VITE_SPC_INTEGRATION_URL` (Vite env) / `SPC_INTEGRATION_BASE` (frontend constant) to reflect ownership. The Lambda's outbound base URL to Sure Pet Care is `SPC_BASE_URL` (env var, defaults to `https://app-api.beta.surehub.io`) — that name IS referring to SPC's API and is correct. Don't conflate the two.
+
+49. **SPC push notifications cannot be redirected to our backend** — SPC's push registration (`POST /api/me/client { platform, token }`) binds a single APNs/FCM token to a single mobile install. We cannot intercept the user's real app's pushes; the correct approach for server-side events is to poll the REST timeline feed (`GET /api/timeline/household/{hh}?SinceId=...` — cursor-capable) rather than attempt to forward pushes. The Phase 2 design for this lives in `docs/plan-spc-event-ingestion.md`.
