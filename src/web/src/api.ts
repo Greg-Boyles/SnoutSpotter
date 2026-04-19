@@ -2,6 +2,7 @@ import type { Clip, Detection, LogEntry, Pet, StatsOverview, StreamStartResult, 
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
+const SPC_BASE = import.meta.env.VITE_SPC_URL || "";
 
 let getAccessToken: (() => string | undefined) | null = null;
 let getHouseholdId: (() => string | undefined) | null = null;
@@ -78,6 +79,36 @@ async function deleteJson<T>(path: string, baseUrl = BASE): Promise<T | null> {
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   if (res.status === 204) return null;
   return res.json() as Promise<T>;
+}
+
+// SPC connector calls go to a separate API Gateway. Responses use a typed
+// error envelope ({ error: "<code>" }) so the UI can distinguish
+// invalid_credentials / token_expired / session_expired etc. without
+// string-matching the HTTP status text.
+
+export class SpcApiError extends Error {
+  constructor(public readonly status: number, public readonly code: string, message?: string) {
+    super(message ?? `SPC ${status}: ${code}`);
+  }
+}
+
+async function spcFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${SPC_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...authHeaders(),
+      ...(init.headers ?? {}),
+    },
+  });
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  const body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  if (!res.ok) {
+    const code = typeof body.error === "string" ? body.error : `http_${res.status}`;
+    throw new SpcApiError(res.status, code);
+  }
+  return body as T;
 }
 
 export const api = {
@@ -311,4 +342,54 @@ export const api = {
 
   listManagedDevices: () =>
     fetchJson<{ devices: string[] }>("/api/devices"),
+
+  // Sure Pet Care integration (separate endpoint)
+  spc: {
+    status: () =>
+      spcFetch<{
+        status: "unlinked" | "linked" | "token_expired" | "error";
+        spcUserEmail: string | null;
+        spcHouseholdId: string | null;
+        spcHouseholdName: string | null;
+        linkedAt: string | null;
+        lastSyncAt: string | null;
+        lastError: string | null;
+      }>("/api/integrations/spc/status"),
+
+    validate: (email: string, password: string) =>
+      spcFetch<{ sessionId: string; spcUserEmail: string; expiresAt: string }>(
+        "/api/integrations/spc/validate",
+        { method: "POST", body: JSON.stringify({ email, password }) },
+      ),
+
+    listSpcHouseholds: (sessionId: string) =>
+      spcFetch<{ households: { id: string; name: string }[] }>(
+        `/api/integrations/spc/spc-households?session=${encodeURIComponent(sessionId)}`,
+      ),
+
+    listSpcPets: (sessionId: string, spcHouseholdId: string) =>
+      spcFetch<{ pets: { id: string; name: string; species: string | null; photoUrl: string | null }[] }>(
+        `/api/integrations/spc/spc-pets?session=${encodeURIComponent(sessionId)}&spcHouseholdId=${encodeURIComponent(spcHouseholdId)}`,
+      ),
+
+    link: (body: { sessionId: string; spcHouseholdId: string; mappings: { petId: string; spcPetId: string | null; spcPetName: string | null }[] }) =>
+      spcFetch<{ status: string; mappedCount: number }>("/api/integrations/spc/link", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+
+    unlink: () =>
+      spcFetch<void>("/api/integrations/spc", { method: "DELETE" }),
+
+    devices: () =>
+      spcFetch<{ devices: { id: string; productId: number; name: string; serialNumber: string | null; lastActivityAt: string | null }[] }>(
+        "/api/integrations/spc/devices",
+      ),
+
+    updatePetLinks: (mappings: { petId: string; spcPetId: string | null; spcPetName: string | null }[]) =>
+      spcFetch<{ updatedCount: number }>("/api/integrations/spc/pet-links", {
+        method: "PUT",
+        body: JSON.stringify({ mappings }),
+      }),
+  },
 };

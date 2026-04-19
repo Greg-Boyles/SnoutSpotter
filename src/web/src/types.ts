@@ -128,6 +128,8 @@ export interface Pet {
   breed?: string;
   photoUrl?: string;
   createdAt: string;
+  spcPetId?: string;
+  spcPetName?: string;
 }
 
 export interface PiRelease {
