@@ -421,69 +421,73 @@ public class Function
     private async Task WriteClassificationSplit(ZipArchive archive, string split, List<LabelRecord> items,
         float cropPadding, ILambdaContext context)
     {
-        // Download images in parallel
-        var downloaded = new (byte[] data, int width, int height)[items.Count];
-        await Parallel.ForEachAsync(
-            items.Select((item, i) => (item, i)),
-            new ParallelOptions { MaxDegreeOfParallelism = _maxParallelDownloads },
-            async ((LabelRecord item, int i) entry, CancellationToken _) =>
-            {
-                try
-                {
-                    var response = await _s3.GetObjectAsync(_bucketName, entry.item.KeyframeKey);
-                    using var ms = new MemoryStream();
-                    await response.ResponseStream.CopyToAsync(ms);
-                    ms.Position = 0;
-                    var info = await Image.IdentifyAsync(ms);
-                    downloaded[entry.i] = (ms.ToArray(), info?.Width ?? 1920, info?.Height ?? 1080);
-                }
-                catch (Exception ex)
-                {
-                    context.Logger.LogWarning($"Failed to download {entry.item.KeyframeKey}: {ex.Message}");
-                    downloaded[entry.i] = (Array.Empty<byte>(), 0, 0);
-                }
-            });
-
-        // Crop each bounding box and write as classification image
+        const int batchSize = 50;
         var cropIdx = 0;
-        for (var i = 0; i < items.Count; i++)
+
+        for (var batchStart = 0; batchStart < items.Count; batchStart += batchSize)
         {
-            var (data, imgWidth, imgHeight) = downloaded[i];
-            if (data.Length == 0) continue;
+            var batch = items.GetRange(batchStart, Math.Min(batchSize, items.Count - batchStart));
+            var downloaded = new (byte[] data, int width, int height)[batch.Count];
 
-            var boxes = ParseBoundingBoxes(items[i].BoundingBoxes);
-            var label = items[i].ConfirmedLabel; // "my_dog" or "other_dog"
+            await Parallel.ForEachAsync(
+                batch.Select((item, i) => (item, i)),
+                new ParallelOptions { MaxDegreeOfParallelism = _maxParallelDownloads },
+                async ((LabelRecord item, int i) entry, CancellationToken _) =>
+                {
+                    try
+                    {
+                        var response = await _s3.GetObjectAsync(_bucketName, entry.item.KeyframeKey);
+                        using var ms = new MemoryStream();
+                        await response.ResponseStream.CopyToAsync(ms);
+                        ms.Position = 0;
+                        var info = await Image.IdentifyAsync(ms);
+                        downloaded[entry.i] = (ms.ToArray(), info?.Width ?? 1920, info?.Height ?? 1080);
+                    }
+                    catch (Exception ex)
+                    {
+                        context.Logger.LogWarning($"Failed to download {entry.item.KeyframeKey}: {ex.Message}");
+                        downloaded[entry.i] = (Array.Empty<byte>(), 0, 0);
+                    }
+                });
 
-            using var image = Image.Load<Rgb24>(data);
-
-            foreach (var box in boxes)
+            for (var i = 0; i < batch.Count; i++)
             {
-                if (box.Length < 4) continue;
+                var (data, imgWidth, imgHeight) = downloaded[i];
+                if (data.Length == 0) continue;
 
-                var xMin = box[0];
-                var yMin = box[1];
-                var w = box[2];
-                var h = box[3];
+                var boxes = ParseBoundingBoxes(batch[i].BoundingBoxes);
+                var label = batch[i].ConfirmedLabel;
 
-                // Apply padding
-                var padW = w * cropPadding;
-                var padH = h * cropPadding;
-                var cropX = (int)Math.Max(0, xMin - padW);
-                var cropY = (int)Math.Max(0, yMin - padH);
-                var cropW = (int)Math.Min(imgWidth - cropX, w + 2 * padW);
-                var cropH = (int)Math.Min(imgHeight - cropY, h + 2 * padH);
+                using var image = Image.Load<Rgb24>(data);
 
-                if (cropW <= 0 || cropH <= 0) continue;
+                foreach (var box in boxes)
+                {
+                    if (box.Length < 4) continue;
 
-                using var crop = image.Clone(ctx => ctx.Crop(new Rectangle(cropX, cropY, cropW, cropH)));
-                using var ms = new MemoryStream();
-                await crop.SaveAsJpegAsync(ms);
+                    var xMin = box[0];
+                    var yMin = box[1];
+                    var w = box[2];
+                    var h = box[3];
 
-                var entry = archive.CreateEntry($"{split}/{label}/crop_{cropIdx:D5}.jpg");
-                await using var entryStream = entry.Open();
-                ms.Position = 0;
-                await ms.CopyToAsync(entryStream);
-                cropIdx++;
+                    var padW = w * cropPadding;
+                    var padH = h * cropPadding;
+                    var cropX = (int)Math.Max(0, xMin - padW);
+                    var cropY = (int)Math.Max(0, yMin - padH);
+                    var cropW = (int)Math.Min(imgWidth - cropX, w + 2 * padW);
+                    var cropH = (int)Math.Min(imgHeight - cropY, h + 2 * padH);
+
+                    if (cropW <= 0 || cropH <= 0) continue;
+
+                    using var crop = image.Clone(ctx => ctx.Crop(new Rectangle(cropX, cropY, cropW, cropH)));
+                    using var ms = new MemoryStream();
+                    await crop.SaveAsJpegAsync(ms);
+
+                    var entry = archive.CreateEntry($"{split}/{label}/crop_{cropIdx:D5}.jpg");
+                    await using var entryStream = entry.Open();
+                    ms.Position = 0;
+                    await ms.CopyToAsync(entryStream);
+                    cropIdx++;
+                }
             }
         }
 
@@ -492,50 +496,54 @@ public class Function
 
     private async Task WriteImageSplit(ZipArchive archive, string split, List<LabelRecord> items, bool mergeClasses, Dictionary<string, int> labelToIdx, ILambdaContext context)
     {
-        // Parallel-download all images
-        var downloaded = new (byte[] data, string ext, int imgWidth, int imgHeight)[items.Count];
-        await Parallel.ForEachAsync(
-            items.Select((item, i) => (item, i)),
-            new ParallelOptions { MaxDegreeOfParallelism = _maxParallelDownloads },
-            async ((LabelRecord item, int i) entry, CancellationToken _) =>
-            {
-                try
-                {
-                    var response = await _s3.GetObjectAsync(_bucketName, entry.item.KeyframeKey);
-                    using var ms = new MemoryStream();
-                    await response.ResponseStream.CopyToAsync(ms);
-                    ms.Position = 0;
-                    var imageInfo = await Image.IdentifyAsync(ms);
-                    var ext = Path.GetExtension(entry.item.KeyframeKey).ToLowerInvariant();
-                    downloaded[entry.i] = (ms.ToArray(), string.IsNullOrEmpty(ext) ? ".jpg" : ext,
-                        imageInfo?.Width ?? 1920, imageInfo?.Height ?? 1080);
-                }
-                catch (Exception ex)
-                {
-                    context.Logger.LogWarning($"Failed to download {entry.item.KeyframeKey}: {ex.Message}");
-                    downloaded[entry.i] = (Array.Empty<byte>(), ".jpg", 1920, 1080);
-                }
-            });
+        const int batchSize = 50;
+        var globalIdx = 0;
 
-        // Write images and YOLO label files sequentially
-        for (var i = 0; i < downloaded.Length; i++)
+        for (var batchStart = 0; batchStart < items.Count; batchStart += batchSize)
         {
-            var (data, ext, imgWidth, imgHeight) = downloaded[i];
-            if (data.Length == 0) continue;
+            var batch = items.GetRange(batchStart, Math.Min(batchSize, items.Count - batchStart));
+            var downloaded = new (byte[] data, string ext, int imgWidth, int imgHeight)[batch.Count];
 
-            var baseName = $"img_{i:D4}";
+            await Parallel.ForEachAsync(
+                batch.Select((item, i) => (item, i)),
+                new ParallelOptions { MaxDegreeOfParallelism = _maxParallelDownloads },
+                async ((LabelRecord item, int i) entry, CancellationToken _) =>
+                {
+                    try
+                    {
+                        var response = await _s3.GetObjectAsync(_bucketName, entry.item.KeyframeKey);
+                        using var ms = new MemoryStream();
+                        await response.ResponseStream.CopyToAsync(ms);
+                        ms.Position = 0;
+                        var imageInfo = await Image.IdentifyAsync(ms);
+                        var ext = Path.GetExtension(entry.item.KeyframeKey).ToLowerInvariant();
+                        downloaded[entry.i] = (ms.ToArray(), string.IsNullOrEmpty(ext) ? ".jpg" : ext,
+                            imageInfo?.Width ?? 1920, imageInfo?.Height ?? 1080);
+                    }
+                    catch (Exception ex)
+                    {
+                        context.Logger.LogWarning($"Failed to download {entry.item.KeyframeKey}: {ex.Message}");
+                        downloaded[entry.i] = (Array.Empty<byte>(), ".jpg", 1920, 1080);
+                    }
+                });
 
-            // Write image
-            var imgEntry = archive.CreateEntry($"images/{split}/{baseName}{ext}");
-            await using (var entryStream = imgEntry.Open())
-                await entryStream.WriteAsync(data);
+            for (var i = 0; i < batch.Count; i++, globalIdx++)
+            {
+                var (data, ext, imgWidth, imgHeight) = downloaded[i];
+                if (data.Length == 0) continue;
 
-            // Write YOLO label file
-            var labelContent = ConvertToYoloLabels(items[i], imgWidth, imgHeight, mergeClasses, labelToIdx);
-            var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
-            await using (var labelStream = labelEntry.Open())
-            await using (var writer = new StreamWriter(labelStream, new UTF8Encoding(false)))
-                await writer.WriteAsync(labelContent);
+                var baseName = $"img_{globalIdx:D4}";
+
+                var imgEntry = archive.CreateEntry($"images/{split}/{baseName}{ext}");
+                await using (var entryStream = imgEntry.Open())
+                    await entryStream.WriteAsync(data);
+
+                var labelContent = ConvertToYoloLabels(items[batchStart + i], imgWidth, imgHeight, mergeClasses, labelToIdx);
+                var labelEntry = archive.CreateEntry($"labels/{split}/{baseName}.txt");
+                await using (var labelStream = labelEntry.Open())
+                await using (var writer = new StreamWriter(labelStream, new UTF8Encoding(false)))
+                    await writer.WriteAsync(labelContent);
+            }
         }
     }
 
