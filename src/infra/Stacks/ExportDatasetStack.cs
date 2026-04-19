@@ -46,6 +46,7 @@ public class ExportDatasetStack : Stack
 
         props.DataBucket.GrantRead(exportFunction);
         props.DataBucket.GrantPut(exportFunction, "training-exports/*");
+        props.DataBucket.GrantPut(exportFunction, "*/training-exports/*");
         props.LabelsTable.GrantReadData(exportFunction);
         props.ExportsTable.GrantReadWriteData(exportFunction);
         props.PetsTable.GrantReadData(exportFunction);
