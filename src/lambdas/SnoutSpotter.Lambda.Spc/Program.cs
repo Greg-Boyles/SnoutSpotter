@@ -1,5 +1,7 @@
 using Amazon.DynamoDBv2;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Polly;
+using Polly.Extensions.Http;
 using SnoutSpotter.Lambda.Spc;
 using SnoutSpotter.Lambda.Spc.Services;
 
@@ -17,7 +19,28 @@ builder.Services.Configure<AppConfig>(cfg =>
 
 builder.Services.AddSingleton<IAmazonDynamoDB, AmazonDynamoDBClient>();
 builder.Services.AddSingleton<IUserMembershipService, UserMembershipService>();
+builder.Services.AddSingleton<ISpcSessionStore, SpcSessionStore>();
 builder.Services.AddMemoryCache();
+
+// Typed HttpClient for Sure Pet Care with Polly resilience:
+//  - 3x retry with exponential backoff (200/400/800 ms) on 5xx and 429.
+//  - Circuit breaker opens after 5 consecutive handled failures for 30s.
+//  - 401/403 are NOT treated as transient: the client throws
+//    SpcUnauthorizedException synchronously so no retry or breaker counts.
+builder.Services.AddHttpClient<ISpcApiClient, SpcApiClient>((sp, http) =>
+{
+    var cfg = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppConfig>>().Value;
+    http.BaseAddress = new Uri(cfg.SpcBaseUrl);
+    http.Timeout = TimeSpan.FromSeconds(10);
+    http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+})
+.AddPolicyHandler(HttpPolicyExtensions
+    .HandleTransientHttpError()
+    .OrResult(r => (int)r.StatusCode == 429)
+    .WaitAndRetryAsync(3, attempt => TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1))))
+.AddPolicyHandler(HttpPolicyExtensions
+    .HandleTransientHttpError()
+    .CircuitBreakerAsync(5, TimeSpan.FromSeconds(30)));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
