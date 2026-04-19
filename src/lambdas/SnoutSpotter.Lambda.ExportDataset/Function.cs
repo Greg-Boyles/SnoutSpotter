@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.IO.Pipelines;
 using System.Text;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
@@ -7,6 +8,7 @@ using SnoutSpotter.Contracts;
 using Amazon.Lambda.Core;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Amazon.S3.Transfer;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -330,54 +332,67 @@ public class Function
                 .GroupBy(l => l.ConfirmedLabel)
                 .ToDictionary(g => g.Key, g => g.Count());
 
-            var zipPath = $"/tmp/{exportId}.zip";
-            if (File.Exists(zipPath)) File.Delete(zipPath);
-
-            await using (var zipStream = File.Create(zipPath))
-            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false))
-            {
-                await WriteClassificationSplit(archive, "train", trainSet, request.CropPadding, context);
-                await WriteClassificationSplit(archive, "val", valSet, request.CropPadding, context);
-
-                // Write class_map.json
-                var classMapEntry = archive.CreateEntry("class_map.json");
-                await using (var cms = classMapEntry.Open())
-                    await JsonSerializer.SerializeAsync(cms, classMap);
-
-                var manifest = new
-                {
-                    export_id = exportId,
-                    created_at = DateTime.UtcNow.ToString("O"),
-                    format = "classification",
-                    total = dogLabels.Count,
-                    my_dog = petCounts.GetValueOrDefault("my_dog"),
-                    other_dog = petCounts.GetValueOrDefault("other_dog"),
-                    pet_counts = petCounts,
-                    class_map = classMap,
-                    train_count = trainSet.Count,
-                    val_count = valSet.Count,
-                    config = new
-                    {
-                        export_type = "classification",
-                        max_per_class = request.MaxPerClass,
-                        crop_padding = request.CropPadding,
-                    },
-                };
-                var manifestEntry = archive.CreateEntry("manifest.json");
-                await using (var ms = manifestEntry.Open())
-                    await JsonSerializer.SerializeAsync(ms, manifest, new JsonSerializerOptions { WriteIndented = true });
-            }
-
-            var zipSize = new FileInfo(zipPath).Length;
-            var sizeMb = Math.Round(zipSize / (1024.0 * 1024.0), 1);
             var exportPrefix = string.IsNullOrEmpty(request.HouseholdId) ? "training-exports" : $"{request.HouseholdId}/training-exports";
             var s3Key = $"{exportPrefix}/{exportId}.zip";
 
-            context.Logger.LogInformation($"Uploading {sizeMb}MB classification zip to s3://{_bucketName}/{s3Key}");
-            await _s3.PutObjectAsync(new PutObjectRequest
+            // Stream ZIP directly to S3 via a pipe — avoids writing to /tmp entirely
+            var pipe = new Pipe();
+            var manifest = new
             {
-                BucketName = _bucketName, Key = s3Key, FilePath = zipPath, ContentType = "application/zip"
+                export_id = exportId,
+                created_at = DateTime.UtcNow.ToString("O"),
+                format = "classification",
+                total = dogLabels.Count,
+                my_dog = petCounts.GetValueOrDefault("my_dog"),
+                other_dog = petCounts.GetValueOrDefault("other_dog"),
+                pet_counts = petCounts,
+                class_map = classMap,
+                train_count = trainSet.Count,
+                val_count = valSet.Count,
+                config = new
+                {
+                    export_type = "classification",
+                    max_per_class = request.MaxPerClass,
+                    crop_padding = request.CropPadding,
+                },
+            };
+
+            var zipTask = Task.Run(async () =>
+            {
+                try
+                {
+                    using (var archive = new ZipArchive(pipe.Writer.AsStream(), ZipArchiveMode.Create, leaveOpen: false))
+                    {
+                        await WriteClassificationSplit(archive, "train", trainSet, request.CropPadding, context);
+                        await WriteClassificationSplit(archive, "val", valSet, request.CropPadding, context);
+
+                        var classMapEntry = archive.CreateEntry("class_map.json");
+                        await using (var cms = classMapEntry.Open())
+                            await JsonSerializer.SerializeAsync(cms, classMap);
+
+                        var manifestEntry = archive.CreateEntry("manifest.json");
+                        await using (var ms = manifestEntry.Open())
+                            await JsonSerializer.SerializeAsync(ms, manifest, new JsonSerializerOptions { WriteIndented = true });
+                    }
+                    // ZipArchive disposed → underlying stream closed → pipe writer completed (EOF)
+                }
+                catch (Exception ex)
+                {
+                    pipe.Writer.Complete(ex);
+                    throw;
+                }
             });
+
+            context.Logger.LogInformation($"Streaming classification zip to s3://{_bucketName}/{s3Key}");
+            using var transferUtility = new TransferUtility(_s3);
+            await transferUtility.UploadAsync(new TransferUtilityUploadRequest
+            {
+                BucketName = _bucketName,
+                Key = s3Key,
+                InputStream = pipe.Reader.AsStream(),
+                ContentType = "application/zip"
+            });
+            await zipTask;
 
             var petCountsAttr = new AttributeValue
             {
@@ -403,13 +418,12 @@ public class Function
                     [":nodog"] = new() { N = "0" },
                     [":train"] = new() { N = trainSet.Count.ToString() },
                     [":val"] = new() { N = valSet.Count.ToString() },
-                    [":size"] = new() { N = sizeMb.ToString() },
+                    [":size"] = new() { N = "0" },
                     [":pc"] = petCountsAttr,
                 }
             });
 
             context.Logger.LogInformation($"Classification export {exportId} complete: {dogLabels.Count} crops");
-            File.Delete(zipPath);
         }
         catch (Exception ex)
         {
@@ -733,6 +747,7 @@ public class Function
     private async Task UpdateExportStatus(string exportId, string status, string error = "")
     {
         var updateExpr = "SET #s = :status, completed_at = :completed";
+        var exprNames = new Dictionary<string, string> { ["#s"] = "status" };
         var exprValues = new Dictionary<string, AttributeValue>
         {
             [":status"] = new() { S = status },
@@ -741,7 +756,8 @@ public class Function
 
         if (!string.IsNullOrEmpty(error))
         {
-            updateExpr += ", error = :error";
+            updateExpr += ", #err = :error";
+            exprNames["#err"] = "error";  // 'error' is a DynamoDB reserved keyword
             exprValues[":error"] = new() { S = error };
         }
 
@@ -753,7 +769,7 @@ public class Function
                 ["export_id"] = new() { S = exportId }
             },
             UpdateExpression = updateExpr,
-            ExpressionAttributeNames = new Dictionary<string, string> { ["#s"] = "status" },
+            ExpressionAttributeNames = exprNames,
             ExpressionAttributeValues = exprValues
         });
     }
