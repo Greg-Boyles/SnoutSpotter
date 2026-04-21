@@ -33,6 +33,7 @@ public class CoreStack : Stack
     public Table PetsTable { get; }
     public Table UsersTable { get; }
     public Table HouseholdsTable { get; }
+    public Table DevicesTable { get; }
 
     public CoreStack(Construct scope, string id, IStackProps? props = null) : base(scope, id, props)
     {
@@ -393,6 +394,20 @@ public class CoreStack : Stack
             PointInTimeRecovery = true
         });
 
+        // Device registry — SnoutSpotter Pis, SPC devices, and Pi <-> SPC links.
+        // SK uses three prefixes (snoutspotter#{thing}, spc#{spc_id},
+        // link#spc#{spc_id}#snoutspotter#{thing}) so a single Query(PK=household)
+        // returns every device + link row in one call.
+        DevicesTable = new Table(this, "DevicesTable", new TableProps
+        {
+            TableName = "snout-spotter-devices",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "household_id", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "sk", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.RETAIN,
+            PointInTimeRecovery = true
+        });
+
         // ECR repository for Training Agent Docker image
         TrainingAgentEcrRepo = new Repository(this, "TrainingAgentEcrRepo", new RepositoryProps
         {
@@ -469,6 +484,12 @@ public class CoreStack : Stack
         {
             ParameterName = "/snoutspotter/core/users-table-name",
             StringValue = UsersTable.TableName
+        });
+
+        _ = new StringParameter(this, "DevicesTableNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/devices-table-name",
+            StringValue = DevicesTable.TableName
         });
 
         // Outputs

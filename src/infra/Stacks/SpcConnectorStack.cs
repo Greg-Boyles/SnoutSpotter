@@ -26,6 +26,7 @@ public class SpcConnectorStack : Stack
         var householdsTableName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/households-table-name");
         var petsTableName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/pets-table-name");
         var usersTableName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/users-table-name");
+        var devicesTableName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/devices-table-name");
 
         // Lambda function running the SPC connector API via Lambda Web Adapter
         var spcFunction = new DockerImageFunction(this, "SpcFunction", new DockerImageFunctionProps
@@ -43,6 +44,7 @@ public class SpcConnectorStack : Stack
                 ["HOUSEHOLDS_TABLE"] = householdsTableName,
                 ["PETS_TABLE"] = petsTableName,
                 ["USERS_TABLE"] = usersTableName,
+                ["DEVICES_TABLE"] = devicesTableName,
                 ["OKTA_ISSUER"] = props.OktaIssuer,
                 ["ALLOWED_ORIGIN"] = props.AllowedOrigin,
                 ["SPC_BASE_URL"] = "https://app-api.beta.surehub.io",
@@ -97,6 +99,18 @@ public class SpcConnectorStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[] { "dynamodb:GetItem" },
             Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-users" }
+        }));
+
+        // Device registry — needed on unlink to sweep spc# and link#spc# rows for the household.
+        spcFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[]
+            {
+                "dynamodb:Query",
+                "dynamodb:BatchWriteItem"
+            },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-devices" }
         }));
 
         // HTTP API Gateway (same shape as ApiStack so the web app can call it with the Okta bearer + X-Household-Id)

@@ -117,6 +117,7 @@ var apiStack = new ApiStack(app, "SnoutSpotter-Api", new ApiStackProps
     PetsTable = coreStack.PetsTable,
     UsersTable = coreStack.UsersTable,
     HouseholdsTable = coreStack.HouseholdsTable,
+    DevicesTable = coreStack.DevicesTable,
     ApiEcrRepo = coreStack.ApiEcrRepo,
     ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest",
     OktaIssuer = oktaIssuer,

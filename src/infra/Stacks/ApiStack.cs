@@ -24,6 +24,7 @@ public class ApiStackProps : StackProps
     public required Table PetsTable { get; init; }
     public required Table UsersTable { get; init; }
     public required Table HouseholdsTable { get; init; }
+    public required Table DevicesTable { get; init; }
     public required Repository ApiEcrRepo { get; init; }
     public string AutoLabelFunctionName { get; init; } = "snout-spotter-auto-label";
     public string ExportDatasetFunctionName { get; init; } = "snout-spotter-export-dataset";
@@ -83,7 +84,8 @@ public class ApiStack : Stack
                 ["STATS_REFRESH_FUNCTION"] = "snout-spotter-stats-refresh",
                 ["PETS_TABLE"] = props.PetsTable.TableName,
                 ["USERS_TABLE"] = props.UsersTable.TableName,
-                ["HOUSEHOLDS_TABLE"] = props.HouseholdsTable.TableName
+                ["HOUSEHOLDS_TABLE"] = props.HouseholdsTable.TableName,
+                ["DEVICES_TABLE"] = props.DevicesTable.TableName
             }
         });
 
@@ -231,6 +233,16 @@ public class ApiStack : Stack
         props.PetsTable.GrantReadWriteData(apiFunction);
         props.UsersTable.GrantReadWriteData(apiFunction);
         props.HouseholdsTable.GrantReadWriteData(apiFunction);
+        props.DevicesTable.GrantReadWriteData(apiFunction);
+
+        // Secrets Manager read for per-household Sure Pet Care access tokens
+        // (used by the device-registry SPC refresh path).
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "secretsmanager:GetSecretValue" },
+            Resources = new[] { $"arn:aws:secretsmanager:{Region}:{Account}:secret:snoutspotter/spc/*" }
+        }));
 
         // HTTP API Gateway
         var httpApi = new CfnApi(this, "ApiGateway", new CfnApiProps
