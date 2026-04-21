@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Plug, Loader2, AlertCircle } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Plug, Loader2, AlertCircle, Camera } from "lucide-react";
 import { api } from "../api";
 import type { Pet } from "../types";
 import { usePets } from "../hooks/usePets";
@@ -74,6 +75,16 @@ export default function Integrations() {
             onConfigure={() => setWizardOpen(true)}
             onManage={() => setManageOpen(true)}
           />
+
+          {spcStatus.status === "linked" && (
+            <Link
+              to="/devices"
+              className="inline-flex items-center gap-1.5 text-sm text-amber-700 hover:text-amber-800"
+            >
+              <Camera className="w-4 h-4" />
+              Manage device mapping
+            </Link>
+          )}
         </div>
       )}
 

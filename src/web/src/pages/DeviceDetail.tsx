@@ -10,6 +10,7 @@ import { api } from "../api";
 import type { SystemHealth, PiDevice, PiRelease } from "../types";
 import StatusBadge from "../components/health/StatusBadge";
 import UsageBar from "../components/health/UsageBar";
+import DeviceRegistryCard from "../components/health/DeviceRegistryCard";
 import { formatUptime } from "../components/health/formatUptime";
 
 export default function DeviceDetail() {
@@ -193,6 +194,9 @@ export default function DeviceDetail() {
       </div>
 
       <div className="space-y-4">
+        {/* Registry (display name + notes) */}
+        {thingName && <DeviceRegistryCard thingName={thingName} />}
+
         {/* Status & Update */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-3">Status</h3>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, NavLink, useLocation } from "react-router-dom";
-import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, GraduationCap, HardDriveDownload, Settings, PawPrint, ChevronDown, Plug } from "lucide-react";
+import { Dog, Video, Search, Activity, LayoutDashboard, LogOut, Radio, Tag, Cpu, Package, Menu, X, GraduationCap, HardDriveDownload, Settings, PawPrint, ChevronDown, Plug, Camera } from "lucide-react";
 import { useOktaAuth, LoginCallback } from "@okta/okta-react";
 import Dashboard from "./pages/Dashboard";
 import ClipsBrowser from "./pages/ClipsBrowser";
@@ -24,6 +24,7 @@ import SubmitTraining from "./pages/SubmitTraining";
 import TrainingJobDetail from "./pages/TrainingJobDetail";
 import TrainingAgentDetail from "./pages/TrainingAgentDetail";
 import Pets from "./pages/Pets";
+import Devices from "./pages/Devices";
 import Integrations from "./pages/Integrations";
 import { setAuthGetter, setHouseholdGetter } from "./api";
 import HouseholdProvider from "./components/HouseholdProvider";
@@ -55,6 +56,7 @@ const navGroups: NavGroup[] = [
   {
     heading: "Devices",
     items: [
+      { to: "/devices", icon: Camera, label: "Device Registry" },
       { to: "/health", icon: Activity, label: "System Health" },
       { to: "/pi-packages", icon: HardDriveDownload, label: "Pi Releases" },
       { to: "/settings", icon: Settings, label: "Server Config" },
@@ -208,6 +210,7 @@ function AppLayout() {
           <Route path="/clips/:id" element={<ClipDetail />} />
           <Route path="/detections" element={<Detections />} />
           <Route path="/pets" element={<Pets />} />
+          <Route path="/devices" element={<Devices />} />
           <Route path="/integrations" element={<Integrations />} />
           <Route path="/live" element={<LiveView />} />
           <Route path="/labels/:keyframeKey" element={<LabelDetail />} />
