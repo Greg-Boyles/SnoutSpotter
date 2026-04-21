@@ -6,6 +6,8 @@ using Polly.Extensions.Http;
 using SnoutSpotter.Lambda.Spc;
 using SnoutSpotter.Lambda.Spc.Services;
 using SnoutSpotter.Lambda.Spc.Services.Interfaces;
+using SnoutSpotter.Spc.Client.Services;
+using SnoutSpotter.Spc.Client.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 

@@ -1,4 +1,4 @@
-namespace SnoutSpotter.Lambda.Spc.Services;
+namespace SnoutSpotter.Spc.Client.Services;
 
 public class SpcUnauthorizedException : Exception
 {

@@ -1,10 +1,11 @@
 using System.Text.Json;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
-using SnoutSpotter.Lambda.Spc.Models;
-using SnoutSpotter.Lambda.Spc.Services.Interfaces;
+using Microsoft.Extensions.Logging;
+using SnoutSpotter.Spc.Client.Models;
+using SnoutSpotter.Spc.Client.Services.Interfaces;
 
-namespace SnoutSpotter.Lambda.Spc.Services;
+namespace SnoutSpotter.Spc.Client.Services;
 
 public class SpcSecretsStore : ISpcSecretsStore
 {

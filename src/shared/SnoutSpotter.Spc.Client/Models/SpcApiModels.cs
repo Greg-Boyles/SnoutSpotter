@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SnoutSpotter.Lambda.Spc.Models;
+namespace SnoutSpotter.Spc.Client.Models;
 
 // SPC auth — POST /api/auth/login
 // Body is AuthLoginResource per the V1 Swagger. The 200 response body is not
@@ -49,3 +49,12 @@ public record SpcDeviceResource(
 // Paginated envelope — SPC wraps list responses in { data: [...], meta: {...} }
 public record SpcPaginated<T>(
     [property: JsonPropertyName("data")] List<T>? Data);
+
+// Persisted to AWS Secrets Manager as JSON under snoutspotter/spc/{household_id}.
+public record SpcSecret(
+    [property: JsonPropertyName("access_token")] string AccessToken,
+    [property: JsonPropertyName("token_type")] string TokenType,
+    [property: JsonPropertyName("issued_at")] string IssuedAt,
+    [property: JsonPropertyName("client_uid")] string ClientUid,
+    [property: JsonPropertyName("spc_user_id")] long SpcUserId,
+    [property: JsonPropertyName("spc_user_email")] string SpcUserEmail);

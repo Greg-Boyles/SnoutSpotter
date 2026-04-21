@@ -4,6 +4,9 @@ using SnoutSpotter.Lambda.Spc.Extensions;
 using SnoutSpotter.Lambda.Spc.Models;
 using SnoutSpotter.Lambda.Spc.Services;
 using SnoutSpotter.Lambda.Spc.Services.Interfaces;
+using SnoutSpotter.Spc.Client.Models;
+using SnoutSpotter.Spc.Client.Services;
+using SnoutSpotter.Spc.Client.Services.Interfaces;
 
 namespace SnoutSpotter.Lambda.Spc.Controllers;
 

@@ -1,6 +1,6 @@
-using SnoutSpotter.Lambda.Spc.Models;
+using SnoutSpotter.Spc.Client.Models;
 
-namespace SnoutSpotter.Lambda.Spc.Services.Interfaces;
+namespace SnoutSpotter.Spc.Client.Services.Interfaces;
 
 public interface ISpcSecretsStore
 {
