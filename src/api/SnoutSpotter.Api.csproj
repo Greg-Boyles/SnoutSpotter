@@ -28,6 +28,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\shared\SnoutSpotter.Contracts\SnoutSpotter.Contracts.csproj" />
+    <ProjectReference Include="..\shared\SnoutSpotter.Spc.Client\SnoutSpotter.Spc.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.SecretsManager" Version="3.7.400" />
   </ItemGroup>
 
 </Project>

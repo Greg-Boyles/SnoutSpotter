@@ -7,12 +7,15 @@ using Amazon.IotData;
 using Amazon.KinesisVideo;
 using Amazon.Lambda;
 using Amazon.S3;
+using Amazon.SecretsManager;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using SnoutSpotter.Api;
 using SnoutSpotter.Api.Services;
 using SnoutSpotter.Api.Services.Interfaces;
 using SnoutSpotter.Api.Extensions;
+using SnoutSpotter.Spc.Client.Services;
+using SnoutSpotter.Spc.Client.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -41,6 +44,8 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.PetsTable = Environment.GetEnvironmentVariable("PETS_TABLE") ?? "snout-spotter-pets";
     cfg.UsersTable = Environment.GetEnvironmentVariable("USERS_TABLE") ?? "snout-spotter-users";
     cfg.HouseholdsTable = Environment.GetEnvironmentVariable("HOUSEHOLDS_TABLE") ?? "snout-spotter-households";
+    cfg.DevicesTable = Environment.GetEnvironmentVariable("DEVICES_TABLE") ?? "snout-spotter-devices";
+    cfg.SpcBaseUrl = Environment.GetEnvironmentVariable("SPC_BASE_URL") ?? "https://app-api.beta.surehub.io";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
 });
@@ -68,6 +73,7 @@ builder.Services.AddSingleton<IAmazonIotData>(sp =>
 builder.Services.AddSingleton<IAmazonECR, AmazonECRClient>();
 builder.Services.AddSingleton<IAmazonKinesisVideo, AmazonKinesisVideoClient>();
 builder.Services.AddSingleton<IAmazonLambda, AmazonLambdaClient>();
+builder.Services.AddSingleton<IAmazonSecretsManager, AmazonSecretsManagerClient>();
 
 // Application services
 builder.Services.AddSingleton<IStreamService, StreamService>();
@@ -86,6 +92,19 @@ builder.Services.AddSingleton<IModelService, ModelService>();
 builder.Services.AddSingleton<IPetService, PetService>();
 builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddSingleton<IHouseholdService, HouseholdService>();
+builder.Services.AddSingleton<ISpcSecretsStore, SpcSecretsStore>();
+builder.Services.AddSingleton<IDeviceRegistryService, DeviceRegistryService>();
+
+// Typed HttpClient for Sure Pet Care. Used by the device-registry refresh path.
+// Matches the SPC Lambda's Polly config: 3x retry, circuit breaker, 10s timeout;
+// 401/403 are thrown as SpcUnauthorizedException and are not retried.
+builder.Services.AddHttpClient<ISpcApiClient, SpcApiClient>((sp, http) =>
+{
+    var cfg = sp.GetRequiredService<IOptions<AppConfig>>().Value;
+    http.BaseAddress = new Uri(cfg.SpcBaseUrl);
+    http.Timeout = TimeSpan.FromSeconds(10);
+    http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+});
 builder.Services.AddSingleton<IStatsRefreshService>(sp => new StatsRefreshService(
     sp.GetRequiredService<IAmazonDynamoDB>(),
     sp.GetRequiredService<IAmazonLambda>(),
