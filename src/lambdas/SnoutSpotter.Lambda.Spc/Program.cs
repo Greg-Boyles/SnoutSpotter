@@ -16,6 +16,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.HouseholdsTable = Environment.GetEnvironmentVariable("HOUSEHOLDS_TABLE") ?? "snout-spotter-households";
     cfg.PetsTable = Environment.GetEnvironmentVariable("PETS_TABLE") ?? "snout-spotter-pets";
     cfg.UsersTable = Environment.GetEnvironmentVariable("USERS_TABLE") ?? "snout-spotter-users";
+    cfg.DevicesTable = Environment.GetEnvironmentVariable("DEVICES_TABLE") ?? "snout-spotter-devices";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
     cfg.SpcBaseUrl = Environment.GetEnvironmentVariable("SPC_BASE_URL") ?? "https://app-api.beta.surehub.io";
@@ -28,6 +29,7 @@ builder.Services.AddSingleton<ISpcSessionStore, SpcSessionStore>();
 builder.Services.AddSingleton<ISpcSecretsStore, SpcSecretsStore>();
 builder.Services.AddSingleton<IHouseholdIntegrationService, HouseholdIntegrationService>();
 builder.Services.AddSingleton<IPetLinkService, PetLinkService>();
+builder.Services.AddSingleton<IDeviceRegistryCleanupService, DeviceRegistryCleanupService>();
 builder.Services.AddMemoryCache();
 
 // Typed HttpClient for Sure Pet Care with Polly resilience:

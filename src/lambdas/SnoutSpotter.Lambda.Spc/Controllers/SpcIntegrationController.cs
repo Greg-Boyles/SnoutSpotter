@@ -20,6 +20,7 @@ public class SpcIntegrationController : ControllerBase
     private readonly ISpcSecretsStore _secrets;
     private readonly IHouseholdIntegrationService _households;
     private readonly IPetLinkService _petLinks;
+    private readonly IDeviceRegistryCleanupService _deviceCleanup;
     private readonly ILogger<SpcIntegrationController> _log;
 
     public SpcIntegrationController(
@@ -28,6 +29,7 @@ public class SpcIntegrationController : ControllerBase
         ISpcSecretsStore secrets,
         IHouseholdIntegrationService households,
         IPetLinkService petLinks,
+        IDeviceRegistryCleanupService deviceCleanup,
         ILogger<SpcIntegrationController> log)
     {
         _spc = spc;
@@ -35,6 +37,7 @@ public class SpcIntegrationController : ControllerBase
         _secrets = secrets;
         _households = households;
         _petLinks = petLinks;
+        _deviceCleanup = deviceCleanup;
         _log = log;
     }
 
@@ -229,6 +232,7 @@ public class SpcIntegrationController : ControllerBase
     {
         var householdId = HttpContext.GetHouseholdId();
         await _petLinks.ClearAllAsync(householdId, ct);
+        await _deviceCleanup.ClearSpcDevicesAndLinksAsync(householdId, ct);
         await _households.ClearAsync(householdId, ct);
         await _secrets.DeleteAsync(householdId, ct);
         return NoContent();
