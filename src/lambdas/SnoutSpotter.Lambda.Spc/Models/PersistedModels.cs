@@ -1,15 +1,4 @@
-using System.Text.Json.Serialization;
-
 namespace SnoutSpotter.Lambda.Spc.Models;
-
-// Persisted to AWS Secrets Manager as JSON under snoutspotter/spc/{household_id}.
-public record SpcSecret(
-    [property: JsonPropertyName("access_token")] string AccessToken,
-    [property: JsonPropertyName("token_type")] string TokenType,
-    [property: JsonPropertyName("issued_at")] string IssuedAt,
-    [property: JsonPropertyName("client_uid")] string ClientUid,
-    [property: JsonPropertyName("spc_user_id")] long SpcUserId,
-    [property: JsonPropertyName("spc_user_email")] string SpcUserEmail);
 
 // Stored on the household record as the spc_integration attribute map.
 public record SpcIntegrationState(

@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Compile Remove="SnoutSpotter.Contracts/**" />
+    <Compile Remove="SnoutSpotter.Spc.Client/**" />
   </ItemGroup>
 
 </Project>

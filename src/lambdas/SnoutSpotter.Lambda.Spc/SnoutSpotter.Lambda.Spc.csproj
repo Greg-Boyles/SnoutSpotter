@@ -16,4 +16,8 @@
     <PackageReference Include="Polly" Version="8.2.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\SnoutSpotter.Spc.Client\SnoutSpotter.Spc.Client.csproj" />
+  </ItemGroup>
+
 </Project>

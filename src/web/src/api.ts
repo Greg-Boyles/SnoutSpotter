@@ -1,4 +1,17 @@
-import type { Clip, Detection, LogEntry, Pet, StatsOverview, StreamStartResult, SystemHealth } from "./types";
+import type {
+  Clip,
+  Detection,
+  DeviceLinkDto,
+  DeviceListResponse,
+  LogEntry,
+  Pet,
+  SnoutSpotterDeviceDto,
+  SpcDeviceRegistryDto,
+  StatsOverview,
+  StreamStartResult,
+  SystemHealth,
+  UpdateDeviceRequest,
+} from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 const PI_MGMT_BASE = import.meta.env.VITE_PI_MGMT_URL || "";
@@ -391,5 +404,27 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ mappings }),
       }),
+  },
+
+  // Device registry — both SnoutSpotter cameras and Sure Pet Care devices
+  // plus the many-to-many links between them. Served by the main API.
+  devices: {
+    list: () =>
+      fetchJson<DeviceListResponse>("/devices"),
+
+    updateSnoutSpotter: (thingName: string, body: UpdateDeviceRequest) =>
+      putJson<SnoutSpotterDeviceDto>(`/devices/snoutspotter/${encodeURIComponent(thingName)}`, body),
+
+    updateSpc: (spcDeviceId: string, body: UpdateDeviceRequest) =>
+      putJson<SpcDeviceRegistryDto>(`/devices/spc/${encodeURIComponent(spcDeviceId)}`, body),
+
+    refreshSpc: (spcDeviceId: string) =>
+      postJson<SpcDeviceRegistryDto>(`/devices/spc/${encodeURIComponent(spcDeviceId)}/refresh`),
+
+    link: (spcDeviceId: string, snoutspotterThingName: string) =>
+      postJson<DeviceLinkDto>("/devices/links", { spcDeviceId, snoutspotterThingName }),
+
+    unlink: (spcDeviceId: string, thingName: string) =>
+      deleteJson<null>(`/devices/links/${encodeURIComponent(spcDeviceId)}/${encodeURIComponent(thingName)}`),
   },
 };

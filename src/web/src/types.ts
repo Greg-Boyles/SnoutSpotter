@@ -139,3 +139,43 @@ export interface PiRelease {
   lastModified: string;
   isLatest: boolean;
 }
+
+// Device registry — served by GET /api/devices. Three row kinds in one envelope.
+export interface SnoutSpotterDeviceDto {
+  thingName: string;
+  displayName: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Named to avoid clashing with the SPC-wizard SpcDeviceDto already referenced
+// by the Integrations page; this one is the registry row, not the live SPC list.
+export interface SpcDeviceRegistryDto {
+  spcDeviceId: string;
+  spcProductId: number | null;
+  spcName: string | null;
+  serialNumber: string | null;
+  displayName: string;
+  notes: string | null;
+  lastRefreshedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DeviceLinkDto {
+  spcDeviceId: string;
+  thingName: string;
+  createdAt: string;
+}
+
+export interface DeviceListResponse {
+  snoutSpotter: SnoutSpotterDeviceDto[];
+  spc: SpcDeviceRegistryDto[];
+  links: DeviceLinkDto[];
+}
+
+export interface UpdateDeviceRequest {
+  displayName: string;
+  notes?: string | null;
+}
