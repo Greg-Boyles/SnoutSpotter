@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, AlertCircle, Utensils, Droplet, DoorOpen, Wifi, Box } from "lucide-react";
+import { Loader2, AlertCircle, Utensils, Droplet, DoorOpen, Wifi, Box, Radio, Cpu, Activity } from "lucide-react";
 import { api, SpcApiError } from "../../api";
 
 interface Device {
@@ -10,16 +10,21 @@ interface Device {
   lastActivityAt: string | null;
 }
 
-// SPC product_id lookup. Numbers from observed SPC responses / community clients.
+// SPC product_id lookup. Matches Sure Pet Care's DeviceType enum.
 // Unknown product_ids fall back to a generic box icon so we never break the panel.
 const PRODUCT_LABELS: Record<number, { label: string; icon: React.ElementType }> = {
   1: { label: "Hub", icon: Wifi },
-  3: { label: "Pet Door (Connect)", icon: DoorOpen },
-  4: { label: "Feeder (Connect)", icon: Utensils },
-  6: { label: "Cat Flap (Connect)", icon: DoorOpen },
-  8: { label: "Felaqua (water fountain)", icon: Droplet },
-  10: { label: "Feeder (Bowl Connect)", icon: Utensils },
-  32: { label: "Pet Door Connect", icon: DoorOpen },
+  2: { label: "Repeater", icon: Radio },
+  3: { label: "Pet Door Connect", icon: DoorOpen },
+  4: { label: "Feeder Connect", icon: Utensils },
+  5: { label: "Programmer", icon: Cpu },
+  6: { label: "Dual Scan Connect", icon: DoorOpen },
+  7: { label: "Feeder Lite", icon: Utensils },
+  8: { label: "Felaqua (Poseidon)", icon: Droplet },
+  9: { label: "Dual Scan Cat Flap 2", icon: DoorOpen },
+  10: { label: "Dual Scan Pet Door", icon: DoorOpen },
+  32: { label: "No-ID Dog Bowl Connect", icon: Utensils },
+  255: { label: "Animo", icon: Activity },
 };
 
 export default function SpcDevicesPanel() {

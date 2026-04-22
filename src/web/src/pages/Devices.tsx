@@ -14,6 +14,9 @@ import {
   X,
   Pencil,
   Check,
+  Radio,
+  Cpu,
+  Activity,
 } from "lucide-react";
 import { api } from "../api";
 import type {
@@ -23,15 +26,20 @@ import type {
   SpcDeviceRegistryDto,
 } from "../types";
 
-// SPC product_id -> friendly label + icon. Same vocabulary as SpcDevicesPanel.
+// SPC product_id -> friendly label + icon. Matches Sure Pet Care's DeviceType enum.
 const SPC_PRODUCT_LABELS: Record<number, { label: string; icon: React.ElementType }> = {
   1: { label: "Hub", icon: Wifi },
-  3: { label: "Pet Door (Connect)", icon: DoorOpen },
-  4: { label: "Feeder (Connect)", icon: Utensils },
-  6: { label: "Cat Flap (Connect)", icon: DoorOpen },
-  8: { label: "Felaqua", icon: Droplet },
-  10: { label: "Feeder (Bowl Connect)", icon: Utensils },
-  32: { label: "Pet Door Connect", icon: DoorOpen },
+  2: { label: "Repeater", icon: Radio },
+  3: { label: "Pet Door Connect", icon: DoorOpen },
+  4: { label: "Feeder Connect", icon: Utensils },
+  5: { label: "Programmer", icon: Cpu },
+  6: { label: "Dual Scan Connect", icon: DoorOpen },
+  7: { label: "Feeder Lite", icon: Utensils },
+  8: { label: "Felaqua (Poseidon)", icon: Droplet },
+  9: { label: "Dual Scan Cat Flap 2", icon: DoorOpen },
+  10: { label: "Dual Scan Pet Door", icon: DoorOpen },
+  32: { label: "No-ID Dog Bowl Connect", icon: Utensils },
+  255: { label: "Animo", icon: Activity },
 };
 
 function spcProductMeta(productId: number | null): { label: string; icon: React.ElementType } {
@@ -431,6 +439,15 @@ function EditableRow({
 }
 
 // Modal drawer for toggling which SPC devices a given Pi watches.
+//
+// Fetches the live SPC device list directly from Sure Pet Care on open — we
+// can't rely on the local registry table because it's populated lazily (rows
+// only appear after a user has edited or linked something). For a fresh
+// household the registry is empty but the user's SPC account already has
+// bowls / pet doors / feeders, so we show those from the source.
+//
+// Registry rows for the same device are merged in so any custom display_name
+// the user set locally wins over SPC's name.
 function LinkManagerDialog({
   thingName,
   displayName,
@@ -448,7 +465,57 @@ function LinkManagerDialog({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [spcUnavailable, setSpcUnavailable] = useState<string | null>(null);
+  const [liveDevices, setLiveDevices] = useState<
+    { spcDeviceId: string; displayName: string; spcProductId: number | null }[]
+  >([]);
   const linked = useMemo(() => new Set(currentLinks.map((l) => l.spcDeviceId)), [currentLinks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const registryByIdLocal = new Map(spcDevices.map((d) => [d.spcDeviceId, d] as const));
+
+    (async () => {
+      try {
+        const resp = await api.spc.devices();
+        if (cancelled) return;
+        // Merge live + registry. Custom display_name (registry) wins so the
+        // user's own labels persist even if SPC renames something.
+        const merged = resp.devices.map((live) => {
+          const registry = registryByIdLocal.get(live.id);
+          return {
+            spcDeviceId: live.id,
+            displayName: registry?.displayName ?? live.name ?? `SPC ${live.id}`,
+            spcProductId: registry?.spcProductId ?? live.productId,
+          };
+        });
+        setLiveDevices(merged);
+      } catch (e) {
+        if (cancelled) return;
+        // Fall back to whatever the registry has — better than nothing.
+        setSpcUnavailable(
+          e instanceof Error ? e.message : "Could not reach Sure Pet Care",
+        );
+        setLiveDevices(
+          spcDevices.map((d) => ({
+            spcDeviceId: d.spcDeviceId,
+            displayName: d.displayName,
+            spcProductId: d.spcProductId,
+          })),
+        );
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // spcDevices is a stable list from the parent; we only want to run this
+    // on open, not on every registry reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggle = async (spcDeviceId: string) => {
     setBusy(spcDeviceId);
@@ -485,14 +552,23 @@ function LinkManagerDialog({
               {error}
             </div>
           )}
-          {spcDevices.length === 0 ? (
+          {spcUnavailable && (
+            <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+              Could not reach Sure Pet Care — {spcUnavailable}. Showing locally-known devices only.
+            </div>
+          )}
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-gray-500 py-6">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Sure Pet Care devices&hellip;
+            </div>
+          ) : liveDevices.length === 0 ? (
             <p className="text-sm text-gray-500">
-              No Sure Pet Care devices known yet. Open the Integrations page first to link your SPC
-              account.
+              No Sure Pet Care devices found. Open the Integrations page to connect your SPC account
+              first.
             </p>
           ) : (
             <ul className="space-y-1">
-              {spcDevices.map((d) => {
+              {liveDevices.map((d) => {
                 const isLinked = linked.has(d.spcDeviceId);
                 const meta = spcProductMeta(d.spcProductId);
                 const Icon = meta.icon;
