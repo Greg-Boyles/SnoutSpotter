@@ -52,7 +52,9 @@ public class SpcConnectorStack : Stack
             }
         });
 
-        // Secrets Manager access — per-household SPC access tokens live under snoutspotter/spc/{household_id}
+        // Secrets Manager access — per-household SPC access tokens live under snoutspotter/spc/{household_id}.
+        // RestoreSecret is used on re-link: DeleteSecret leaves the secret in a 7-day recovery window,
+        // and SpcSecretsStore restores + overwrites rather than creating a duplicate.
         spcFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
         {
             Effect = Effect.ALLOW,
@@ -62,6 +64,7 @@ public class SpcConnectorStack : Stack
                 "secretsmanager:GetSecretValue",
                 "secretsmanager:PutSecretValue",
                 "secretsmanager:DeleteSecret",
+                "secretsmanager:RestoreSecret",
                 "secretsmanager:DescribeSecret",
                 "secretsmanager:TagResource"
             },
