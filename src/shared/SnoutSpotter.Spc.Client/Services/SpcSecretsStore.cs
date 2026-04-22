@@ -39,12 +39,15 @@ public class SpcSecretsStore : ISpcSecretsStore
         }
         catch (ResourceExistsException)
         {
-            var updated = await _sm.PutSecretValueAsync(new PutSecretValueRequest
-            {
-                SecretId = name,
-                SecretString = body
-            }, ct);
-            return updated.ARN;
+            return await UpdateExistingAsync(name, body, ct);
+        }
+        catch (InvalidRequestException ex) when (IsScheduledForDeletion(ex))
+        {
+            // The secret exists but is in the 7-day recovery window from a
+            // previous unlink. Restore it, then overwrite the body.
+            _log.LogInformation("Restoring SPC secret scheduled for deletion before re-link {HouseholdId}", householdId);
+            await _sm.RestoreSecretAsync(new RestoreSecretRequest { SecretId = name }, ct);
+            return await UpdateExistingAsync(name, body, ct);
         }
     }
 
@@ -64,7 +67,28 @@ public class SpcSecretsStore : ISpcSecretsStore
         {
             return null;
         }
+        catch (InvalidRequestException ex) when (IsScheduledForDeletion(ex))
+        {
+            // Secret exists in the 7-day recovery window from a previous unlink.
+            // To re-link callers, surface as "no current value" — SaveAsync will
+            // restore-and-overwrite on the next write.
+            return null;
+        }
     }
+
+    private async Task<string> UpdateExistingAsync(string name, string body, CancellationToken ct)
+    {
+        var updated = await _sm.PutSecretValueAsync(new PutSecretValueRequest
+        {
+            SecretId = name,
+            SecretString = body
+        }, ct);
+        return updated.ARN;
+    }
+
+    private static bool IsScheduledForDeletion(InvalidRequestException ex)
+        => ex.Message.Contains("marked for deletion", StringComparison.OrdinalIgnoreCase)
+           || ex.Message.Contains("scheduled for deletion", StringComparison.OrdinalIgnoreCase);
 
     public async Task DeleteAsync(string householdId, CancellationToken ct = default)
     {
