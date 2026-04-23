@@ -53,6 +53,14 @@ public class SpcApiClient : ISpcApiClient
     public Task<List<SpcDeviceResource>> ListDevicesAsync(string accessToken, long spcHouseholdId, CancellationToken ct = default)
         => GetPaginatedAsync<SpcDeviceResource>(accessToken, $"/api/household/{spcHouseholdId}/device", ct);
 
+    public Task<List<SpcTimelineResource>> ListTimelineAsync(string accessToken, long spcHouseholdId, long? sinceId, int pageSize, CancellationToken ct = default)
+    {
+        var path = sinceId.HasValue
+            ? $"/api/timeline/household/{spcHouseholdId}?SinceId={sinceId.Value}&PageSize={pageSize}"
+            : $"/api/timeline/household/{spcHouseholdId}?PageSize={pageSize}";
+        return GetPaginatedAsync<SpcTimelineResource>(accessToken, path, ct);
+    }
+
     private async Task<List<T>> GetPaginatedAsync<T>(string accessToken, string path, CancellationToken ct)
     {
         var req = new HttpRequestMessage(HttpMethod.Get, path);

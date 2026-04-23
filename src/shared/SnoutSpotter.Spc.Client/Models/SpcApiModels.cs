@@ -50,6 +50,24 @@ public record SpcDeviceResource(
 public record SpcPaginated<T>(
     [property: JsonPropertyName("data")] List<T>? Data);
 
+// SPC timeline — GET /api/timeline/household/{householdId}?SinceId=...&PageSize=...
+// `data` is a JSON-encoded string (per V1 Swagger), kept verbatim so we can
+// decode richer fields later without re-polling. `pets`, `devices`, `movements`
+// are partial resource arrays; we only need ids here to map to our pet / device.
+public record SpcTimelineResource(
+    [property: JsonPropertyName("id")] long Id,
+    [property: JsonPropertyName("type")] int Type,
+    [property: JsonPropertyName("data")] string? Data,
+    [property: JsonPropertyName("created_at")] string? CreatedAt,
+    [property: JsonPropertyName("pets")] List<SpcTimelinePetRef>? Pets,
+    [property: JsonPropertyName("devices")] List<SpcTimelineDeviceRef>? Devices);
+
+public record SpcTimelinePetRef(
+    [property: JsonPropertyName("id")] long Id);
+
+public record SpcTimelineDeviceRef(
+    [property: JsonPropertyName("id")] long Id);
+
 // Persisted to AWS Secrets Manager as JSON under snoutspotter/spc/{household_id}.
 public record SpcSecret(
     [property: JsonPropertyName("access_token")] string AccessToken,
