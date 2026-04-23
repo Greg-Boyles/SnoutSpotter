@@ -179,3 +179,23 @@ export interface UpdateDeviceRequest {
   displayName: string;
   notes?: string | null;
 }
+
+// SPC timeline events ingested by the motion-triggered poller.
+// `eventCategory` is a coarse bucketing (feeding/drinking/movement/
+// device_status/other). spcEventType is the raw SPC enum for tooltips.
+// rawData is the verbatim SPC `data` JSON string, left opaque in phase 1.
+export interface SpcEvent {
+  spcEventId: string;
+  spcEventType: number;
+  eventCategory: "feeding" | "drinking" | "movement" | "device_status" | "other" | string;
+  createdAt: string;
+  petId: string | null;
+  spcPetId: string | null;
+  deviceId: string | null;
+  rawData: string | null;
+}
+
+export interface SpcEventsPage {
+  events: SpcEvent[];
+  nextPageKey: string | null;
+}
