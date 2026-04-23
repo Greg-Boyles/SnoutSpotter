@@ -12,10 +12,12 @@ namespace SnoutSpotter.Api.Controllers;
 public class PetsController : ControllerBase
 {
     private readonly IPetService _petService;
+    private readonly ISpcEventsService _spcEvents;
 
-    public PetsController(IPetService petService)
+    public PetsController(IPetService petService, ISpcEventsService spcEvents)
     {
         _petService = petService;
+        _spcEvents = spcEvents;
     }
 
     [HttpGet]
@@ -58,6 +60,17 @@ public class PetsController : ControllerBase
         {
             return NotFound();
         }
+    }
+
+    [HttpGet("{petId}/spc-events")]
+    public async Task<IActionResult> ListSpcEvents(
+        string petId,
+        [FromQuery] int limit = 50,
+        [FromQuery] string? nextPageKey = null)
+    {
+        if (limit < 1 || limit > 200) limit = 50;
+        var page = await _spcEvents.ListForPetAsync(HttpContext.GetHouseholdId(), petId, limit, nextPageKey);
+        return Ok(page);
     }
 
     [HttpDelete("{petId}")]

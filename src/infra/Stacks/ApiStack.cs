@@ -46,6 +46,7 @@ public class ApiStack : Stack
         var settingsTableName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name");
         var rerunInferenceQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/inference/rerun-queue-url");
         var trainingJobQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/training/job-queue-url");
+        var spcEventsTableName = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/spc-events-table-name");
 
         // Lambda function running ASP.NET Core API via Lambda Web Adapter
         var apiFunction = new DockerImageFunction(this, "ApiFunction", new DockerImageFunctionProps
@@ -85,7 +86,8 @@ public class ApiStack : Stack
                 ["PETS_TABLE"] = props.PetsTable.TableName,
                 ["USERS_TABLE"] = props.UsersTable.TableName,
                 ["HOUSEHOLDS_TABLE"] = props.HouseholdsTable.TableName,
-                ["DEVICES_TABLE"] = props.DevicesTable.TableName
+                ["DEVICES_TABLE"] = props.DevicesTable.TableName,
+                ["SPC_EVENTS_TABLE"] = spcEventsTableName
             }
         });
 
@@ -234,6 +236,14 @@ public class ApiStack : Stack
         props.UsersTable.GrantReadWriteData(apiFunction);
         props.HouseholdsTable.GrantReadWriteData(apiFunction);
         props.DevicesTable.GrantReadWriteData(apiFunction);
+
+        // SPC timeline events — read-only (written by the SpcPoller Lambda).
+        apiFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "dynamodb:Query" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-spc-events" }
+        }));
 
         // Secrets Manager read for per-household Sure Pet Care access tokens
         // (used by the device-registry SPC refresh path).
