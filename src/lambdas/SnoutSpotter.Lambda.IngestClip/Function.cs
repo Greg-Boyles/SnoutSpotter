@@ -8,6 +8,7 @@ using Amazon.DynamoDBv2.Model;
 using Amazon.Lambda.Core;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Amazon.SQS;
 
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.SystemTextJson.DefaultLambdaJsonSerializer))]
 
@@ -20,6 +21,7 @@ public class Function
     private readonly string _bucketName;
     private readonly string _tableName;
     private readonly SettingsReader _settings;
+    private readonly SpcBurstTrigger? _spcBurstTrigger;
 
     public Function()
     {
@@ -30,6 +32,13 @@ public class Function
         _tableName = Environment.GetEnvironmentVariable("TABLE_NAME")
             ?? throw new InvalidOperationException("TABLE_NAME not set");
         _settings = new SettingsReader(_dynamoClient);
+
+        // Burst trigger is best-effort: if env isn't wired up yet we just skip.
+        _spcBurstTrigger = new SpcBurstTrigger(
+            _dynamoClient,
+            new AmazonSQSClient(),
+            Environment.GetEnvironmentVariable("DEVICES_TABLE"),
+            Environment.GetEnvironmentVariable("SPC_BURST_QUEUE_URL"));
     }
 
     // Constructor for testing
@@ -39,6 +48,7 @@ public class Function
         _dynamoClient = dynamoClient;
         _bucketName = bucketName;
         _tableName = tableName;
+        _spcBurstTrigger = null;
     }
 
     public async Task FunctionHandler(EventBridgeEvent<S3EventDetail> eventBridgeEvent, ILambdaContext context)
@@ -81,6 +91,11 @@ public class Function
 
         // Cleanup
         File.Delete(localVideoPath);
+
+        // Motion-triggered Sure Pet Care burst poll. Best-effort, swallows its own
+        // errors — clip ingestion must never fail because of a burst-trigger hiccup.
+        if (_spcBurstTrigger != null)
+            await _spcBurstTrigger.MaybeFireAsync(householdId, context);
 
         context.Logger.LogInformation(
             $"Ingested clip {clipId}: {keyframeKeys.Count} keyframes extracted");
