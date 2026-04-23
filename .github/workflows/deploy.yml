@@ -34,6 +34,7 @@ jobs:
       update-training-progress: ${{ steps.filter.outputs.update-training-progress }}
       stats-refresh: ${{ steps.filter.outputs.stats-refresh }}
       spc: ${{ steps.filter.outputs.spc }}
+      spc-poller: ${{ steps.filter.outputs.spc-poller }}
       web: ${{ steps.filter.outputs.web }}
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +76,11 @@ jobs:
               - 'src/infra/**'
             spc:
               - 'src/lambdas/SnoutSpotter.Lambda.Spc/**'
+              - 'src/shared/SnoutSpotter.Spc.Client/**'
+              - 'src/infra/**'
+            spc-poller:
+              - 'src/lambdas/SnoutSpotter.Lambda.SpcPoller/**'
+              - 'src/shared/SnoutSpotter.Spc.Client/**'
               - 'src/infra/**'
             web:
               - 'src/web/**'
@@ -198,6 +204,16 @@ jobs:
     uses: ./.github/workflows/build-spc-image.yml
     secrets: inherit
 
+  build-spc-poller-image:
+    name: Build SPC poller image
+    needs: [changes, stage-1-infra]
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      (needs.changes.outputs.spc-poller == 'true' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-spc-poller-image.yml
+    secrets: inherit
+
   # Stage 3: Deploy application stacks
   deploy-api:
     name: Deploy API
@@ -307,6 +323,16 @@ jobs:
       !failure() && !cancelled() &&
       needs.build-spc-image.result == 'success'
     uses: ./.github/workflows/deploy-spc.yml
+    secrets: inherit
+
+  deploy-spc-poller:
+    name: Deploy SPC poller
+    needs: build-spc-poller-image
+    if: |
+      always() &&
+      !failure() && !cancelled() &&
+      needs.build-spc-poller-image.result == 'success'
+    uses: ./.github/workflows/deploy-spc-poller.yml
     secrets: inherit
 
   deploy-web:
