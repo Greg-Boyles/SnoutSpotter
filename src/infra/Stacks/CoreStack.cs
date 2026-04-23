@@ -29,6 +29,9 @@ public class CoreStack : Stack
     public Repository UpdateTrainingProgressEcrRepo { get; }
     public Repository StatsRefreshEcrRepo { get; }
     public Repository SpcEcrRepo { get; }
+    public Repository SpcPollerEcrRepo { get; }
+    public Table SpcEventsTable { get; }
+    public Table SpcBurstStateTable { get; }
     public Table StatsTable { get; }
     public Table PetsTable { get; }
     public Table UsersTable { get; }
@@ -408,6 +411,45 @@ public class CoreStack : Stack
             PointInTimeRecovery = true
         });
 
+        // SPC timeline events ingested by the motion-triggered poller. SK is
+        // {created_at}#{spc_event_id} so newest-first scan is ScanIndexForward=false
+        // over a single household partition.
+        SpcEventsTable = new Table(this, "SpcEventsTable", new TableProps
+        {
+            TableName = "snout-spotter-spc-events",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "household_id", Type = AttributeType.STRING },
+            SortKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "created_at_event", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.RETAIN,
+            PointInTimeRecovery = true
+        });
+
+        // Per-household burst state: one row tracks poll_until deadline + cursor.
+        // Rows self-delete via TTL attribute ttl_expiry (set to poll_until + 1h).
+        SpcBurstStateTable = new Table(this, "SpcBurstStateTable", new TableProps
+        {
+            TableName = "snout-spotter-spc-burst-state",
+            PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute { Name = "household_id", Type = AttributeType.STRING },
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            TimeToLiveAttribute = "ttl_expiry"
+        });
+
+        // ECR repository for the SPC timeline poller Lambda
+        SpcPollerEcrRepo = new Repository(this, "SpcPollerEcrRepo", new RepositoryProps
+        {
+            RepositoryName = "snout-spotter-spc-poller",
+            RemovalPolicy = RemovalPolicy.DESTROY,
+            LifecycleRules = new[]
+            {
+                new Amazon.CDK.AWS.ECR.LifecycleRule
+                {
+                    MaxImageCount = 3,
+                    Description = "Keep only 3 most recent images"
+                }
+            }
+        });
+
         // ECR repository for Training Agent Docker image
         TrainingAgentEcrRepo = new Repository(this, "TrainingAgentEcrRepo", new RepositoryProps
         {
@@ -490,6 +532,18 @@ public class CoreStack : Stack
         {
             ParameterName = "/snoutspotter/core/devices-table-name",
             StringValue = DevicesTable.TableName
+        });
+
+        _ = new StringParameter(this, "SpcEventsTableNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/spc-events-table-name",
+            StringValue = SpcEventsTable.TableName
+        });
+
+        _ = new StringParameter(this, "SpcBurstStateTableNameParam", new StringParameterProps
+        {
+            ParameterName = "/snoutspotter/core/spc-burst-state-table-name",
+            StringValue = SpcBurstStateTable.TableName
         });
 
         // Outputs
