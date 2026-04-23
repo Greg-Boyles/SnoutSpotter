@@ -1,174 +1,310 @@
-# SPC Connector Phase 2 — Event Ingestion (replaces mobile push notifications)
+# SPC Connector Phase 2 — Motion-Triggered Event Ingestion
 
 ## Context
 
-SPC's mobile app receives pushes for feeding / drinking / pet-door events. We want our server to learn about those same events so we can correlate with SnoutSpotter detections and drive UI. The question was: can our system *receive the pushes* instead of the app?
+SPC's mobile app receives pushes for feeding / drinking / pet-door events. We want our server to learn about those same events so we can correlate with SnoutSpotter detections. We can't receive the pushes (see earlier discussion — APNs/FCM token is bound to the user's phone), but the underlying data is in SPC's REST timeline:
 
-**No — not without impersonating the user's phone.** SPC's push-notification registration endpoint (`POST /api/me/client` with `{platform, token}`) binds a single APNs/FCM token to a single mobile install. Redirecting or duplicating that token is a policy violation and breaks the user's real app.
-
-**But the underlying data is available via REST** — and that's what every push actually represents. Phase 2 polls SPC's timeline every ~1 minute, persists new events in DynamoDB keyed to our pets, and surfaces them in the UI. No push-forwarding.
-
-### Confirmed from live V1 Swagger (cached at /tmp/spc_v1.json)
-
-- `GET /api/timeline/household/{householdId}` — cursor-capable via `SinceId` / `BeforeId` / `PageSize`. Returns `{ id:int64, type:TimelineEventType, data:JSON, created_at, pets[], devices[], movements[] }`. **This is the feed we ingest.**
-- `GET /api/notification` — page-only, simpler payload (`{id, type, text, created_at}`), no cursor. Nice-to-have for human-readable text but not the primary feed.
+- `GET /api/timeline/household/{householdId}` — cursor-capable via `SinceId`. Returns `{ id:int64, type:TimelineEventType, data:JSON, created_at, pets[], devices[], movements[] }`. The feed we ingest.
 - No webhooks, no SSE, no WebSocket. REST-only.
-- `TimelineEventType` enum has ~100 values; we categorize loosely in Phase 2 and keep raw `data` verbatim for later decoding.
 
-## Scope
+**Cost-conscious design: poll only when something is worth polling for.** A naïve 1-minute EventBridge cron wastes ~1440 Lambda invokes per day per household during the ~22 hours per day that nothing is happening. Instead we trigger polling when our own Pi cameras see motion — the exact moments an SPC event is likely to follow.
 
-1. Poll every linked household's timeline on a 1-minute EventBridge schedule.
-2. Persist new events to a new DynamoDB table keyed `household_id` + `{created_at}#{spc_event_id}`.
-3. Expose the events at `GET /api/pets/{petId}/spc-events` on the main API.
-4. Render a collapsible "Activity" list on each pet card in the existing Pets page.
+## Decisions (locked)
+
+1. **Motion-triggered burst polling** — start or extend a 10-minute polling window when a linked Pi uploads a clip.
+2. **Per-household burst** — any linked Pi's motion starts a household-wide burst. SPC's timeline is household-scoped so one poll covers all Pis.
+3. **Any uploaded clip triggers** (for now). Later we'll tighten to "only when a pet is actually detected" by moving the trigger from `IngestClip` to `RunInference`. Same downstream — poller doesn't care which Lambda kicked it off.
+4. **No backfill, no safety-net cron.** Events that land after the burst window closes wait for the next motion. If the dog is gone for two hours, we don't care what happened.
+5. **10-minute window**, extended (not reset) on subsequent motion within the window. SPC hub upload latency is the dominant factor.
+6. **Cursor seeded on first motion, not at link time** — keeps the link wizard fast. First burst-start handler treats `last_timeline_id == null` as "seed mode": fetch latest id, store it, return without persisting historical events.
 
 ## Architecture
 
-### New Lambda: `snout-spotter-spc-poller`
-- Project: `src/lambdas/SnoutSpotter.Lambda.SpcPoller/` — plain event-driven handler (mirror `SnoutSpotter.Lambda.AutoLabel`, **not** the Lambda Web Adapter pattern used by the connector).
-- Trigger: EventBridge rule `Schedule.Rate(Duration.Minutes(1))`.
-- Per tick:
-  1. Scan `snout-spotter-households` with `FilterExpression = "spc_integration.#s = :linked"`.
-  2. For each linked household, bounded parallel (max 5) via `SemaphoreSlim`:
-     - Load access token from Secrets Manager (`snoutspotter/spc/{household_id}`).
-     - Load cursor `spc_integration.last_timeline_id` from the household record.
-     - `GET /api/timeline/household/{spc_hh}?SinceId={cursor}&PageSize=50`.
-     - **First-ever poll** (cursor missing): `PageSize=1`, seed cursor from the max id, don't persist history.
-     - Otherwise: map `spc_pet_id → pet-…` via `snout-spotter-pets`, write rows, advance cursor, update `last_sync_at`.
-  3. On 401: `MarkTokenExpiredAsync` (already implemented in Phase 1). On 429 / upstream: `last_error = "rate_limited"`, skip rest of tick.
-- `context.RemainingTime` guard: stop scheduling new households below 10s remaining; next tick picks them up (cursor only advances on success).
+### Flow
 
-### Shared client extract
-`src/lambdas/SnoutSpotter.Lambda.Spc/Services/SpcApiClient.cs` today is consumed only by the connector. The poller becomes the second consumer — the "extract when third Lambda needs it" rule now triggers with 2 consumers of external HTTP. Move to `src/shared/SnoutSpotter.Spc.Client/`:
-- `ISpcApiClient.cs`, `SpcApiClient.cs`, `SpcExceptions.cs`
-- `Models/SpcApiModels.cs` (all DTOs)
+```
+Pi uploads clip → S3 PutObject → IngestClip Lambda (existing)
+                                     │
+                                     ├── existing keyframe extract
+                                     │
+                                     └── NEW: if Pi linked to any SPC device,
+                                         enqueue BurstStart message for household
+                                             │
+                                             ▼
+                                  snout-spotter-spc-burst SQS queue
+                                             │
+                                             ▼
+                                  SpcPoller Lambda
+                                     │
+                                     ├── Upsert burst record (extend poll_until)
+                                     ├── If within window, GET SPC timeline
+                                     │   since last_timeline_id
+                                     ├── Write new events to DynamoDB
+                                     └── If poll_until > now + 30s,
+                                         re-enqueue a 30s-delayed SQS message
 
-Add to the shared client:
-```csharp
-Task<List<SpcTimelineResource>> ListTimelineAsync(
-    string accessToken, long spcHouseholdId, long? sinceId, int pageSize, CancellationToken ct);
+When the 30-second self-scheduling chain fires after poll_until, the handler
+short-circuits without re-enqueuing. The chain dies naturally. Zero Lambda
+invocations when the house is quiet.
 ```
 
-New DTO `SpcTimelineResource` with `id`, `type`, `data` (as `JsonElement?` — preserved verbatim), `created_at`, `pets`, `devices`, `movements`.
+### Self-scheduling via SQS delay
 
-`HouseholdIntegrationService`, `SpcSecretsStore`, `PetLinkService` stay duplicated between connector and poller for Phase 2 — they're thin wrappers around DynamoDB/Secrets Manager and their shape is the SSOT, not the code. Note in PR description; revisit if a 3rd consumer appears.
+SQS messages support `DelaySeconds` up to 15 min. The poller:
 
-### Data model
+1. Receives a message (either from IngestClip's burst-start or a previous self-schedule).
+2. Loads the burst record for the household. If `poll_until <= now`, return — chain dies.
+3. Polls SPC timeline with `SinceId=last_timeline_id&PageSize=50`.
+4. Persists new events; advances cursor; updates `last_sync_at`.
+5. If `poll_until - now > 30s`, send a new message with `DelaySeconds=30`. Otherwise let the chain terminate.
 
-**New table** `snout-spotter-spc-events` (added to `src/infra/Stacks/CoreStack.cs`):
-- PK: `household_id` (S)
-- SK: `created_at_event` (S) — composite `{created_at}#{spc_event_id}` for chronological Query even if SPC ids aren't strictly monotonic across households.
-- No GSI in Phase 2. Query by `household_id` + `FilterExpression = "pet_id = :pid"`. Add `by-pet` GSI only when volume demands.
-- PITR on, Retain policy.
+Deduplication: we don't want two chains running for the same household. Two approaches:
 
-**Attributes**:
-| name              | type | notes                                       |
-|-------------------|------|---------------------------------------------|
-| `household_id`    | S    | PK                                          |
-| `created_at_event`| S    | SK                                          |
-| `spc_event_id`    | S    | stringified int64                           |
-| `spc_event_type`  | N    | raw enum                                    |
-| `event_category`  | S    | `feeding|drinking|movement|device_status|other` |
-| `created_at`      | S    | ISO-8601                                    |
-| `pet_id`          | S?   | our internal `pet-…` id                     |
-| `spc_pet_id`      | S?   | first `pets[].id` if any                    |
-| `device_id`       | S?   | first `devices[].id` if any                 |
-| `raw_data`        | S    | `JsonElement.GetRawText()` from SPC         |
+- **Option A — SQS FIFO with MessageGroupId = household_id.** FIFO guarantees in-order processing per group, so if two clips arrive in the same second only one chain starts polling. Simple, but FIFO queues have throughput limits (~300 msg/sec per group) — fine for our scale.
+- **Option B — Idempotent burst-start.** Standard queue, but `SpcBurstStart` for an already-active household is a no-op extend-only update. Accept that two messages in the same second might both trigger a poll, but the cursor advance is idempotent so duplicate writes are harmless.
 
-Write with `PutItem` (no condition) — natural PK+SK is idempotent under replay.
+**Choose B** — FIFO is overkill and imposes SqsFifo-specific IAM / message-group-id overhead. The duplicate-poll-per-burst-start case is rare and idempotent.
 
-**Cursor storage**: new field `last_timeline_id` inside the existing `spc_integration` map on `snout-spotter-households`. No schema change — DynamoDB is schemaless.
+### New Lambda: `snout-spotter-spc-poller`
 
-### Event categorizer (loose, in `Services/EventCategorizer.cs` in poller)
+- Project: `src/lambdas/SnoutSpotter.Lambda.SpcPoller/` — plain event-driven handler (mirror `SnoutSpotter.Lambda.AutoLabel`), SQS trigger, **not** EventBridge cron.
+- Handler: reads `BurstMessage { householdId, kind: "motion"|"continue" }` from SQS.
+- Uses the shared `SnoutSpotter.Spc.Client` project for HTTP + secrets.
+- Duplicated thin wrappers (`HouseholdIntegrationService`, `PetLinkService`) — same decision as before, cost of keeping them in the Lambda is lower than extracting.
+- Memory: 256 MB, Timeout: 60 s.
+
+### IngestClip hook
+
+`src/lambdas/SnoutSpotter.Lambda.IngestClip/Function.cs` already processes every uploaded clip and knows the `household_id` (parsed from the S3 key prefix). Add after the existing keyframe extraction:
+
+```
+// If this household's Pi has any SPC device links, start/extend a burst poll.
+// We don't block on failures — if the SQS send fails we just skip this clip.
+if (await _deviceRegistry.HasAnySpcLinksAsync(householdId))
+    await _burstQueue.SendStartMessageAsync(householdId);
+```
+
+Two new services in the IngestClip Lambda:
+
+- `IDeviceRegistryReader.HasAnySpcLinksAsync(householdId)` — Query `snout-spotter-devices` with `household_id = hh AND begins_with(sk, "link#spc#")`, `Limit=1`. Returns bool. Zero-match Query is cheap.
+- `IBurstQueueProducer.SendStartMessageAsync(householdId)` — SQS `SendMessage` with body `{ householdId, kind: "motion" }`. No delay.
+
+The IngestClip Lambda gets new IAM: `dynamodb:Query` on `snout-spotter-devices` and `sqs:SendMessage` on the new burst queue.
+
+**Later swap to detection-gated trigger**: move these two lines from `IngestClip.Function` to `RunInference.Function`, only firing when a detection of a known pet lands. Zero other changes needed.
+
+## Data model
+
+### New DynamoDB table — `snout-spotter-spc-events` (unchanged from original plan)
+
+- PK `household_id` (S), SK `created_at_event` (S) = `{created_at}#{spc_event_id}`.
+- No GSI in phase 2. Query by household + optional `FilterExpression` for pet.
+- PITR on, RemovalPolicy RETAIN.
+- Attributes: `spc_event_id`, `spc_event_type`, `event_category`, `created_at`, `pet_id?`, `spc_pet_id?`, `device_id?`, `raw_data` (verbatim JSON).
+
+### New DynamoDB table — `snout-spotter-spc-burst-state`
+
+One row per household to track the active burst. Small enough that an attribute on `snout-spotter-households.spc_integration` would also work, but a dedicated table keeps it hot-path-safe and easier to expire.
+
+- PK `household_id` (S).
+- Attributes:
+  - `poll_until` (S, ISO) — deadline after which the chain should die.
+  - `last_timeline_id` (N) — cursor for next poll. Nullable; `null` means "seed mode".
+  - `last_poll_at` (S, ISO).
+- PITR off (ephemeral state), RemovalPolicy DESTROY.
+- Optional TTL attribute `ttl_expiry` set to `poll_until + 1h` so old rows self-delete.
+
+### New SQS queue — `snout-spotter-spc-burst`
+
+- Standard queue.
+- Visibility timeout: 90 s (poller runs in ≤ 60s).
+- Max receive count: 3 → DLQ `snout-spotter-spc-burst-dlq`.
+- IAM: IngestClip gets `SendMessage`; SpcPoller gets `SendMessage` (for self-schedule) + standard consumer perms.
+
+### Category decoder (unchanged from original plan)
 
 ```csharp
-public static string Categorize(int eventType) => eventType switch
+private static string Categorize(int eventType) => eventType switch
 {
-    >= 20000 and <= 20999 => "feeding",       // feeder / bowl
-    >= 22000 and <= 22999 => "drinking",      // felaqua
-    20 => "movement",                          // pet door passthrough
+    >= 20000 and <= 20999 => "feeding",
+    >= 22000 and <= 22999 => "drinking",
+    20 => "movement",
     >= 21000 and <= 21999 => "movement",
     >= 9000 and <= 19999 => "device_status",
     _ => "other"
 };
 ```
 
-Deliberately coarse. Raw `spc_event_type` is preserved; a full decoder lands later.
+Approximate; users see raw type in a tooltip if they care. Full decoder is a follow-up.
 
-### Infra
+## Poller handler logic
 
-**`src/infra/Stacks/CoreStack.cs` additions**:
+```
+handler(BurstMessage msg):
+  hh = msg.householdId
+  now = utcNow
+
+  burst = GetBurstState(hh)
+
+  // motion trigger — start or extend
+  if msg.kind == "motion":
+      newDeadline = max(burst?.poll_until ?? now, now) + 10 min
+      UpdateBurstState(hh, poll_until = newDeadline)
+      burst = burst ?? new { poll_until = newDeadline, last_timeline_id = null }
+
+  // continue trigger — check we're still inside the window
+  else if msg.kind == "continue":
+      if burst == null or burst.poll_until <= now:
+          return   // chain dies
+
+  token = SecretsManager.Get("snoutspotter/spc/{hh}")
+  if token == null:                       // household unlinked mid-burst
+      return
+
+  state = HouseholdIntegrationService.Get(hh)
+  if state == null or state.status != "linked":
+      return
+
+  // seed-on-first-motion: first-ever poll just records the cursor
+  if burst.last_timeline_id == null:
+      latest = SpcApiClient.ListTimeline(token, state.spcHouseholdId, sinceId: null, pageSize: 1)
+      if latest.Any():
+          UpdateBurstState(hh, last_timeline_id = latest.Max(e => e.id))
+      UpdateBurstState(hh, last_poll_at = now)
+      MaybeScheduleContinue(hh, burst.poll_until)
+      return
+
+  // normal poll
+  try:
+      page = SpcApiClient.ListTimeline(token, state.spcHouseholdId,
+                                        sinceId: burst.last_timeline_id,
+                                        pageSize: 50)
+      petMap = PetLinkService.GetSpcToInternalMap(hh)
+      foreach evt in page:
+          WriteEvent(hh, evt, petMap)         // PutItem, idempotent
+      if page.Any():
+          UpdateBurstState(hh, last_timeline_id = page.Max.id)
+      UpdateBurstState(hh, last_poll_at = now)
+      HouseholdIntegrationService.SetLastSyncAt(hh, now)
+  catch SpcUnauthorizedException:
+      HouseholdIntegrationService.MarkTokenExpired(hh)
+      return                                   // chain dies; re-link needed
+  catch SpcUpstreamException:
+      // Transient — let SQS retry (visibility timeout will redeliver).
+      throw
+
+  MaybeScheduleContinue(hh, burst.poll_until)
+
+MaybeScheduleContinue(hh, deadline):
+  remaining = deadline - utcNow
+  if remaining > 30s:
+      sqs.SendMessage(body = { householdId: hh, kind: "continue" }, DelaySeconds = 30)
+  // else: chain dies naturally
+```
+
+## Infra changes (CDK)
+
+### `src/infra/Stacks/CoreStack.cs`
+
+- New DynamoDB table `snout-spotter-spc-events` (as above).
+- New DynamoDB table `snout-spotter-spc-burst-state` (as above).
+- New SQS queue `snout-spotter-spc-burst` + DLQ.
 - New ECR repo `snout-spotter-spc-poller`.
-- New DynamoDB table `snout-spotter-spc-events` (above).
-- New SSM param `/snoutspotter/core/spc-events-table-name`.
+- New SSM params: `/snoutspotter/core/spc-events-table-name`, `/snoutspotter/core/spc-burst-state-table-name`, `/snoutspotter/core/spc-burst-queue-url`.
 
-**New stack `src/infra/Stacks/SpcPollerStack.cs`**:
-- `DockerImageFunction snout-spotter-spc-poller`, 512 MB, 1 min timeout.
-- Env: table names + `SPC_BASE_URL=https://app-api.beta.surehub.io`.
-- IAM: `secretsmanager:GetSecretValue` on `snoutspotter/spc/*`; `dynamodb:Scan + UpdateItem` on households; `dynamodb:Query` on pets; `dynamodb:PutItem + Query` on spc-events.
-- `Rule` with `Schedule.Rate(Duration.Minutes(1))` → `LambdaFunction` target.
+### `src/infra/Stacks/IngestStack.cs` (edit existing)
 
-**`src/infra/Program.cs`**: register `SpcPollerStack` after `SpcConnectorStack`.
+- Add `dynamodb:Query` on `snout-spotter-devices`.
+- Add `sqs:SendMessage` on `snout-spotter-spc-burst`.
+- Env: `DEVICES_TABLE`, `SPC_BURST_QUEUE_URL`.
 
-**CI**: new `build-spc-poller-image.yml`, `deploy-spc-poller.yml`; wire into `deploy.yml` paths-filter so shared-client changes rebuild both connector and poller images.
+### New stack `src/infra/Stacks/SpcPollerStack.cs`
 
-### Read endpoint (main API, not connector)
+Props: `SpcPollerEcrRepo`, `ImageTag`.
 
-The events are already in our DynamoDB — no SPC call at read time. The main `snout-spotter-api` Lambda has Okta auth + household middleware + DynamoDB wired, so adding the route there is zero-cost.
+- Reads SSM params for households / pets / events / burst-state table names + burst queue URL.
+- `DockerImageFunction snout-spotter-spc-poller`, 256 MB, 60 s timeout.
+- SQS event source for `snout-spotter-spc-burst` with BatchSize=1 (simpler accounting; we don't benefit from batching because each message is per-household).
+- IAM:
+  - `secretsmanager:GetSecretValue` on `snoutspotter/spc/*`.
+  - `dynamodb:GetItem + UpdateItem` on households, burst-state.
+  - `dynamodb:Query` on pets (for pet_id lookup).
+  - `dynamodb:PutItem + Query` on spc-events.
+  - `sqs:SendMessage` on the burst queue (for self-schedule).
 
-- `src/api/Controllers/PetsController.cs`: new `GET {petId}/spc-events?limit=50&nextPageKey=…`.
-- `src/api/Services/SpcEventsService.cs` + `Interfaces/ISpcEventsService.cs`: query by `household_id` with `ScanIndexForward = false` (newest first) and `FilterExpression = "pet_id = :pid"`. Cursor pagination via base64 `LastEvaluatedKey` — reuse the pattern in `ClipService`.
-- `src/api/Models/SpcEventDto.cs`: PascalCase record; `RawData` exposed as opaque string.
-- `src/api/AppConfig.cs`: add `SpcEventsTable`. `src/api/Program.cs`: bind env + register service.
-- `src/infra/Stacks/ApiStack.cs`: add `SPC_EVENTS_TABLE` env from SSM + `dynamodb:Query` on `snout-spotter-spc-events`.
+### `src/infra/Program.cs`
 
-### Frontend
+Register `SpcPollerStack` after `SpcConnectorStack`; pass `DevicesTable`, `SpcBurstQueue`, `SpcBurstStateTable`, `SpcEventsTable` into IngestStack/SpcConnectorStack props as needed. (Actually — per our existing rule we use SSM lookups between Lambda stacks; only CoreStack hands out `Table`/`Queue`/`Repository` refs directly.)
 
-- `src/web/src/types.ts`: new `SpcEvent`, `SpcEventsPage`.
-- `src/web/src/api.ts`: `listSpcEventsForPet(petId, nextPageKey?)` on `BASE` (not `SPC_INTEGRATION_BASE`).
-- `src/web/src/pages/Pets.tsx`: new `<PetActivity petId={…} />` subcomponent behind an Activity toggle on each pet card. Lazy-loads on expand. Vertical list: icon by category (`Utensils` / `Droplets` / `DoorOpen` / `Plug` / `Circle`), relative time, derived sentence (Phase 2: `"{pet.name} {category_verb}"`; swap richer text later once we decode `raw_data`).
-- No Integrations page changes — activity lives on the pet, not the connector card.
+## Read endpoint + frontend (unchanged from original plan)
 
-## Edge cases
+- Main API `GET /api/pets/{petId}/spc-events?limit=50&nextPageKey=...` — `SpcEventsService` queries by household + `FilterExpression = "pet_id = :pid"`, newest first.
+- `src/api/Controllers/PetsController.cs` — add route.
+- `src/api/Services/SpcEventsService.cs` + interface — new.
+- `ApiStack`: env `SPC_EVENTS_TABLE` + `dynamodb:Query` on `snout-spotter-spc-events`.
+- Frontend `src/web/src/pages/Pets.tsx` — add collapsible Activity section per pet card, lazy-loaded on expand. Icons by category: `Utensils` (feeding), `Droplets` (drinking), `DoorOpen` (movement), `Plug` (device_status), `Circle` (other).
 
-- **First poll**: seed cursor, don't persist historical page (avoids wall of stale events).
-- **Unmapped SPC pet**: persist with `pet_id = null`; will never render until user maps the pet. No data loss.
-- **Duplicates**: natural PK+SK idempotency.
-- **Token expiry**: `SpcUnauthorizedException` → `MarkTokenExpiredAsync` → next tick's Scan filter skips it.
-- **Rate-limited (429)**: Polly handles short retries in the shared client; sustained 429 sets `last_error = "rate_limited"` without flipping status.
-- **Scale**: Scan works up to ~100 linked households. TODO comment for SQS fan-out beyond.
+## Cost sketch
+
+Assumption: 20 motion uploads/day, each 10-min burst, some overlap → ~90 min/day active polling per linked household.
+
+- **Polls (SQS + Lambda invokes + SPC GETs)**: 90 min × 2 polls/min = **180 / day / household**.
+- **Naive 1-min cron baseline**: **1440 / day / household**.
+- Savings: **8× fewer invokes**, proportional DynamoDB cursor-write savings, zero cost during quiet hours.
+- SQS messages are free under 1M/month (we'd send ~200/day/household).
 
 ## Critical files
 
-- `src/shared/SnoutSpotter.Spc.Client/` **(new shared project)** — extracted SPC HTTP + DTOs, plus new `ListTimelineAsync`.
-- `src/lambdas/SnoutSpotter.Lambda.SpcPoller/` **(new Lambda)** — Function.cs, EventCategorizer.cs, duplicated wrappers for secrets / household / pet-link services.
-- `src/infra/Stacks/CoreStack.cs` — new ECR repo + events table + SSM param.
+- `src/shared/SnoutSpotter.Spc.Client/` — existing, gains `ListTimelineAsync` on `ISpcApiClient` and `SpcTimelineResource` DTO.
+- `src/lambdas/SnoutSpotter.Lambda.IngestClip/Function.cs` — two new service calls after keyframe extract.
+- `src/lambdas/SnoutSpotter.Lambda.IngestClip/Services/DeviceRegistryReader.cs` **(new)** — minimal Query-projected bool check.
+- `src/lambdas/SnoutSpotter.Lambda.IngestClip/Services/BurstQueueProducer.cs` **(new)** — single `SendMessage` wrapper.
+- `src/lambdas/SnoutSpotter.Lambda.SpcPoller/` **(new project)** — entire Lambda.
+- `src/infra/Stacks/CoreStack.cs` — events + burst-state tables, burst queue + DLQ, new ECR repo, new SSM params.
+- `src/infra/Stacks/IngestStack.cs` — add IAM + env for devices table + burst queue.
 - `src/infra/Stacks/SpcPollerStack.cs` **(new)**.
 - `src/infra/Program.cs` — wire new stack.
-- `src/infra/Stacks/ApiStack.cs` — events-table env + Query IAM.
-- `src/api/Controllers/PetsController.cs` — new route.
+- `src/api/Controllers/PetsController.cs` — add `GET /api/pets/{petId}/spc-events`.
 - `src/api/Services/SpcEventsService.cs` **(new)**.
+- `src/api/Services/Interfaces/ISpcEventsService.cs` **(new)**.
 - `src/api/Models/SpcEventDto.cs` **(new)**.
-- `src/api/AppConfig.cs` + `Program.cs` — env binding + DI.
+- `src/infra/Stacks/ApiStack.cs` — env + IAM for events table.
 - `src/web/src/pages/Pets.tsx` — Activity panel.
 - `src/web/src/api.ts` + `src/web/src/types.ts` — event types + fetcher.
-- `.github/workflows/deploy.yml` + new `build-spc-poller-image.yml` / `deploy-spc-poller.yml`.
+- `.github/workflows/` — new `build-spc-poller-image.yml`, `deploy-spc-poller.yml`; edit `deploy.yml`.
+
+## Edge cases
+
+- **Household unlinked mid-burst.** Secret missing → poller returns silently, chain dies.
+- **Duplicates.** PutItem with natural PK+SK is idempotent.
+- **Unmapped SPC pet.** Persist with `pet_id=null`; surfaces later if user maps. No data loss.
+- **Late events after burst closes.** Accepted — next motion picks them up via `SinceId`.
+- **Pi without SPC links.** `HasAnySpcLinksAsync` returns false; no queue message sent; zero downstream cost.
+- **Hub upload delay > 10 min.** Rare in practice; events are lost until next motion.
+- **Transient SPC 5xx / 429.** Polly (existing in shared client) handles short retries. Sustained failure → SQS redelivery up to 3× → DLQ. DLQ inspection is manual and rare.
 
 ## Incremental delivery (2 PRs)
 
-1. **PR5 — poller infra + backend.** Shared-client extract + `ListTimelineAsync`, new poller Lambda + stack, CoreStack additions, CI. Connector Lambda updated to consume the shared client (namespace-level change only). No user-visible UI.
-2. **PR6 — API read endpoint + UI.** Main API `GET /api/pets/{petId}/spc-events`, Pets-page Activity section.
+1. **PR A — Poller infra + backend.** Shared-client `ListTimelineAsync`, new poller project, new stacks/queues/tables, IngestClip hook, CI. No UI.
+2. **PR B — API read endpoint + UI.** Main API `GET /api/pets/{petId}/spc-events` + Pets-page Activity panel.
 
 ## Verification
 
-- `dotnet build SnoutSpotter.sln`
-- `cdk synth SnoutSpotter-Core SnoutSpotter-SpcPoller SnoutSpotter-Api`
-- `cd src/web && npm run build`
-- Beta runbook: link household, wait 2 min, feed the dog / trigger a door, confirm `snout-spotter-spc-events` row; open Pets page, expand Activity, confirm row renders.
-- Token-expiry path: rotate the Secrets Manager secret to garbage, confirm `spc_integration.status = token_expired` within 1 tick and the household is skipped thereafter.
+- `dotnet build SnoutSpotter.sln` clean.
+- `cdk synth SnoutSpotter-Core SnoutSpotter-Ingest SnoutSpotter-SpcPoller SnoutSpotter-Api` all pass.
+- `cd src/web && npm run build`.
+- **Beta runbook**:
+  1. Link household + a Pi → a SPC device.
+  2. Wait quiet — confirm zero poller invocations in CloudWatch.
+  3. Trigger a clip upload (motion at the camera) → confirm burst-start SQS message, then a chain of continue messages at 30s intervals.
+  4. Feed the dog (or trigger a door) → confirm a row lands in `snout-spotter-spc-events` within ~90s.
+  5. Wait 10 min quiet — confirm chain dies, no more invocations.
+  6. Token-expiry path: rotate the secret to garbage, next motion → poller catches 401, marks household `token_expired`, chain dies, subsequent motions don't re-poll.
+  7. Unmapped SPC pet event → row persisted with `pet_id=null`.
 
-## Open items
+## Future (not in scope here)
 
-- `TimelineEventType` ranges are approximate (sourced from community `surepy` reverse-engineering). Phase 2 category accuracy is "good enough"; proper decoder is a follow-up PR.
-- `text` field not persisted in Phase 2. UI derives a sentence from category + pet name. If human-readable text is worth it, a second pass hitting `GET /api/notification` can enrich events (adds a second API call per tick — defer until demand).
-- Per-household poll failure isolation: currently per-tick `last_error` gets overwritten across all pets in a household. Fine for Phase 2; consider a small `last_error_at` alongside.
+- **Detection-gated trigger** — move motion hook from IngestClip to RunInference, fire only on confirmed pet detections. One-file change.
+- **Human-readable text** — enrich events by fetching `GET /api/notification` alongside timeline.
+- **Feeding-amount reports** — use `GET /api/report/household/.../pet/.../aggregate`.
+- **Live "is eating now" status** — separate feature using `GET /api/pet/{petId}/status/{deviceId}`.
