@@ -70,6 +70,7 @@ public partial class TrainingService : ITrainingService
                 var progress = shadow?.CurrentJobProgress == null ? null : new TrainerProgressSummary(
                     shadow.CurrentJobProgress.Epoch,
                     shadow.CurrentJobProgress.TotalEpochs,
+                    shadow.CurrentJobProgress.EpochProgress,
                     shadow.CurrentJobProgress.MAP50);
 
                 agents.Add(new TrainerAgentSummary(
