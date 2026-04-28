@@ -181,9 +181,8 @@ export interface UpdateDeviceRequest {
 }
 
 // SPC timeline events ingested by the motion-triggered poller.
-// `eventCategory` is a coarse bucketing (feeding/drinking/movement/
-// device_status/other). spcEventType is the raw SPC enum for tooltips.
-// rawData is the verbatim SPC `data` JSON string, left opaque in phase 1.
+// Weight fields are the primary measurement data from SPC's weights[] array.
+// Negative weightChange = consumed, positive = added/refilled.
 export interface SpcEvent {
   spcEventId: string;
   spcEventType: number;
@@ -193,6 +192,9 @@ export interface SpcEvent {
   spcPetId: string | null;
   deviceId: string | null;
   rawData: string | null;
+  weightChange: number | null;
+  weightDuration: number | null;
+  weightCurrent: number | null;
 }
 
 export interface SpcEventsPage {

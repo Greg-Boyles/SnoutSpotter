@@ -44,6 +44,20 @@ public class EventStore
         if (deviceId != null) item["device_id"] = new AttributeValue { S = deviceId };
         if (!string.IsNullOrEmpty(evt.Data)) item["raw_data"] = new AttributeValue { S = evt.Data };
 
+        // Weight data from weights[0].frames[0] — the primary measurement for
+        // bowl interactions. Negative change = consumed, positive = added/refilled.
+        var firstWeight = evt.Weights?.FirstOrDefault();
+        var firstFrame = firstWeight?.Frames?.FirstOrDefault();
+        if (firstFrame != null)
+        {
+            item["weight_change"] = new AttributeValue { N = firstFrame.Change.ToString() };
+            item["weight_current"] = new AttributeValue { N = firstFrame.CurrentWeight.ToString() };
+        }
+        if (firstWeight != null && firstWeight.Duration > 0)
+        {
+            item["weight_duration"] = new AttributeValue { N = firstWeight.Duration.ToString() };
+        }
+
         await _dynamo.PutItemAsync(new PutItemRequest
         {
             TableName = _tableName,

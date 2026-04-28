@@ -51,22 +51,39 @@ public record SpcPaginated<T>(
     [property: JsonPropertyName("data")] List<T>? Data);
 
 // SPC timeline — GET /api/timeline/household/{householdId}?SinceId=...&PageSize=...
-// `data` is a JSON-encoded string (per V1 Swagger), kept verbatim so we can
-// decode richer fields later without re-polling. `pets`, `devices`, `movements`
-// are partial resource arrays; we only need ids here to map to our pet / device.
+// The primary measurement data is in `weights[]`, NOT in `data`. `data` is a
+// JSON string that's null/empty for most event types; `weights[].frames[].change`
+// carries the actual bowl weight delta per interaction. `data` is still stored
+// verbatim for supplementary info on feeding events (tare_value etc.).
 public record SpcTimelineResource(
     [property: JsonPropertyName("id")] long Id,
     [property: JsonPropertyName("type")] int Type,
     [property: JsonPropertyName("data")] string? Data,
     [property: JsonPropertyName("created_at")] string? CreatedAt,
     [property: JsonPropertyName("pets")] List<SpcTimelinePetRef>? Pets,
-    [property: JsonPropertyName("devices")] List<SpcTimelineDeviceRef>? Devices);
+    [property: JsonPropertyName("devices")] List<SpcTimelineDeviceRef>? Devices,
+    [property: JsonPropertyName("weights")] List<SpcTimelineWeight>? Weights);
 
 public record SpcTimelinePetRef(
     [property: JsonPropertyName("id")] long Id);
 
 public record SpcTimelineDeviceRef(
     [property: JsonPropertyName("id")] long Id);
+
+public record SpcTimelineWeight(
+    [property: JsonPropertyName("id")] long Id,
+    [property: JsonPropertyName("device_id")] long DeviceId,
+    [property: JsonPropertyName("tag_id")] long TagId,
+    [property: JsonPropertyName("context")] int Context,
+    [property: JsonPropertyName("duration")] int Duration,
+    [property: JsonPropertyName("created_at")] string? CreatedAt,
+    [property: JsonPropertyName("frames")] List<SpcTimelineWeightFrame>? Frames);
+
+public record SpcTimelineWeightFrame(
+    [property: JsonPropertyName("index")] int Index,
+    [property: JsonPropertyName("current_weight")] int CurrentWeight,
+    [property: JsonPropertyName("change")] int Change,
+    [property: JsonPropertyName("created_at")] string? CreatedAt);
 
 // Persisted to AWS Secrets Manager as JSON under snoutspotter/spc/{household_id}.
 public record SpcSecret(
