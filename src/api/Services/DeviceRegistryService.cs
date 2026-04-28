@@ -204,12 +204,29 @@ public class DeviceRegistryService : IDeviceRegistryService
             ?? throw new InvalidOperationException($"SPC device {spcDeviceId} not found in household {state.SpcHouseholdId}");
 
         var now = IsoNow();
+        var derivedName = match.Name ?? $"Device {match.Id}";
+
+        // SPC-sourced metadata goes into a single nested spc_integration map —
+        // matches the shape household and pet rows use. spc_device_id stays
+        // flat at top level since it's the row identifier (also the SK).
+        // Skip the map's serial_number entry when SPC returned null rather
+        // than storing an explicit NULL attribute.
+        var integrationMap = new Dictionary<string, AttributeValue>
+        {
+            ["spc_product_id"] = new() { N = match.ProductId.ToString() },
+            ["spc_name"] = new() { S = derivedName },
+            ["last_refreshed_at"] = new() { S = now },
+            ["linked_at"] = new() { S = now }
+        };
+        if (!string.IsNullOrEmpty(match.SerialNumber))
+            integrationMap["serial_number"] = new AttributeValue { S = match.SerialNumber };
+
         var resp = await _dynamo.UpdateItemAsync(new UpdateItemRequest
         {
             TableName = _tableName,
             Key = SpcKey(householdId, spcDeviceId),
             UpdateExpression =
-                "SET #src = :src, spc_device_id = :id, spc_product_id = :pid, spc_name = :sname, serial_number = :serial, last_refreshed_at = :ts, updated_at = :ts" +
+                "SET #src = :src, spc_device_id = :id, spc_integration = :map, updated_at = :ts" +
                 ", display_name = if_not_exists(display_name, :dnInit)" +
                 ", created_at = if_not_exists(created_at, :ts)",
             ExpressionAttributeNames = new Dictionary<string, string> { ["#src"] = "source" },
@@ -217,13 +234,9 @@ public class DeviceRegistryService : IDeviceRegistryService
             {
                 [":src"] = new() { S = SourceSpc },
                 [":id"] = new() { S = spcDeviceId },
-                [":pid"] = new() { N = match.ProductId.ToString() },
-                [":sname"] = new() { S = match.Name ?? $"Device {match.Id}" },
-                [":serial"] = string.IsNullOrEmpty(match.SerialNumber)
-                    ? new AttributeValue { NULL = true }
-                    : new AttributeValue { S = match.SerialNumber },
+                [":map"] = new() { M = integrationMap },
                 [":ts"] = new() { S = now },
-                [":dnInit"] = new() { S = match.Name ?? $"Device {match.Id}" }
+                [":dnInit"] = new() { S = derivedName }
             },
             ReturnValues = ReturnValue.ALL_NEW
         });
@@ -411,18 +424,33 @@ public class DeviceRegistryService : IDeviceRegistryService
 
     private static SpcDeviceDto ToSpcDto(Dictionary<string, AttributeValue> item)
     {
+        // SPC-sourced metadata (product_id, name, serial, last_refreshed_at)
+        // lives inside a nested spc_integration map — same pattern as
+        // households and pets. spc_device_id stays flat because it's the
+        // row's key identifier (also in SK). Flatten back out for the DTO
+        // so the HTTP contract doesn't change.
         int? productId = null;
-        if (item.TryGetValue("spc_product_id", out var pid) && pid.N != null && int.TryParse(pid.N, out var parsed))
-            productId = parsed;
+        string? spcName = null;
+        string? serialNumber = null;
+        string? lastRefreshedAt = null;
+        if (item.TryGetValue("spc_integration", out var integration) && integration.M != null)
+        {
+            var m = integration.M;
+            if (m.TryGetValue("spc_product_id", out var pid) && pid.N != null && int.TryParse(pid.N, out var parsed))
+                productId = parsed;
+            if (m.TryGetValue("spc_name", out var sname)) spcName = sname.S;
+            if (m.TryGetValue("serial_number", out var serial)) serialNumber = serial.S;
+            if (m.TryGetValue("last_refreshed_at", out var lra)) lastRefreshedAt = lra.S;
+        }
 
         return new SpcDeviceDto(
             SpcDeviceId: item.GetValueOrDefault("spc_device_id")?.S ?? "",
             SpcProductId: productId,
-            SpcName: item.GetValueOrDefault("spc_name")?.S,
-            SerialNumber: item.GetValueOrDefault("serial_number")?.S,
+            SpcName: spcName,
+            SerialNumber: serialNumber,
             DisplayName: item.GetValueOrDefault("display_name")?.S ?? "",
             Notes: item.GetValueOrDefault("notes")?.S,
-            LastRefreshedAt: item.GetValueOrDefault("last_refreshed_at")?.S,
+            LastRefreshedAt: lastRefreshedAt,
             CreatedAt: item.GetValueOrDefault("created_at")?.S ?? "",
             UpdatedAt: item.GetValueOrDefault("updated_at")?.S ?? "");
     }

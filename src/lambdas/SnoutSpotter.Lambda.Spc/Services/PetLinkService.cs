@@ -58,6 +58,8 @@ public class PetLinkService : IPetLinkService
 
     public async Task ClearAllAsync(string householdId, CancellationToken ct = default)
     {
+        // Unlink across the household: remove the nested spc_integration map
+        // on every pet. Same shape as HouseholdIntegrationService.ClearAsync.
         var petIds = await ListPetIdsAsync(householdId, ct);
         foreach (var pid in petIds)
         {
@@ -69,7 +71,7 @@ public class PetLinkService : IPetLinkService
                     ["household_id"] = new() { S = householdId },
                     ["pet_id"] = new() { S = pid }
                 },
-                UpdateExpression = "REMOVE spc_pet_id, spc_pet_name"
+                UpdateExpression = "REMOVE spc_integration"
             }, ct);
         }
     }
@@ -82,39 +84,39 @@ public class PetLinkService : IPetLinkService
             ["pet_id"] = new() { S = m.PetId }
         };
 
+        // Unlink: drop the whole spc_integration map. Atomic with the household
+        // and device unlink patterns.
         if (string.IsNullOrEmpty(m.SpcPetId))
         {
             await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
             {
                 TableName = _tableName,
                 Key = key,
-                UpdateExpression = "REMOVE spc_pet_id, spc_pet_name",
+                UpdateExpression = "REMOVE spc_integration",
                 ConditionExpression = "attribute_exists(pet_id)"
             }, ct);
             return;
         }
 
-        var setExpr = "SET spc_pet_id = :sid";
-        var values = new Dictionary<string, AttributeValue>
+        // Link: whole-object replace of spc_integration. Name is optional; omit
+        // the map key when absent (don't write explicit nulls).
+        var mapAttrs = new Dictionary<string, AttributeValue>
         {
-            [":sid"] = new() { S = m.SpcPetId }
+            ["spc_pet_id"] = new() { S = m.SpcPetId },
+            ["linked_at"] = new() { S = DateTime.UtcNow.ToString("O") }
         };
         if (!string.IsNullOrEmpty(m.SpcPetName))
-        {
-            setExpr += ", spc_pet_name = :sname";
-            values[":sname"] = new() { S = m.SpcPetName };
-        }
-        else
-        {
-            setExpr += " REMOVE spc_pet_name";
-        }
+            mapAttrs["spc_pet_name"] = new AttributeValue { S = m.SpcPetName };
 
         await _dynamoDb.UpdateItemAsync(new UpdateItemRequest
         {
             TableName = _tableName,
             Key = key,
-            UpdateExpression = setExpr,
-            ExpressionAttributeValues = values,
+            UpdateExpression = "SET spc_integration = :map",
+            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            {
+                [":map"] = new() { M = mapAttrs }
+            },
             ConditionExpression = "attribute_exists(pet_id)"
         }, ct);
     }
