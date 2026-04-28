@@ -173,7 +173,14 @@ try
         // Handle update (from shadow)
         if (pendingUpdate != null)
         {
-            if (!isTraining || forceUpdate)
+            var currentVersion = Environment.GetEnvironmentVariable("AGENT_VERSION") ?? "dev";
+            if (string.Equals(pendingUpdate, currentVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("Already running v{Version} — clearing shadow delta", currentVersion);
+                await ReportShadow();
+                pendingUpdate = null;
+            }
+            else if (!isTraining || forceUpdate)
             {
                 if (isTraining && forceUpdate)
                 {
@@ -262,11 +269,21 @@ try
                 // Apply deferred update
                 if (pendingUpdate != null)
                 {
-                    logger.LogInformation("Applying deferred update to v{Version}", pendingUpdate);
-                    await ReportShadow(updateStatus: "updating");
-                    Directory.CreateDirectory("/app/host-state");
-                    File.WriteAllText("/app/host-state/pending-version", pendingUpdate);
-                    Environment.Exit(ExitCodeUpdate);
+                    var curVer = Environment.GetEnvironmentVariable("AGENT_VERSION") ?? "dev";
+                    if (string.Equals(pendingUpdate, curVer, StringComparison.OrdinalIgnoreCase))
+                    {
+                        logger.LogInformation("Already running v{Version} — clearing deferred update", curVer);
+                        await ReportShadow();
+                        pendingUpdate = null;
+                    }
+                    else
+                    {
+                        logger.LogInformation("Applying deferred update to v{Version}", pendingUpdate);
+                        await ReportShadow(updateStatus: "updating");
+                        Directory.CreateDirectory("/app/host-state");
+                        File.WriteAllText("/app/host-state/pending-version", pendingUpdate);
+                        Environment.Exit(ExitCodeUpdate);
+                    }
                 }
             }
         }
