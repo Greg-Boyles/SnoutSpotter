@@ -158,7 +158,7 @@ try
         // Heartbeat every minute
         if ((DateTime.UtcNow - lastHeartbeat).TotalMinutes >= 1)
         {
-            await ReportShadow(isTraining ? "training" : "idle", currentJobId);
+            await ReportShadow(isTraining ? "training" : "idle", currentJobId, jobRunner.LatestProgress);
             lastHeartbeat = DateTime.UtcNow;
         }
 
@@ -264,6 +264,7 @@ try
 
                 isTraining = false;
                 currentJobId = null;
+                jobRunner.LatestProgress = null;
                 await ReportShadow("idle");
 
                 // Apply deferred update

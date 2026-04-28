@@ -28,6 +28,7 @@ public class JobRunner
     private Process? _trainingProcess;
 
     public string? CachedMlScriptVersion { get; private set; }
+    public TrainingProgress? LatestProgress { get; set; }
 
     public JobRunner(IAmazonS3 s3, IAmazonDynamoDB dynamoDb, string bucket, string modelsTable, MqttManager mqtt, string thingName, ILogger logger)
     {
@@ -302,6 +303,7 @@ public class JobRunner
                 var progress = parseLine(line);
                 if (progress != null)
                 {
+                    LatestProgress = progress;
                     try { await PublishProgress(jobId, "training", progress); }
                     catch (Exception ex) { _logger.LogWarning("Failed to publish progress: {Error}", ex.Message); }
                 }
@@ -319,6 +321,7 @@ public class JobRunner
                     var progress = parseLine(line);
                     if (progress != null)
                     {
+                        LatestProgress = progress;
                         try { await PublishProgress(jobId, "training", progress); }
                         catch (Exception ex) { _logger.LogWarning("Failed to publish progress: {Error}", ex.Message); }
                     }
