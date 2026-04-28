@@ -179,15 +179,31 @@ public partial class PetService : IPetService
         }
     }
 
-    private static PetProfile FromItem(Dictionary<string, AttributeValue> item) => new(
-        HouseholdId: item["household_id"].S,
-        PetId: item["pet_id"].S,
-        Name: item["name"].S,
-        Breed: item.TryGetValue("breed", out var b) ? b.S : null,
-        PhotoUrl: item.TryGetValue("photo_url", out var p) ? p.S : null,
-        CreatedAt: item["created_at"].S,
-        SpcPetId: item.TryGetValue("spc_pet_id", out var sid) ? sid.S : null,
-        SpcPetName: item.TryGetValue("spc_pet_name", out var sname) ? sname.S : null);
+    private static PetProfile FromItem(Dictionary<string, AttributeValue> item)
+    {
+        // SPC link fields live inside a nested `spc_integration` map. Flatten
+        // them back out for the PetProfile DTO so the HTTP contract stays
+        // unchanged. See docs/plan-spc-device-registry.md for the pattern —
+        // household, pet and device rows all now use a nested map for their
+        // SPC-sourced metadata.
+        string? spcPetId = null;
+        string? spcPetName = null;
+        if (item.TryGetValue("spc_integration", out var integration) && integration.M != null)
+        {
+            if (integration.M.TryGetValue("spc_pet_id", out var sid)) spcPetId = sid.S;
+            if (integration.M.TryGetValue("spc_pet_name", out var sname)) spcPetName = sname.S;
+        }
+
+        return new(
+            HouseholdId: item["household_id"].S,
+            PetId: item["pet_id"].S,
+            Name: item["name"].S,
+            Breed: item.TryGetValue("breed", out var b) ? b.S : null,
+            PhotoUrl: item.TryGetValue("photo_url", out var p) ? p.S : null,
+            CreatedAt: item["created_at"].S,
+            SpcPetId: spcPetId,
+            SpcPetName: spcPetName);
+    }
 
     private record ClassMap(string[]? Classes);
 
