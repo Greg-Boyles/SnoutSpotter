@@ -1,10 +1,9 @@
 namespace SnoutSpotter.Api.Models;
 
 // Server-side shape for a single row of the SPC events timeline as served by
-// GET /api/pets/{petId}/spc-events. Weight fields are the primary measurement
-// data from SPC's weights[] array on each timeline event. Negative change =
-// consumed, positive = added/refilled. RawData is the verbatim SPC `data` JSON
-// string kept for supplementary info (tare_value, food_type on feeding events).
+// GET /api/pets/{petId}/spc-events. Weight is a nested object matching the
+// structure from SPC's weights[] array. Multi-bowl devices produce multiple
+// frames — one per bowl. Negative change = consumed, positive = added/refilled.
 public record SpcEventDto(
     string SpcEventId,
     int SpcEventType,
@@ -14,9 +13,17 @@ public record SpcEventDto(
     string? SpcPetId,
     string? DeviceId,
     string? RawData,
-    int? WeightChange,
-    int? WeightDuration,
-    int? WeightCurrent);
+    SpcEventWeightDto? Weight);
+
+public record SpcEventWeightDto(
+    int Duration,
+    int Context,
+    List<SpcEventWeightFrameDto> Frames);
+
+public record SpcEventWeightFrameDto(
+    int Index,
+    int Change,
+    int CurrentWeight);
 
 public record SpcEventsPage(
     List<SpcEventDto> Events,

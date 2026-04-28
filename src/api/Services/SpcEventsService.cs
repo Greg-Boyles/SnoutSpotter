@@ -89,15 +89,30 @@ public class SpcEventsService : ISpcEventsService
         if (item.TryGetValue("spc_event_type", out var st) && st.N != null && int.TryParse(st.N, out var parsed))
             spcType = parsed;
 
-        int? weightChange = null;
-        if (item.TryGetValue("weight_change", out var wc) && wc.N != null && int.TryParse(wc.N, out var wcp))
-            weightChange = wcp;
-        int? weightDuration = null;
-        if (item.TryGetValue("weight_duration", out var wd) && wd.N != null && int.TryParse(wd.N, out var wdp))
-            weightDuration = wdp;
-        int? weightCurrent = null;
-        if (item.TryGetValue("weight_current", out var wcur) && wcur.N != null && int.TryParse(wcur.N, out var wcurp))
-            weightCurrent = wcurp;
+        SpcEventWeightDto? weight = null;
+        if (item.TryGetValue("weight", out var wAttr) && wAttr.M != null)
+        {
+            var wm = wAttr.M;
+            int duration = 0;
+            if (wm.TryGetValue("duration", out var dur) && dur.N != null) int.TryParse(dur.N, out duration);
+            int context = 0;
+            if (wm.TryGetValue("context", out var ctx) && ctx.N != null) int.TryParse(ctx.N, out context);
+
+            var frames = new List<SpcEventWeightFrameDto>();
+            if (wm.TryGetValue("frames", out var framesAttr) && framesAttr.L != null)
+            {
+                foreach (var f in framesAttr.L)
+                {
+                    if (f.M == null) continue;
+                    int idx = 0, change = 0, curWeight = 0;
+                    if (f.M.TryGetValue("index", out var fi) && fi.N != null) int.TryParse(fi.N, out idx);
+                    if (f.M.TryGetValue("change", out var fc) && fc.N != null) int.TryParse(fc.N, out change);
+                    if (f.M.TryGetValue("current_weight", out var fw) && fw.N != null) int.TryParse(fw.N, out curWeight);
+                    frames.Add(new SpcEventWeightFrameDto(idx, change, curWeight));
+                }
+            }
+            weight = new SpcEventWeightDto(duration, context, frames);
+        }
 
         return new SpcEventDto(
             SpcEventId: item.GetValueOrDefault("spc_event_id")?.S ?? "",
@@ -108,8 +123,6 @@ public class SpcEventsService : ISpcEventsService
             SpcPetId: item.GetValueOrDefault("spc_pet_id")?.S,
             DeviceId: item.GetValueOrDefault("device_id")?.S,
             RawData: item.GetValueOrDefault("raw_data")?.S,
-            WeightChange: weightChange,
-            WeightDuration: weightDuration,
-            WeightCurrent: weightCurrent);
+            Weight: weight);
     }
 }

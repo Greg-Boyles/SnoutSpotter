@@ -111,8 +111,8 @@ export default function PetActivityPanel({ petId, petName }: { petId: string; pe
 function EventRow({ event, petName }: { event: SpcEvent; petName: string }) {
   const { Icon } = iconForCategory(event.eventCategory);
   const sentence = derivedSentence(event, petName);
-  const durationTag = event.weightDuration && event.weightDuration > 0
-    ? `${event.weightDuration}s at bowl`
+  const durationTag = event.weight && event.weight.duration > 0
+    ? `${event.weight.duration}s at bowl`
     : null;
   const when = relativeTime(event.createdAt);
   const typeName = SPC_EVENT_TYPE_NAMES[event.spcEventType] ?? `Type ${event.spcEventType}`;
@@ -177,32 +177,39 @@ function iconForCategory(category: string): { Icon: React.ElementType } {
   }
 }
 
+// Sums change across all frames (one per bowl on multi-bowl devices).
+function totalChange(event: SpcEvent): number | null {
+  if (!event.weight?.frames?.length) return null;
+  return event.weight.frames.reduce((sum, f) => sum + f.change, 0);
+}
+
 // Builds a human sentence from the event's category, type, and weight data.
-// Negative weightChange = consumed; positive = added/refilled.
+// Negative total = consumed; positive = added/refilled.
 function derivedSentence(event: SpcEvent, petName: string): string {
-  const absChange = event.weightChange != null ? Math.abs(event.weightChange) : null;
+  const total = totalChange(event);
+  const absTotal = total != null ? Math.abs(total) : null;
 
   switch (event.spcEventType) {
     case 22: // Feeding (pet encounter at feeder)
-      if (absChange != null && absChange > 0)
-        return `${petName} ate ${absChange}g`;
+      if (absTotal != null && absTotal > 0)
+        return `${petName} ate ${absTotal}g`;
       return `${petName} ate`;
 
     case 21: // WeightChanged (device snapshot, often no pet)
-      if (event.weightChange != null && event.weightChange > 0)
-        return `Food added (${event.weightChange}g)`;
-      if (absChange != null && absChange > 0)
-        return `Bowl weight changed (${absChange}g)`;
+      if (total != null && total > 0)
+        return `Food added (${total}g)`;
+      if (absTotal != null && absTotal > 0)
+        return `Bowl weight changed (${absTotal}g)`;
       return "Bowl weight updated";
 
     case 29: // Drinking
-      if (absChange != null && absChange > 0)
-        return `${petName} drank ${absChange}g`;
+      if (absTotal != null && absTotal > 0)
+        return `${petName} drank ${absTotal}g`;
       return `${petName} drank`;
 
     case 30: // PoseidonTankReplaced (refill — positive change)
-      if (event.weightChange != null && event.weightChange > 0)
-        return `Water bowl refilled (+${event.weightChange}g)`;
+      if (total != null && total > 0)
+        return `Water bowl refilled (+${total}g)`;
       return "Water bowl refilled";
 
     case 33: // LowWater
@@ -227,13 +234,13 @@ function derivedSentence(event: SpcEvent, petName: string): string {
       // Fall back to category-based sentence
       switch (event.eventCategory) {
         case "feeding":
-          return absChange != null && absChange > 0 ? `${petName} ate ${absChange}g` : `${petName} ate`;
+          return absTotal != null && absTotal > 0 ? `${petName} ate ${absTotal}g` : `${petName} ate`;
         case "drinking":
-          return absChange != null && absChange > 0 ? `${petName} drank ${absChange}g` : `${petName} drank`;
+          return absTotal != null && absTotal > 0 ? `${petName} drank ${absTotal}g` : `${petName} drank`;
         case "movement":
           return `${petName} moved through a pet door`;
         case "device_status":
-          return `Device status update`;
+          return "Device status update";
         default: {
           const name = SPC_EVENT_TYPE_NAMES[event.spcEventType];
           return name ?? `Event (type ${event.spcEventType})`;

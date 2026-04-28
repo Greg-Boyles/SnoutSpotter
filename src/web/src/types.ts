@@ -181,8 +181,9 @@ export interface UpdateDeviceRequest {
 }
 
 // SPC timeline events ingested by the motion-triggered poller.
-// Weight fields are the primary measurement data from SPC's weights[] array.
-// Negative weightChange = consumed, positive = added/refilled.
+// Weight is a nested object from SPC's weights[] array. Multi-bowl devices
+// produce multiple frames (one per bowl). Negative change = consumed,
+// positive = added/refilled.
 export interface SpcEvent {
   spcEventId: string;
   spcEventType: number;
@@ -192,9 +193,19 @@ export interface SpcEvent {
   spcPetId: string | null;
   deviceId: string | null;
   rawData: string | null;
-  weightChange: number | null;
-  weightDuration: number | null;
-  weightCurrent: number | null;
+  weight: SpcEventWeight | null;
+}
+
+export interface SpcEventWeight {
+  duration: number;
+  context: number;
+  frames: SpcEventWeightFrame[];
+}
+
+export interface SpcEventWeightFrame {
+  index: number;
+  change: number;
+  currentWeight: number;
 }
 
 export interface SpcEventsPage {
