@@ -290,7 +290,7 @@ export const api = {
 
   // Training
   listTrainingAgents: () =>
-    fetchJson<{ agents: { thingName: string; online: boolean; version: string | null; hostname: string | null; lastHeartbeat: string | null; currentJobId: string | null; status?: string | null; gpu?: { name: string; vramMb: number; temperatureC: number; utilizationPercent: number } | null; currentJobProgress?: { epoch: number; total_epochs: number; mAP50?: number } | null }[] }>("/training/agents"),
+    fetchJson<{ agents: { thingName: string; online: boolean; version: string | null; hostname: string | null; lastHeartbeat: string | null; currentJobId: string | null; status?: string | null; gpu?: { name: string; vramMb: number; temperatureC: number; utilizationPercent: number } | null; currentJobProgress?: { epoch: number; total_epochs: number; epoch_progress?: number; mAP50?: number } | null }[] }>("/training/agents"),
 
   getTrainingAgentStatus: (thingName: string) =>
     fetchJson<{ thingName: string; online: boolean; reported: Record<string, unknown> | null }>(`/training/agents/${thingName}`),

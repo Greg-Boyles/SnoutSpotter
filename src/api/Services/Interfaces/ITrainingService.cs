@@ -32,7 +32,7 @@ public record TrainerGpuSummary(string Name, int VramMb, int TemperatureC, int U
 
 public record TrainingAgentRelease(string Version, string ImagePushedAt, bool IsLatest);
 
-public record TrainerProgressSummary(int Epoch, int TotalEpochs, double? MAP50);
+public record TrainerProgressSummary(int Epoch, int TotalEpochs, int? EpochProgress, double? MAP50);
 
 public record TrainingJobRequest(
     string ExportId,
