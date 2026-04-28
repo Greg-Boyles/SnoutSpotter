@@ -111,16 +111,23 @@ export default function PetActivityPanel({ petId, petName }: { petId: string; pe
 function EventRow({ event, petName }: { event: SpcEvent; petName: string }) {
   const { Icon } = iconForCategory(event.eventCategory);
   const sentence = derivedSentence(event, petName);
+  const durationTag = event.weightDuration && event.weightDuration > 0
+    ? `${event.weightDuration}s at bowl`
+    : null;
   const when = relativeTime(event.createdAt);
+  const typeName = SPC_EVENT_TYPE_NAMES[event.spcEventType] ?? `Type ${event.spcEventType}`;
 
   return (
     <li className="flex items-start gap-2 text-xs text-gray-700 bg-gray-50 rounded px-2 py-1.5">
       <Icon className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <span className="text-gray-900">{sentence}</span>
+        {durationTag && (
+          <span className="text-gray-400 ml-1">({durationTag})</span>
+        )}
         <span
           className="text-gray-400 ml-2"
-          title={`type=${event.spcEventType} · ${new Date(event.createdAt).toLocaleString()}`}
+          title={`${typeName} · ${new Date(event.createdAt).toLocaleString()}`}
         >
           {when}
         </span>
@@ -128,6 +135,32 @@ function EventRow({ event, petName }: { event: SpcEvent; petName: string }) {
     </li>
   );
 }
+
+// SPC TimelineEventType enum names for tooltips.
+const SPC_EVENT_TYPE_NAMES: Record<number, string> = {
+  0: "Movement",
+  1: "Low Battery",
+  7: "Intruder",
+  9: "Hub Online",
+  18: "Hub Online",
+  21: "Weight Changed",
+  22: "Feeding",
+  23: "Feeder Settings",
+  24: "Tare",
+  29: "Drinking",
+  30: "Water Refill",
+  31: "Water Tare",
+  32: "Water Freshness",
+  33: "Low Water",
+  34: "Water Removed",
+  35: "Food Removed",
+  50: "Bowl Settings",
+  51: "Consumption Alert",
+  52: "Taring Needed",
+  53: "Taring Done",
+  54: "No Drinking",
+  55: "Timed Access",
+};
 
 function iconForCategory(category: string): { Icon: React.ElementType } {
   switch (category) {
@@ -144,20 +177,68 @@ function iconForCategory(category: string): { Icon: React.ElementType } {
   }
 }
 
-// Phase-1 sentence derivation. raw_data decoding is a follow-up; this keeps
-// the list readable without committing us to specific field shapes.
+// Builds a human sentence from the event's category, type, and weight data.
+// Negative weightChange = consumed; positive = added/refilled.
 function derivedSentence(event: SpcEvent, petName: string): string {
-  switch (event.eventCategory) {
-    case "feeding":
+  const absChange = event.weightChange != null ? Math.abs(event.weightChange) : null;
+
+  switch (event.spcEventType) {
+    case 22: // Feeding (pet encounter at feeder)
+      if (absChange != null && absChange > 0)
+        return `${petName} ate ${absChange}g`;
       return `${petName} ate`;
-    case "drinking":
+
+    case 21: // WeightChanged (device snapshot, often no pet)
+      if (event.weightChange != null && event.weightChange > 0)
+        return `Food added (${event.weightChange}g)`;
+      if (absChange != null && absChange > 0)
+        return `Bowl weight changed (${absChange}g)`;
+      return "Bowl weight updated";
+
+    case 29: // Drinking
+      if (absChange != null && absChange > 0)
+        return `${petName} drank ${absChange}g`;
       return `${petName} drank`;
-    case "movement":
+
+    case 30: // PoseidonTankReplaced (refill — positive change)
+      if (event.weightChange != null && event.weightChange > 0)
+        return `Water bowl refilled (+${event.weightChange}g)`;
+      return "Water bowl refilled";
+
+    case 33: // LowWater
+      return "Water bowl low";
+
+    case 34: // WaterRemoved
+      return "Water removed from bowl";
+
+    case 35: // FoodRemoved
+      return "Food removed from bowl";
+
+    case 0: // Movement (pet door)
       return `${petName} moved through a pet door`;
-    case "device_status":
-      return `Device status update`;
+
+    case 7: // IntruderMovement
+      return "Intruder detected at pet door";
+
+    case 51: // ConsumptionAlert
+      return `Consumption alert for ${petName}`;
+
     default:
-      return `Event (type ${event.spcEventType})`;
+      // Fall back to category-based sentence
+      switch (event.eventCategory) {
+        case "feeding":
+          return absChange != null && absChange > 0 ? `${petName} ate ${absChange}g` : `${petName} ate`;
+        case "drinking":
+          return absChange != null && absChange > 0 ? `${petName} drank ${absChange}g` : `${petName} drank`;
+        case "movement":
+          return `${petName} moved through a pet door`;
+        case "device_status":
+          return `Device status update`;
+        default: {
+          const name = SPC_EVENT_TYPE_NAMES[event.spcEventType];
+          return name ?? `Event (type ${event.spcEventType})`;
+        }
+      }
   }
 }
 

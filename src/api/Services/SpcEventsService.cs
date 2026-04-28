@@ -89,6 +89,16 @@ public class SpcEventsService : ISpcEventsService
         if (item.TryGetValue("spc_event_type", out var st) && st.N != null && int.TryParse(st.N, out var parsed))
             spcType = parsed;
 
+        int? weightChange = null;
+        if (item.TryGetValue("weight_change", out var wc) && wc.N != null && int.TryParse(wc.N, out var wcp))
+            weightChange = wcp;
+        int? weightDuration = null;
+        if (item.TryGetValue("weight_duration", out var wd) && wd.N != null && int.TryParse(wd.N, out var wdp))
+            weightDuration = wdp;
+        int? weightCurrent = null;
+        if (item.TryGetValue("weight_current", out var wcur) && wcur.N != null && int.TryParse(wcur.N, out var wcurp))
+            weightCurrent = wcurp;
+
         return new SpcEventDto(
             SpcEventId: item.GetValueOrDefault("spc_event_id")?.S ?? "",
             SpcEventType: spcType,
@@ -97,6 +107,9 @@ public class SpcEventsService : ISpcEventsService
             PetId: item.GetValueOrDefault("pet_id")?.S,
             SpcPetId: item.GetValueOrDefault("spc_pet_id")?.S,
             DeviceId: item.GetValueOrDefault("device_id")?.S,
-            RawData: item.GetValueOrDefault("raw_data")?.S);
+            RawData: item.GetValueOrDefault("raw_data")?.S,
+            WeightChange: weightChange,
+            WeightDuration: weightDuration,
+            WeightCurrent: weightCurrent);
     }
 }
