@@ -44,18 +44,30 @@ public class EventStore
         if (deviceId != null) item["device_id"] = new AttributeValue { S = deviceId };
         if (!string.IsNullOrEmpty(evt.Data)) item["raw_data"] = new AttributeValue { S = evt.Data };
 
-        // Weight data from weights[0].frames[0] — the primary measurement for
-        // bowl interactions. Negative change = consumed, positive = added/refilled.
+        // Weight data stored as a nested map preserving the full structure from
+        // SPC's weights[] array. Multi-bowl devices (Feeder Connect) produce
+        // multiple frames — one per bowl. Structure:
+        //   weight = { duration: N, context: N, frames: [ { index: N, change: N, current_weight: N } ] }
         var firstWeight = evt.Weights?.FirstOrDefault();
-        var firstFrame = firstWeight?.Frames?.FirstOrDefault();
-        if (firstFrame != null)
+        if (firstWeight?.Frames is { Count: > 0 })
         {
-            item["weight_change"] = new AttributeValue { N = firstFrame.Change.ToString() };
-            item["weight_current"] = new AttributeValue { N = firstFrame.CurrentWeight.ToString() };
-        }
-        if (firstWeight != null && firstWeight.Duration > 0)
-        {
-            item["weight_duration"] = new AttributeValue { N = firstWeight.Duration.ToString() };
+            var framesAttr = firstWeight.Frames.Select(f => new AttributeValue
+            {
+                M = new Dictionary<string, AttributeValue>
+                {
+                    ["index"] = new() { N = f.Index.ToString() },
+                    ["change"] = new() { N = f.Change.ToString() },
+                    ["current_weight"] = new() { N = f.CurrentWeight.ToString() }
+                }
+            }).ToList();
+
+            var weightMap = new Dictionary<string, AttributeValue>
+            {
+                ["duration"] = new() { N = firstWeight.Duration.ToString() },
+                ["context"] = new() { N = firstWeight.Context.ToString() },
+                ["frames"] = new() { L = framesAttr }
+            };
+            item["weight"] = new AttributeValue { M = weightMap };
         }
 
         await _dynamo.PutItemAsync(new PutItemRequest
