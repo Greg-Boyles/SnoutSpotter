@@ -73,6 +73,13 @@ var spcStack = new SpcConnectorStack(app, "SnoutSpotter-Spc", new SpcConnectorSt
     AllowedOrigin = allowedOrigin
 });
 
+var spcPollerStack = new SpcPollerStack(app, "SnoutSpotter-SpcPoller", new SpcPollerStackProps
+{
+    Env = env,
+    SpcPollerEcrRepo = coreStack.SpcPollerEcrRepo,
+    ImageTag = System.Environment.GetEnvironmentVariable("IMAGE_TAG") ?? "latest"
+});
+
 var trainingProgressStack = new TrainingProgressStack(app, "SnoutSpotter-TrainingProgress", new TrainingProgressStackProps
 {
     Env = env,

@@ -3,6 +3,7 @@ import { PawPrint, Plus, Pencil, Trash2, Loader2, AlertCircle } from "lucide-rea
 import { api } from "../api";
 import type { Pet } from "../types";
 import { usePets } from "../hooks/usePets";
+import PetActivityPanel from "../components/pets/PetActivityPanel";
 
 export default function Pets() {
   const [pets, setPets] = useState<Pet[]>([]);
@@ -232,6 +233,7 @@ export default function Pets() {
                   ID: <span className="font-mono">{pet.petId}</span>
                 </p>
               </div>
+              <PetActivityPanel petId={pet.petId} petName={pet.name} />
             </div>
           ))}
         </div>

@@ -23,6 +23,12 @@ public class IngestStack : Stack
 {
     public IngestStack(Construct scope, string id, IngestStackProps props) : base(scope, id, props)
     {
+        // Read from SSM (no cross-stack CDK dep): devices table lives in CoreStack,
+        // burst queue lives in SpcPollerStack. Both are written there.
+        var devicesTable = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/devices-table-name");
+        var spcBurstQueueUrl = StringParameter.ValueForStringParameter(this, "/snoutspotter/spc-poller/burst-queue-url");
+        var spcBurstQueueArn = StringParameter.ValueForStringParameter(this, "/snoutspotter/spc-poller/burst-queue-arn");
+
         var ingestFunction = new DockerImageFunction(this, "IngestClipFunction", new DockerImageFunctionProps
         {
             FunctionName = "snout-spotter-ingest-clip",
@@ -37,7 +43,9 @@ public class IngestStack : Stack
             {
                 ["BUCKET_NAME"] = props.DataBucket.BucketName,
                 ["TABLE_NAME"] = props.ClipsTable.TableName,
-                ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name")
+                ["SETTINGS_TABLE"] = StringParameter.ValueForStringParameter(this, "/snoutspotter/core/settings-table-name"),
+                ["DEVICES_TABLE"] = devicesTable,
+                ["SPC_BURST_QUEUE_URL"] = spcBurstQueueUrl
             }
         });
 
@@ -49,6 +57,23 @@ public class IngestStack : Stack
             Effect = Effect.ALLOW,
             Actions = new[] { "dynamodb:GetItem", "dynamodb:Scan" },
             Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-settings" }
+        }));
+
+        // Cheap check "does this household have any SPC device links?" used to
+        // gate motion-triggered SPC burst polling. Query + Limit=1, projection-only.
+        ingestFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "dynamodb:Query" },
+            Resources = new[] { $"arn:aws:dynamodb:{Region}:{Account}:table/snout-spotter-devices" }
+        }));
+
+        // SendMessage on the SPC burst queue — kicks off a 10-min poll window.
+        ingestFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+        {
+            Effect = Effect.ALLOW,
+            Actions = new[] { "sqs:SendMessage" },
+            Resources = new[] { spcBurstQueueArn }
         }));
 
         // EventBridge rule: trigger Lambda when .mp4 uploaded to raw-clips/

@@ -45,6 +45,7 @@ builder.Services.Configure<AppConfig>(cfg =>
     cfg.UsersTable = Environment.GetEnvironmentVariable("USERS_TABLE") ?? "snout-spotter-users";
     cfg.HouseholdsTable = Environment.GetEnvironmentVariable("HOUSEHOLDS_TABLE") ?? "snout-spotter-households";
     cfg.DevicesTable = Environment.GetEnvironmentVariable("DEVICES_TABLE") ?? "snout-spotter-devices";
+    cfg.SpcEventsTable = Environment.GetEnvironmentVariable("SPC_EVENTS_TABLE") ?? "snout-spotter-spc-events";
     cfg.SpcBaseUrl = Environment.GetEnvironmentVariable("SPC_BASE_URL") ?? "https://app-api.beta.surehub.io";
     cfg.OktaIssuer = Environment.GetEnvironmentVariable("OKTA_ISSUER") ?? "";
     cfg.AllowedOrigin = Environment.GetEnvironmentVariable("ALLOWED_ORIGIN") ?? "";
@@ -94,6 +95,7 @@ builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddSingleton<IHouseholdService, HouseholdService>();
 builder.Services.AddSingleton<ISpcSecretsStore, SpcSecretsStore>();
 builder.Services.AddSingleton<IDeviceRegistryService, DeviceRegistryService>();
+builder.Services.AddSingleton<ISpcEventsService, SpcEventsService>();
 
 // Typed HttpClient for Sure Pet Care. Used by the device-registry refresh path.
 // Matches the SPC Lambda's Polly config: 3x retry, circuit breaker, 10s timeout;

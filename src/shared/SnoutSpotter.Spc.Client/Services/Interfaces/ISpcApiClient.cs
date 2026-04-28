@@ -8,4 +8,5 @@ public interface ISpcApiClient
     Task<List<SpcHouseholdResource>> ListHouseholdsAsync(string accessToken, CancellationToken ct = default);
     Task<List<SpcPetResource>> ListPetsAsync(string accessToken, long spcHouseholdId, CancellationToken ct = default);
     Task<List<SpcDeviceResource>> ListDevicesAsync(string accessToken, long spcHouseholdId, CancellationToken ct = default);
+    Task<List<SpcTimelineResource>> ListTimelineAsync(string accessToken, long spcHouseholdId, long? sinceId, int pageSize, CancellationToken ct = default);
 }

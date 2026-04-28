@@ -7,6 +7,7 @@ import type {
   Pet,
   SnoutSpotterDeviceDto,
   SpcDeviceRegistryDto,
+  SpcEventsPage,
   StatsOverview,
   StreamStartResult,
   SystemHealth,
@@ -338,6 +339,12 @@ export const api = {
   createPet: (name: string, breed?: string) => postJson<Pet>("/pets", { name, breed }),
   updatePet: (petId: string, name: string, breed?: string) => putJson<Pet>(`/pets/${petId}`, { name, breed }),
   deletePet: (petId: string) => deleteJson<null>(`/pets/${petId}`),
+
+  listSpcEventsForPet: (petId: string, limit = 50, nextPageKey?: string) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (nextPageKey) qs.set("nextPageKey", nextPageKey);
+    return fetchJson<SpcEventsPage>(`/pets/${encodeURIComponent(petId)}/spc-events?${qs}`);
+  },
 
   // Households
   listHouseholds: () =>

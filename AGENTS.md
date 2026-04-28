@@ -8,7 +8,9 @@ SnoutSpotter is a motion-triggered video capture system running on Raspberry Pi 
 
 **Multi-household:** All data is scoped by `household_id`. Users belong to 1+ households (stored in `snout-spotter-users`). The API middleware validates the `X-Household-Id` header against user memberships. S3 paths are prefixed with `{household_id}/`. Settings, stats, and training agents are global.
 
-**Sure Pet Care (SPC) connector:** Households can optionally link to a Sure Pet Care account so SnoutSpotter pets are paired to SPC pets (1:1 mapping). A dedicated `snout-spotter-spc` Lambda proxies requests to `app-api.beta.surehub.io`: the user's SPC email+password are exchanged once for an access token, stored per-household in AWS Secrets Manager (`snoutspotter/spc/{household_id}`), and used to read SPC households, pets, and device inventory. The UI has an `/integrations` page with a 4-step setup wizard. Linked state lives on the household record (`spc_integration` map) and the pet record (`spc_pet_id` / `spc_pet_name`). Phase 2 (event ingestion — feeding/drinking/door events via SPC's `/api/timeline` feed, replacing mobile push notifications) is designed in `docs/plan-spc-event-ingestion.md` but not yet built.
+**Sure Pet Care (SPC) connector:** Households can optionally link to a Sure Pet Care account so SnoutSpotter pets are paired to SPC pets. A dedicated `snout-spotter-spc` Lambda proxies requests to `app-api.beta.surehub.io`: the user's SPC email+password are exchanged once for an access token, stored per-household in AWS Secrets Manager (`snoutspotter/spc/{household_id}`), and used to read SPC households, pets, and device inventory. The UI has an `/integrations` page with a 4-step setup wizard. Linked state lives on the household record (`spc_integration` map) and the pet record (`spc_pet_id` / `spc_pet_name`). Many-to-many Pi↔SPC device links (`/devices` page) let the system know which camera watches which bowl.
+
+**SPC event ingestion (motion-triggered burst polling):** SPC doesn't offer webhooks, so event data comes from polling `/api/timeline/household/{hh}?SinceId=...`. To avoid the cost of cron-based polling, we only poll when a Pi that's linked to an SPC device sees motion: IngestClip enqueues a `motion` message onto an SQS queue; the `snout-spotter-spc-poller` Lambda opens a 10-minute burst window (extended, not reset, on subsequent motion), pulls new timeline events via `SinceId` cursor, and self-schedules a 30-second-delayed continue message while the window is open. Chain dies naturally when quiet. Events land in `snout-spotter-spc-events` and surface on each pet card as a collapsible Activity panel. First burst for a household seeds the cursor without persisting history — no link-time backfill. Full design at `docs/plan-spc-event-ingestion.md`.
 
 **Region:** `eu-west-1`
 
@@ -75,6 +77,7 @@ SnoutSpotter/
 │   │       ├── ApiStack.cs            # API Lambda + HTTP API Gateway + Okta JWT env vars
 │   │       ├── PiMgmtStack.cs         # Pi Management Lambda + HTTP API Gateway (no auth)
 │   │       ├── SpcConnectorStack.cs   # Sure Pet Care connector Lambda + HTTP API Gateway (Okta JWT)
+│   │       ├── SpcPollerStack.cs      # Motion-triggered SPC timeline poller + SQS burst queue
 │   │       ├── WebStack.cs            # S3 static site + CloudFront distribution
 │   │       ├── MonitoringStack.cs     # CloudWatch alarms
 │   │       └── CiCdStack.cs           # OIDC role for GitHub Actions
@@ -106,16 +109,29 @@ SnoutSpotter/
 │   │   │   ├── Services/DeviceProvisioningService.cs
 │   │   │   ├── Program.cs
 │   │   │   └── Dockerfile
-│   │   └── SnoutSpotter.Lambda.Spc/            # Sure Pet Care connector API (Okta JWT + X-Household-Id)
-│   │       ├── Controllers/SpcIntegrationController.cs  # /api/integrations/spc/* — validate, link, unlink, devices, pet-links
-│   │       ├── Services/SpcApiClient.cs                 # Typed HttpClient + Polly retry/breaker; only place that calls surehub.io
-│   │       ├── Services/SpcSecretsStore.cs              # Secrets Manager wrapper (snoutspotter/spc/{household_id})
-│   │       ├── Services/HouseholdIntegrationService.cs  # Reads/writes spc_integration map on household record
-│   │       ├── Services/PetLinkService.cs               # Writes/clears spc_pet_id + spc_pet_name across pets
-│   │       ├── Services/SpcSessionStore.cs              # IMemoryCache 10-min wizard session (access token between /validate and /link)
-│   │       ├── Services/UserMembershipService.cs        # Copied household-membership check (mirrors main API middleware)
-│   │       ├── Program.cs
+│   │   ├── SnoutSpotter.Lambda.Spc/            # Sure Pet Care connector API (Okta JWT + X-Household-Id)
+│   │   │   ├── Controllers/SpcIntegrationController.cs  # /api/integrations/spc/* — validate, link, unlink, devices, pet-links
+│   │   │   ├── Services/HouseholdIntegrationService.cs  # Reads/writes spc_integration map on household record
+│   │   │   ├── Services/PetLinkService.cs               # Writes/clears spc_pet_id + spc_pet_name across pets
+│   │   │   ├── Services/SpcSessionStore.cs              # IMemoryCache 10-min wizard session (access token between /validate and /link)
+│   │   │   ├── Services/UserMembershipService.cs        # Copied household-membership check (mirrors main API middleware)
+│   │   │   ├── Services/DeviceRegistryCleanupService.cs # BatchWrite deletes spc# and link#spc# rows on unlink
+│   │   │   ├── Program.cs
+│   │   │   └── Dockerfile
+│   │   └── SnoutSpotter.Lambda.SpcPoller/      # Motion-triggered SPC timeline poller (SQS-driven, self-scheduling)
+│   │       ├── Function.cs                              # Handler — start/extend burst, seed-on-first-motion, poll timeline, token-expired handling, MaybeScheduleContinue
+│   │       ├── Services/BurstStateStore.cs              # snout-spotter-spc-burst-state: extend-not-reset poll_until, TTL auto-expiry
+│   │       ├── Services/BurstQueueProducer.cs           # Self-schedules 30s-delayed continue messages while inside the window
+│   │       ├── Services/EventStore.cs                   # PutItem on snout-spotter-spc-events (idempotent by natural PK+SK)
+│   │       ├── Services/EventCategorizer.cs             # Coarse TimelineEventType -> feeding/drinking/movement/device_status/other
+│   │       ├── Services/HouseholdIntegrationReader.cs   # Read spc_integration; MarkTokenExpired + SetLastSyncAt
+│   │       ├── Services/PetLinkReader.cs                # Builds spc_pet_id -> pet-... map at poll time
 │   │       └── Dockerfile
+│   │
+│   ├── shared/SnoutSpotter.Spc.Client/      # Shared SPC HTTP client + DTOs (consumed by both Spc and SpcPoller Lambdas)
+│   │   ├── Services/SpcApiClient.cs                 # Typed HttpClient + Polly retry/breaker; only place that calls surehub.io; ListTimelineAsync for poller
+│   │   ├── Services/SpcSecretsStore.cs              # Secrets Manager wrapper (snoutspotter/spc/{household_id})
+│   │   └── Models/SpcApiModels.cs                   # Login, Household, Pet, Device, Timeline DTOs
 │   │
 │   ├── web/                           # React frontend
 │   │   ├── src/
@@ -224,11 +240,13 @@ SnoutSpotter/
     ├── build-inference-image.yml
     ├── build-pi-mgmt-image.yml
     ├── build-spc-image.yml            # SPC connector Lambda image build
+    ├── build-spc-poller-image.yml     # SPC poller Lambda image build
     ├── deploy-api.yml                 # CDK deploy ApiStack
     ├── deploy-ingest.yml
     ├── deploy-inference.yml
     ├── deploy-pi-mgmt.yml
     ├── deploy-spc.yml                 # CDK deploy SpcConnectorStack
+    ├── deploy-spc-poller.yml          # CDK deploy SpcPollerStack
     ├── deploy-web.yml                 # npm build → S3 sync → CloudFront invalidation
     ├── deploy-ml.yml                  # Package models → S3
     ├── deploy-okta.yml                # Terraform apply for Okta resources (S3 remote state)
@@ -344,9 +362,10 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 8. **ApiStack** — depends on CoreStack, reads CDK context + SSM params from other stacks
 9. **PiMgmtStack** — depends on CoreStack
 10. **SpcConnectorStack** — depends on CoreStack (reads households/pets/users table names via SSM)
-11. **WebStack** — standalone (S3 + CloudFront)
-12. **MonitoringStack** — depends on CoreStack
-13. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
+11. **SpcPollerStack** — depends on CoreStack (reads SPC events + burst-state table names via SSM). Writes burst queue URL/ARN to SSM for IngestStack to consume
+12. **WebStack** — standalone (S3 + CloudFront)
+13. **MonitoringStack** — depends on CoreStack
+14. **CiCdStack** — standalone (OIDC role, S3 permissions include `terraform/*`)
 
 **IMPORTANT — No cross-stack dependencies between Lambda stacks.** Each Lambda stack must only depend on CoreStack (for ECR repos, tables, buckets). Never pass outputs from one Lambda stack to another via CDK props — this creates deploy-time coupling where deploying stack A forces CDK to also deploy stack B, which fails if stack B's Docker image wasn't built for the current commit. Instead, use SSM parameters: the source stack writes to `/snoutspotter/{stack}/{param}` and the consuming stack reads via `StringParameter.ValueForStringParameter()`, which resolves at CloudFormation deploy time without a CDK dependency. See IoTStack → PiMgmtStack and AutoLabelStack → ApiStack for examples.
 
@@ -359,6 +378,7 @@ All stacks are defined in `src/infra/Stacks/` and wired in `src/infra/Program.cs
 | ApiStack | Docker Lambda `snout-spotter-api`, HTTP API Gateway, Okta JWT env vars; also hosts `snout-spotter-stats-refresh` Lambda (same image, `APP_MODE=stats-refresh`) invoked on-demand |
 | PiMgmtStack | Docker Lambda `snout-spotter-pi-mgmt`, HTTP API Gateway |
 | SpcConnectorStack | Docker Lambda `snout-spotter-spc`, HTTP API Gateway (Okta JWT + `X-Household-Id` CORS). IAM: Secrets Manager CRUD on `snoutspotter/spc/*`; DynamoDB GetItem+UpdateItem on households, Query+UpdateItem+BatchWriteItem on pets, GetItem on users. Writes `/snoutspotter/spc/api-url` SSM param consumed by the web build as `VITE_SPC_INTEGRATION_URL`. |
+| SpcPollerStack | Docker Lambda `snout-spotter-spc-poller` (256MB, 60s), SQS queue `snout-spotter-spc-burst` + DLQ. Triggered by IngestClip motion on linked households; self-schedules continue messages every 30s for a 10-min burst. IAM: `secretsmanager:GetSecretValue` on `snoutspotter/spc/*`; table-scoped grants on households (GetItem+UpdateItem), pets (Query), spc-events (PutItem+Query), spc-burst-state (GetItem+UpdateItem); SendMessage on its own queue for self-scheduling. Writes `/snoutspotter/spc-poller/burst-queue-{url,arn}` SSM params consumed by IngestStack. |
 | IngestStack | Docker Lambda triggered by S3 events (wildcard matches `raw-clips/` and `*/raw-clips/`). Parses `household_id` from S3 key prefix. |
 | InferenceStack | Docker Lambda triggered by S3 events (wildcard matches `keyframes/` and `*/keyframes/`) + SQS `snout-spotter-rerun-inference` queue (BatchSize=1, MaxConcurrency=3). Loads models from `{household_id}/models/`. |
 | WebStack | S3 static site bucket, CloudFront distribution |
@@ -394,6 +414,7 @@ All main API endpoints require a valid Okta JWT Bearer token. Most endpoints als
 **Pets:**
 - `GET /api/pets` — list all pet profiles for the current household
 - `GET /api/pets/{petId}` — single pet detail
+- `GET /api/pets/{petId}/spc-events?limit=50&nextPageKey=...` — newest-first Sure Pet Care events attributed to this pet (populated by the motion-triggered SpcPoller Lambda). Returns `{events, nextPageKey}` with paginated cursor. Events include `spcEventId`, `spcEventType` (raw SPC enum), `eventCategory` (feeding/drinking/movement/device_status/other), `createdAt`, `petId`, `spcPetId`, `deviceId`, `rawData` (verbatim SPC `data` JSON string).
 - `POST /api/pets` — create pet (`{"name": "Biscuit", "breed": "Labrador Retriever"}`). Service generates `petId = pet-{slug}-{rand}`.
 - `PUT /api/pets/{petId}` — update name/breed (REMOVE clause drops breed when omitted)
 - `DELETE /api/pets/{petId}` — delete. Rejected with 409 Conflict if the pet is referenced in the active model's `class_map.json` (retrain without the pet first).
@@ -586,6 +607,66 @@ Named pet profiles. Composite key scoped by household.
 | `spc_integration` | Map (M) | (optional) Sure Pet Care link state. Set atomically on `POST /api/integrations/spc/link` and REMOVE-d on `DELETE /api/integrations/spc`. Shape: `{ status: "linked"\|"token_expired"\|"error", spc_household_id, spc_household_name, spc_user_email, secret_arn, linked_at, last_sync_at?, last_error? }`. The access token itself lives in AWS Secrets Manager at `snoutspotter/spc/{household_id}` — this record only tracks public metadata. |
 
 **Service:** `HouseholdService.cs` handles creation (generates `hh-{slug}-{rand}` ID) and listing. The SPC connector's `HouseholdIntegrationService.cs` reads/writes `spc_integration` and flips `status = token_expired` on SPC 401.
+
+### Devices Table
+
+**Table:** `snout-spotter-devices` | **Billing:** Pay-per-request
+
+Unified registry for our Pi cameras, linked Sure Pet Care devices, and the many-to-many links between them. Single table with three SK prefixes so one `Query(PK=household_id)` returns everything for a household.
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `household_id` (PK) | String | |
+| `sk` (SK) | String | One of three prefixes: `snoutspotter#{thing_name}`, `spc#{spc_device_id}`, or `link#spc#{spc_device_id}#snoutspotter#{thing_name}` |
+| `source` | String | `snoutspotter` or `spc` (link rows omit this) |
+| `thing_name` | String | (snoutspotter + link rows) the IoT Thing name |
+| `spc_device_id` | String | (spc + link rows) stringified SPC int64 id |
+| `spc_product_id` | Number | (spc rows, optional) SPC DeviceType enum — 1=Hub, 4=FeederConnect, 8=Poseidon/Felaqua, 32=NoIdDogBowlConnect, etc. Mirrored locally at link-time and on explicit refresh |
+| `spc_name` | String | (spc rows, optional) SPC's name for the device |
+| `serial_number` | String | (spc rows, optional) mirrored from SPC |
+| `display_name` | String | User-visible label, inline-editable |
+| `notes` | String | (optional) free-text |
+| `last_refreshed_at` | String | (spc rows) ISO 8601 of last refresh from SPC |
+| `created_at`, `updated_at` | String | ISO 8601 |
+
+**Service:** `DeviceRegistryService.cs` on the main API handles the registry endpoints (`GET /api/devices`, update / refresh / link / unlink). Lazy-create: `snoutspotter#` rows are materialised on first authenticated `GET /api/devices` by diffing IoT Things against existing rows; `spc#` rows are lazy-created on first user edit or first link. Unlink (`DELETE /api/integrations/spc`) sweeps all `spc#` and `link#spc#` rows for the household via `DeviceRegistryCleanupService.cs` in the SPC Lambda.
+
+### SPC Events Table
+
+**Table:** `snout-spotter-spc-events` | **Billing:** Pay-per-request
+
+Timeline events ingested by the motion-triggered `snout-spotter-spc-poller` Lambda. Natural PK+SK so `PutItem` is idempotent under SQS redelivery.
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `household_id` (PK) | String | |
+| `created_at_event` (SK) | String | Composite `{created_at}#{spc_event_id}` — chronological Query order even when SPC ids aren't strictly monotonic across hubs |
+| `spc_event_id` | String | SPC timeline id (stringified int64) |
+| `spc_event_type` | Number | Raw SPC TimelineEventType enum — preserved for tooltips / future decoding |
+| `event_category` | String | Coarse bucket: `feeding`, `drinking`, `movement`, `device_status`, `other` |
+| `created_at` | String | ISO 8601 from SPC |
+| `pet_id` | String | (optional) our internal `pet-...` id, mapped from `spc_pet_id` at write time via `PetLinkReader` |
+| `spc_pet_id` | String | (optional) first `pets[].id` from the SPC event |
+| `device_id` | String | (optional) first `devices[].id` from the SPC event |
+| `raw_data` | String | (optional) SPC's `data` JSON field kept verbatim for future decoding |
+
+**Service:** `EventStore.cs` in the SpcPoller Lambda writes rows; `SpcEventsService.cs` in the main API reads via `GET /api/pets/{petId}/spc-events` using the CLAUDE.md `Query + FilterExpression + Limit=100` pagination loop (because `Limit` applies before `FilterExpression` in DynamoDB).
+
+### SPC Burst State Table
+
+**Table:** `snout-spotter-spc-burst-state` | **Billing:** Pay-per-request
+
+One row per household tracking the active burst window. Rows self-delete via `TimeToLiveAttribute = "ttl_expiry"` set to `poll_until + 1h`, so inactive rows don't accumulate.
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `household_id` (PK) | String | |
+| `poll_until` | String | ISO 8601 deadline. Motion-triggered `StartOrExtendAsync` sets it to `max(existing, now) + 10min` so subsequent motion extends — never resets — a still-running burst |
+| `last_timeline_id` | Number | Cursor for the next `SinceId=` query. `null` on first motion = "seed mode" (fetch latest id and store without persisting history) |
+| `last_poll_at` | String | ISO 8601, updated after every poll |
+| `ttl_expiry` | Number | Unix epoch seconds, used by DynamoDB TTL for auto-cleanup |
+
+**Service:** `BurstStateStore.cs` in the SpcPoller Lambda.
 
 ### Exports Table
 
@@ -910,6 +991,8 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 | `src/lambdas/RunInference/**` | build inference image → deploy inference |
 | `src/lambdas/PiMgmt/**` | build pi-mgmt image → deploy pi-mgmt |
 | `src/lambdas/SnoutSpotter.Lambda.Spc/**` | build spc image → deploy spc |
+| `src/lambdas/SnoutSpotter.Lambda.SpcPoller/**` | build spc-poller image → deploy spc-poller |
+| `src/shared/SnoutSpotter.Spc.Client/**` | triggers both spc + spc-poller image builds |
 | `src/pi/**` | nothing (handled by `package-pi.yml`) |
 | `terraform/okta/**` | nothing (handled by `deploy-okta.yml`) |
 
@@ -1044,4 +1127,10 @@ All IoT shadow and MQTT message types are defined once and shared between the tr
 
 48. **`SPC_INTEGRATION_URL` is SnoutSpotter's own SPC-connector Gateway URL** — not Sure Pet Care's URL. The secret name is deliberately `SPC_INTEGRATION_URL` (GitHub secret) / `VITE_SPC_INTEGRATION_URL` (Vite env) / `SPC_INTEGRATION_BASE` (frontend constant) to reflect ownership. The Lambda's outbound base URL to Sure Pet Care is `SPC_BASE_URL` (env var, defaults to `https://app-api.beta.surehub.io`) — that name IS referring to SPC's API and is correct. Don't conflate the two.
 
-49. **SPC push notifications cannot be redirected to our backend** — SPC's push registration (`POST /api/me/client { platform, token }`) binds a single APNs/FCM token to a single mobile install. We cannot intercept the user's real app's pushes; the correct approach for server-side events is to poll the REST timeline feed (`GET /api/timeline/household/{hh}?SinceId=...` — cursor-capable) rather than attempt to forward pushes. The Phase 2 design for this lives in `docs/plan-spc-event-ingestion.md`.
+49. **SPC push notifications cannot be redirected to our backend** — SPC's push registration (`POST /api/me/client { platform, token }`) binds a single APNs/FCM token to a single mobile install. We cannot intercept the user's real app's pushes; the correct approach for server-side events is to poll the REST timeline feed (`GET /api/timeline/household/{hh}?SinceId=...` — cursor-capable). Implemented in the SpcPoller Lambda per `docs/plan-spc-event-ingestion.md`.
+
+50. **SPC polling is motion-triggered, not scheduled** — A naïve EventBridge cron polling every minute would spend ~1440 invocations/day/household during the ~22h/day the house is quiet. Instead: IngestClip checks `snout-spotter-devices` for any `link#spc#` row for the clip's household (cheap Query + `Limit=1`); if present, SendMessage a `motion` body onto `snout-spotter-spc-burst`. The SpcPoller Lambda picks it up, opens (or extends) a 10-min window, polls SPC's timeline via `SinceId` cursor, and self-schedules a 30-second-delayed `continue` message onto the same queue. When the window closes the chain terminates naturally — zero invocations during quiet hours. Bursts extend, never reset: `max(existing_poll_until, now) + 10min`.
+
+51. **SPC burst polling has no safety-net cron and no link-time backfill** — Events that arrive at SPC after a burst window closes are picked up on the next motion (via persisted `last_timeline_id` cursor). We accept losing events that surface >10 min after the last motion with no subsequent motion — rare enough in practice not to warrant a background cron. On first link, the cursor is seeded on the first motion event (not at link time): we fetch the latest timeline id with `PageSize=1` and persist it without storing any historical events. This avoids dumping weeks of stale activity on the user the moment they connect their account.
+
+52. **IngestClip's SPC burst hook must not fail the clip** — `SpcBurstTrigger.MaybeFireAsync` wraps the entire check in `try/catch` and logs warnings only. If the Devices table Query fails or SQS is unavailable, clip ingestion still succeeds — we'd rather miss a burst than lose a clip. Same principle: if `DEVICES_TABLE` or `SPC_BURST_QUEUE_URL` env vars are missing (e.g. during a partial rollout where IngestStack deploys before SpcPollerStack), the trigger silently no-ops.
